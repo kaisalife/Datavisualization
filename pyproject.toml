@@ -1,0 +1,160 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-visual-server"
+version = "0.1.0"
+description = "LLM-driven pyecharts chart generation service (LangChain + MCP + RAG)"
+requires-python = ">=3.10,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "DataVisualServer Team" }]
+keywords = ["langchain", "pyecharts", "llm", "mcp", "rag", "data-visualization"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+# ----------------------------------------------------------------------------
+# 运行时依赖（依据项目源码实际 import 推断；未在源码中直接 import 但运行时必需的也列出）
+# ----------------------------------------------------------------------------
+dependencies = [
+    # ---- Web 服务 ----
+    "flask>=3.0",
+    "flask-cors>=4.0",
+    "flask-sock>=0.6",
+    # ---- 数据模型 ----
+    "pydantic>=2.5",
+    # ---- 环境变量 ----
+    "python-dotenv>=1.0",
+    # ---- LangChain 全家桶 ----
+    "langchain-core>=0.3",
+    "langchain-openai>=0.2",
+    "langchain-community>=0.3",
+    "langchain-text-splitters>=0.3",
+    "langchain-classic>=0.1",
+    "langchain-mcp-adapters>=0.1",
+    # ---- 向量库 ----
+    "chromadb>=0.5",
+    # ---- Embedding 模型 ----
+    "sentence-transformers>=3.0",
+    "torch>=2.1",
+    # ---- 数据处理 ----
+    "pandas>=2.0",
+    "openpyxl>=3.1",   # .xlsx 读写
+    "xlrd>=2.0",       # .xls 读取
+    # ---- MCP 工具 ----
+    "fastmcp>=0.1",
+    # ---- 图表生成（LLM 生成的代码运行时依赖）----
+    "pyecharts>=2.0",
+    # ---- 工具（后续任务用，先装上）----
+    "tiktoken>=0.7",        # 任务 M6 token 计数
+    "pathspec>=0.12",       # 任务 M2 glob 条件激活
+    "tenacity>=8.2",        # 任务 S1 LLM 重试
+    "structlog>=24.1",      # 任务 S3 结构化日志
+]
+
+[project.optional-dependencies]
+# 开发依赖
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+# 沙箱化代码执行（任务 S2 用，二选一）
+sandbox = [
+    "docker>=7.0",
+]
+# 生产部署（任务 T2/T3 用）
+prod = [
+    "redis>=5.0",           # 任务 M4 会话持久化可选后端
+    "gunicorn>=22.0",       # Linux 部署
+    "prometheus-client>=0.20",  # 任务 T3 指标暴露
+]
+
+[project.urls]
+Repository = "https://github.com/your-org/DataVisualServer"
+
+# ----------------------------------------------------------------------------
+# setuptools 包发现：显式列出，避免把 .claude/、test_env/、RAG/basic_author_knowleage/ 当作包
+# 注：agent_tools/ 当前无 __init__.py，暂不作为包；如需作为包请在后续任务补 __init__.py
+# ----------------------------------------------------------------------------
+[tool.setuptools]
+packages = [
+    "Entity",
+    "agent",
+    "prompts",
+    "service",
+    "RAG",
+]
+
+[tool.setuptools.package-data]
+# RAG 知识库与配置需要随包发布
+RAG = ["RAG_Data/**/*.md", "basic_author_knowleage/**/*.md", "basic_author_knowleage/**/*.py"]
+service = ["../configs/*.json"]
+
+# ----------------------------------------------------------------------------
+# Ruff 配置（任务 S3 会启用）
+# ----------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [
+    ".claude",
+    "RAG/basic_author_knowleage",  # 第三方参考代码
+    "chroma_db",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long（由 formatter 处理）
+    "B008",  # function call in default argument（Flask 常用模式）
+]
+
+[tool.ruff.lint.per-file-ignores]
+"RAG/basic_author_knowleage/*" = ["ALL"]
+"test_env/*" = ["F401", "F841"]
+
+# ----------------------------------------------------------------------------
+# pytest 配置
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:langchain_classic.*",
+    "ignore::DeprecationWarning:chromadb.*",
+]
+
+# ----------------------------------------------------------------------------
+# mypy 配置（任务 S3 会启用）
+# ----------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "RAG/basic_author_knowleage/",
+    "\\.claude/",
+    "test_env/",
+]

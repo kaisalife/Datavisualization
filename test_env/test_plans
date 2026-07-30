@@ -1,0 +1,37 @@
+```json
+{
+  "plans": [
+    {
+      "plan_id": "1",
+      "plan_name": "Historical Trend Analysis",
+      "plan_description": "Visualize the changes in various types of administrative divisions from 2016 to 2024",
+      "data_analysis": "The data contains time-series data spanning 9 years. It shows distinct trends: 'City Districts' and 'County-level Cities' are increasing, while 'Counties' are decreasing, reflecting urbanization. High-level divisions like 'Prefecture-level' remain stable.",
+      "chart_type": "Line",
+      "chart_title": "2016-2024 Administrative Divisions Trend",
+      "chart_reason": "A line chart is the most effective way to display time-series data, allowing viewers to easily track the trajectories of different division types simultaneously.",
+      "execution_order": 1
+    },
+    {
+      "plan_id": "2",
+      "plan_name": "Current Composition Comparison",
+      "plan_description": "Compare the specific quantities of different administrative divisions in the latest year (2024)",
+      "data_analysis": "The 2024 data represents the current state of administrative divisions. The values vary significantly (e.g., 117 Autonomous Counties vs 2846 County-level Divisions), making it suitable for magnitude comparison.",
+      "chart_type": "Bar",
+      "chart_title": "2024 Administrative Divisions Composition",
+      "chart_reason": "Bar charts are excellent for comparing discrete categories (division types) and clearly showing the differences in magnitude between them.",
+      "execution_order": 2
+    },
+    {
+      "plan_id": "3",
+      "plan_name": "Urbanization Change Analysis",
+      "plan_description": "Analyze the net increase or decrease of divisions by comparing 2024 to 2016",
+      "data_analysis": "Calculating the difference between 2024 and 2016 reveals significant structural shifts: City Districts (+23) and County-level Cities (+37) saw net growth, while Counties (-65) decreased significantly.",
+      "chart_type": "Bar",
+      "chart_title": "Net Change in Administrative Divisions (2024 vs 2016)",
+      "chart_reason": "A bar chart displaying positive and negative differences clearly highlights the direction and volume of organizational changes, emphasizing the urbanization process.",
+      "execution_order": 3
+    }
+  ],
+  "overall_analysis": "The dataset contains annual statistics on Chinese administrative divisions from 2016 to 2024. It features a mix of static indicators (e.g., Autonomous Counties) and dynamic indicators showing clear structural trends (e.g., Counties converting to Cities/Districts). The plans progress from analyzing the historical timeline, to the current state, and finally to the specific net changes to highlight the urbanization trend."
+}
+```

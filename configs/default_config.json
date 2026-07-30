@@ -1,0 +1,20 @@
+{
+  "agent_type": "BaseAgent",
+  "log_config": {
+    "log_path": "./data/agent_data"
+  },
+  "chart_generation": {
+    "max_retries": 3,
+    "concurrency": 3
+  },
+  "mcp_config": {
+    "run_code": {
+      "command": "python",
+      "args": [
+        "agent_tools/tool_run_code.py"
+      ],
+      "transport": "stdio"
+    }
+  }
+}
+
