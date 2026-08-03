@@ -39,6 +39,9 @@ class PdfAdapter(VizDataAdapter):
         dataset_name: 数据集名称（默认取文件名）
     """
 
+    # PDF 提取的数据总是需要清洗（表格识别可能有噪声）
+    auto_skip_if_clean = False
+
     def __init__(
         self,
         pdf_path: str | Path,

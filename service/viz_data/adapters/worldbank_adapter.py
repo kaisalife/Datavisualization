@@ -68,6 +68,9 @@ class WorldBankAdapter(VizDataAdapter):
     
     无需 API Key，完全免费，数据可追溯到 1960 年。
     """
+
+    # API 返回的结构化数据已干净，无需清洗
+    needs_cleaning = False
     
     BASE_URL = "http://api.worldbank.org/v2"
     SOURCE_NAME = "世界银行（World Bank Open Data）"
