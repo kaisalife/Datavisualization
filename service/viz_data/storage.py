@@ -1,6 +1,6 @@
 """临时数据存储工具：Parquet（表格） + NPZ（数组）。
 
-目录约定：`temp_datasets/{dataset_id}/`，由 VizDataset.cleanup() 删除。
+目录约定：`runtime/datasets/{dataset_id}/`，由 VizDataset.cleanup() 删除。
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def get_temp_root() -> Path:
     override = os.getenv("TEMP_DATASETS_DIR")
     if override:
         return Path(override)
-    return PROJECT_ROOT / "temp_datasets"
+    return PROJECT_ROOT / "runtime" / "datasets"
 
 
 def new_dataset_dir(dataset_id: Optional[str] = None) -> tuple[str, Path]:

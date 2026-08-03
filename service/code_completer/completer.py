@@ -27,7 +27,7 @@ class CodeCompletionError(Exception):
 # 允许读取的目录白名单（可通过 env 扩展）
 _DEFAULT_ALLOWED_ROOTS = [
     PROJECT_ROOT / "test_env",
-    PROJECT_ROOT / "temp_uploads",
+    PROJECT_ROOT / "runtime" / "uploads",
     PROJECT_ROOT / "user_code",
 ]
 

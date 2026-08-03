@@ -62,7 +62,7 @@ DATA_ROOT = os.getenv(
     str(_PROJECT_ROOT / "RAG" / "RAG_Data"),
 )
 _chroma_env = os.getenv("CHROMA_DB_PATH", "")
-CHROMA_PERSIST_DIR = _chroma_env if _chroma_env else str(_PROJECT_ROOT / "chroma_db")
+CHROMA_PERSIST_DIR = _chroma_env if _chroma_env else str(_PROJECT_ROOT / "runtime" / "chroma")
 DEFAULT_K = int(os.getenv("RAG_RETRIEVE_K", "3"))                 # 默认检索返回文档数
 # ===================================================================
 

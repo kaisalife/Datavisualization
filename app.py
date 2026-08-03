@@ -25,7 +25,9 @@ from service.conversation_store import init_db
 
 load_dotenv()
 
-_LOG_PATH = os.getenv("LOG_PATH", "logs/datavisual.jsonl")
+_PROJECT_ROOT = Path(__file__).resolve().parent
+_RUNTIME_DIR = _PROJECT_ROOT / "runtime"
+_LOG_PATH = os.getenv("LOG_PATH", str(_RUNTIME_DIR / "logs" / "datavisual.jsonl"))
 configure_logging(log_path=_LOG_PATH, level=os.getenv("LOG_LEVEL", "INFO"))
 _logger = get_logger("app")
 
@@ -33,9 +35,8 @@ app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
 
-_PROJECT_ROOT = Path(__file__).resolve().parent
-_DEFAULT_UPLOAD_DIR = _PROJECT_ROOT / "temp_uploads"
-_DEFAULT_CHARTS_DIR = _PROJECT_ROOT / "charts"
+_DEFAULT_UPLOAD_DIR = _RUNTIME_DIR / "uploads"
+_DEFAULT_CHARTS_DIR = _RUNTIME_DIR / "charts"
 
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", str(50 * 1024 * 1024)))
 

@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-_DB_PATH = os.getenv("CONVERSATION_DB_PATH", "logs/conversations.db")
+_DB_PATH = os.getenv("CONVERSATION_DB_PATH", "runtime/logs/conversations.db")
 
 
 def _get_db() -> sqlite3.Connection:

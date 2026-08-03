@@ -25,8 +25,8 @@ class MCPServiceManager:
                      "port": self.ports["run_code"]},
         }
         # Create logs directory
-        self.log_dir = Path("../logs")
-        self.log_dir.mkdir(exist_ok=True)
+        self.log_dir = Path("../runtime/logs")
+        self.log_dir.mkdir(parents=True, exist_ok=True)
 
         # Set signal handlers
         signal.signal(signal.SIGINT, self.signal_handler)
