@@ -286,7 +286,8 @@ class FlatOperator(BaseOperator):
         before = len(df)
         # 检测列内容是否为列表/JSON 字符串
         col = df[self.key]
-        if col.dtype == "object":
+        # pandas 3.0 字符串列的 dtype 可能是 StringDtype 而非 object
+        if col.dtype == "object" or pd.api.types.is_string_dtype(col):
             # 尝试解析 JSON 字符串为列表
             def _try_parse(v):
                 if isinstance(v, list):
