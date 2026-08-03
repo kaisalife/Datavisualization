@@ -10,6 +10,7 @@ __pycache__/
 *.pyd
 
 # 分发
+.Python
 build/
 develop-eggs/
 dist/
@@ -22,9 +23,11 @@ parts/
 sdist/
 var/
 wheels/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 Pipfile.lock
 
 # 虚拟环境
@@ -61,6 +64,7 @@ dmypy.json
 
 # 用户上传目录
 temp_uploads/
+temp_datasets/
 uploaded_files/
 data_files/
 uploads/
