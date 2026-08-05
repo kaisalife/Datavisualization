@@ -13,10 +13,13 @@ agent_autonomous_prompt = """
 1. read_data_file(file_path, max_lines=100)：读取数据文件内容预览（CSV/Excel/JSON/文本），返回前 N 行。用于了解数据结构。
 2. run_code(code)：在沙箱中执行 Python 代码，返回完整 stdout/stderr。用于生成 pyecharts 图表。每次调用会自动生成一个唯一的图表输出文件名，你只需在代码里调用 chart.render()，框架会自动保存到指定目录。
 
+## 已规划图表方案（planned_charts）
+你会收到 planned_charts（图表规划蓝图，由 plan 层基于数据语义特征生成，含每个图表的类型/标题/字段映射/布局/图例建议/多图组合）。**plan 层的核心价值是优化布局与图例**，请参考其规划自主调用工具生成图表：遵循规划的图表类型与字段映射，执行中优化布局与图例细节。若 planned_charts 为"(未提供)"，则由你根据数据特征自主规划。
+
 ## 工作流程
-1. 先用 read_data_file 读取数据文件，了解列名、数据类型、内容样例。
-2. 根据数据特征（canonical_dataset 的 semantic_role / detected_patterns）和用户需求，规划 2-4 个合适的图表。
-3. 对每个图表：生成 pyecharts 代码，用 run_code 执行。
+1. 查看 planned_charts（已规划图表方案），理解要生成哪些图表、类型、字段映射、布局。
+2. 用 read_data_file 读取数据文件，验证字段名与规划一致。
+3. 对 planned_charts 中每个图表：生成 pyecharts 代码（遵循规划的布局/图例），用 run_code 执行。
 4. 仔细查看 run_code 返回的 stdout/stderr：成功则继续下一个图表；失败则分析错误原因，修复代码后重新 run_code（最多重试 2 次）。
 5. 所有图表完成后，输出一段总结：列出已生成的图表文件名及简要说明。
 
@@ -60,8 +63,9 @@ def get_agent_autonomous_prompt() -> ChatPromptTemplate:
              "数据文件: {file_paths}\n"
              "DuckDB 表名: {table_name}\n"
              "canonical_dataset(数据特征):\n{canonical_dataset}\n"
+             "已规划图表方案(planned_charts):\n{planned_charts}\n"
              "用户需求: {user_prompt}\n"
              "图表输出目录: {output_dir}\n\n"
-             "请自主调用工具完成数据可视化任务。"),
+             "请参考规划自主调用工具完成数据可视化任务。"),
         ]
-    ).partial(canonical_dataset="(未提供)", table_name="", output_dir="")
+    ).partial(canonical_dataset="(未提供)", table_name="", output_dir="", planned_charts="(未提供)")

@@ -79,7 +79,7 @@ async def run_agent_pipeline(
     tools = wrap_local_tools(local_tools, ctx)
     agent_logs.append(f"🔧 已装载工具: {[t.name for t in tools]}")
 
-    # 构造自主 prompt（注入 DataProfile 语义特征）
+    # 构造 DataProfile 语义特征
     canonical_dataset = "(未提供)"
     if profile is not None:
         try:
@@ -87,10 +87,56 @@ async def run_agent_pipeline(
         except Exception as e:
             agent_logs.append(f"⚠️ DataProfile 序列化失败: {e}")
 
+    # ==== 阶段 1: 图表规划（plan 层 - 布局与图例优化）====
+    # plan 层基于数据语义特征规划图表类型/字段映射/布局/图例风格/多图组合，
+    # 作为 agent 自主执行的蓝图。agent loop 参考其规划，自主调用工具生成并迭代优化。
+    planned_charts = "(未提供)"
+    try:
+        from prompts.agent_prompt import get_agent_chart_designer_prompt
+        from service.utils import extract_json_from_response
+
+        plan_input = {
+            "data_file_path": ", ".join(file_paths) if file_paths else "",
+            "data_preview": profile.to_prompt_str() if profile else "",
+            "data_interface_info": "",
+            "canonical_dataset": canonical_dataset,
+            "user_chart_config": (model_.config or "(未提供)") if model_.config else "(未提供)",
+            "user_prompt": model_.user_prompt,
+            "mcp_prompt": getattr(model_, "mcp_prompt", "") or "",
+            "skill_prompt": getattr(model_, "skill_prompt", "") or "",
+        }
+        plan_result = await chat.ainvoke(get_agent_chart_designer_prompt().invoke(plan_input))
+        plan_content = plan_result["content"] if isinstance(plan_result, dict) else str(plan_result)
+        plans_data = extract_json_from_response(plan_content)
+        if not plans_data:
+            # 兜底:extract 未命中(纯 JSON 无围栏),直接 json.loads
+            try:
+                plans_data = json.loads(plan_content)
+            except Exception:
+                plans_data = None
+        if isinstance(plans_data, list):
+            plans_data = {"plans": plans_data}
+        plans = plans_data.get("plans", []) if isinstance(plans_data, dict) else []
+        if plans:
+            planned_charts = json.dumps(plans, ensure_ascii=False, indent=2)
+            agent_logs.append(f"📋 plan 层规划 {len(plans)} 个图表（布局/图例优化）")
+            try:
+                (output_folder / "all_plans.json").write_text(
+                    json.dumps({"plans": plans}, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            except Exception:
+                pass
+        else:
+            agent_logs.append("⚠️ plan 层未产出有效规划，agent 将自主规划")
+    except Exception as e:
+        agent_logs.append(f"⚠️ plan 阶段失败({e})，agent 将自主规划")
+
+    # ==== 阶段 2: agent 自主执行（参考 plan 规划）====
     prompt = get_agent_autonomous_prompt().invoke({
         "file_paths": ", ".join(file_paths) if file_paths else "(无)",
         "table_name": table_name,
         "canonical_dataset": canonical_dataset,
+        "planned_charts": planned_charts,
         "user_prompt": model_.user_prompt,
         "output_dir": str(charts_folder),
     })

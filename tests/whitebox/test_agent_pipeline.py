@@ -87,9 +87,16 @@ class TestLocalToolWrapper:
 
 # ===== run_agent_pipeline =====
 
-def _make_chat(fake_arun):
+def _make_chat(fake_arun, plan_content=None):
     chat = MagicMock()
     chat.arun_with_tools = fake_arun
+    # plan 阶段 ainvoke mock
+    if plan_content is None:
+        plan_content = '{"plans":[{"plan_id":"1","plan_name":"p1","chart_type":"Bar","chart_title":"t","x_axis":"a","y_axis":["b"],"use_column_names":true,"execution_order":1,"data_interface":{"available":false}}]}'
+
+    async def fake_ainvoke(prompt):
+        return {"content": plan_content, "agent_logs": []}
+    chat.ainvoke = fake_ainvoke
     return chat
 
 
@@ -98,6 +105,9 @@ def _make_model(viz_mode="agent", file_paths=None):
     model_.file_paths = file_paths if file_paths is not None else ["a.csv"]
     model_.user_prompt = "画图"
     model_.viz_mode = viz_mode
+    model_.config = None
+    model_.mcp_prompt = ""
+    model_.skill_prompt = ""
     return model_
 
 
@@ -106,6 +116,7 @@ def _make_profile():
     profile.duckdb_path = "/tmp/x.duckdb"
     profile.table_name = "t"
     profile.to_prompt_dict.return_value = {"schema": []}
+    profile.to_prompt_str.return_value = "数据预览"
     return profile
 
 
@@ -167,3 +178,25 @@ class TestRunAgentPipeline:
         assert len(result["successful_charts"]) == 0
         assert len(result["failed_plans"]) == 1
         assert "LLM down" in result["failed_plans"][0]["error"]
+
+    async def test_plan_stage_produces_blueprint(self, tmp_path):
+        from service.agent_pipeline import run_agent_pipeline
+        output_folder = tmp_path / "out"
+        captured_prompt = []
+
+        async def fake_arun(prompt, max_iterations=18, tools=None, config=None):
+            captured_prompt.append(str(prompt))
+            return {"content": "done", "agent_logs": [], "tool_calls": []}
+
+        plan_content = '{"plans":[{"plan_id":"1","plan_name":"销售趋势","chart_type":"Line","chart_title":"t","x_axis":"month","y_axis":["sales"],"use_column_names":true,"execution_order":1,"data_interface":{"available":false}}]}'
+        result = await run_agent_pipeline(
+            _make_chat(fake_arun, plan_content=plan_content),
+            _make_model(), _make_profile(), output_folder, task_id=None
+        )
+
+        # plan 阶段产出规划
+        assert any("plan 层规划" in l for l in result["agent_logs"])
+        # all_plans.json 保存
+        assert (output_folder / "all_plans.json").exists()
+        # planned_charts 注入自主 prompt
+        assert "销售趋势" in captured_prompt[0]
