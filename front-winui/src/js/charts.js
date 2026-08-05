@@ -103,3 +103,9 @@ function exportCurrentChart() {
   const m = src.match(/\/api\/chart\/(.+)$/);
   if (m && m[1]) sendToRust('exportChart', { chartId: decodeURIComponent(m[1]) });
 }
+
+function revealChartInFolder() {
+  const src = document.getElementById('cvIframe').src || '';
+  const m = src.match(/\/api\/chart\/(.+)$/);
+  if (m && m[1]) sendToRust('revealChart', { chartId: decodeURIComponent(m[1]) });
+}

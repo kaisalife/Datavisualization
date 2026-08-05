@@ -35,6 +35,7 @@ impl MainModel {
             "completeCode" => self.handle_complete_code(msg.data, sender),
             "openChart" => self.handle_open_chart(msg.data),
             "openChartsDir" => self.handle_open_charts_dir(sender),
+            "revealChart" => self.handle_reveal_chart(msg.data, sender),
             "exportChart" => self.handle_export_chart(msg.data, sender).await,
             _ => {
                 println!("[Bridge] 未知 action: {}", msg.action);
@@ -1137,6 +1138,55 @@ impl MainModel {
         {
             std::process::Command::new("explorer")
                 .arg(&dir)
+                .spawn()
+                .ok();
+        }
+        Ok(true)
+    }
+
+    /// 请求后端图表目录，定位到指定图表（explorer /select）
+    fn handle_reveal_chart(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let chart_id = match data.get("chartId").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return Ok(false),
+        };
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.get_charts_dir().await {
+                    Ok(dir) => {
+                        let file_path = std::path::Path::new(&dir).join(&chart_id);
+                        sender.post(MainMessage::RevealChart(
+                            file_path.to_string_lossy().to_string(),
+                        ));
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::ShowToast {
+                            message: format!("获取图表目录失败: {}", e),
+                            toast_type: "error".to_string(),
+                        });
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 在文件管理器中定位到指定图表文件（explorer /select）
+    pub(crate) fn handle_reveal_chart_exec(
+        &mut self,
+        path: String,
+    ) -> std::result::Result<bool, Error> {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", path))
                 .spawn()
                 .ok();
         }
