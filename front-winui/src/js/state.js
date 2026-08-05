@@ -17,6 +17,7 @@ const state = {
   activeLogs: [],
   lastChartData: null,
   backendUrl: '',
+  config: null,
 };
 
 // JS -> Rust 桥接

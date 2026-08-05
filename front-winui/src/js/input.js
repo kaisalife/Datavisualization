@@ -47,7 +47,7 @@ function sendPrompt() {
   if (state.mode === 'code') {
     sendToRust('completeCode', { prompt: prompt, files: filesToSend });
   } else {
-    sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, dbConfig: state.selectedDb });
+    sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, dbConfig: state.selectedDb, config: state.config || null });
   }
   scrollToBottom();
 }

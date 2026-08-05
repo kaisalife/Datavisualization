@@ -43,6 +43,7 @@ function convItemHtml(c) {
       '<div class="conv-meta"><span>' + date + '</span><span class="conv-status ' + stCls + '">' + st + '</span></div>' +
       '<div class="conv-actions">' +
         '<button class="conv-action-btn" onclick="event.stopPropagation();loadConv(\'' + escAttr(c.id) + '\')">查看</button>' +
+        '<button class="conv-action-btn" onclick="event.stopPropagation();editConvPrompt(\'' + escAttr(c.id) + '\',\'' + escAttr(c.prompt || '') + '\')">改提示词</button>' +
         '<button class="conv-action-btn del" onclick="event.stopPropagation();deleteConv(\'' + escAttr(c.id) + '\')">删除</button>' +
       '</div>' +
     '</div></div>';
@@ -51,6 +52,10 @@ function convItemHtml(c) {
 function filterConversations(v) { renderConversations(v); }
 function loadConv(id) { sendToRust('viewDetail', { conversationId: id }); }
 function deleteConv(id) { sendToRust('deleteConversation', { conversationId: id }); }
+function editConvPrompt(id, oldPrompt) {
+  const np = prompt('修改提示词后可重新提交:', oldPrompt || '');
+  if (np !== null && np.trim()) sendToRust('updatePrompt', { conversationId: id, prompt: np });
+}
 
 // ===== 文件列表 =====
 function renderFileTree(filter) {

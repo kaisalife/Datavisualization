@@ -22,6 +22,7 @@ impl MainModel {
             "loadHistory" => self.handle_load_history(sender),
             "viewDetail" => self.handle_view_detail(msg.data, sender),
             "deleteConversation" => self.handle_delete_conversation(msg.data, sender),
+            "updatePrompt" => self.handle_update_prompt(msg.data, sender),
             "openFolder" => self.handle_open_folder().await,
             "attachFile" => self.handle_attach_file().await,
             "selectDb" => self.handle_select_db(msg.data),
@@ -103,6 +104,10 @@ impl MainModel {
         };
         let mcp_prompt = self.settings.mcp_prompt.clone();
         let skill_prompt = self.settings.skill_prompt.clone();
+        let config = data
+            .get("config")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         std::thread::spawn(move || {
             let handle = tokio_handle();
@@ -112,7 +117,7 @@ impl MainModel {
                     user_prompt: prompt,
                     viz_mode,
                     db_config,
-                    config: None,
+                    config,
                     model_url,
                     model_type,
                     model_api_key,
@@ -418,6 +423,44 @@ impl MainModel {
         Ok(true)
     }
 
+    /// 修改对话提示词
+    fn handle_update_prompt(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let conv_id = match data.get("conversationId").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return Ok(false),
+        };
+        let new_prompt = match data.get("prompt").and_then(|v| v.as_str()) {
+            Some(p) => p.to_string(),
+            None => return Ok(false),
+        };
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.update_prompt(&conv_id, &new_prompt).await {
+                    Ok(()) => {
+                        sender.post(MainMessage::ShowToast {
+                            message: "提示词已更新".to_string(),
+                            toast_type: "success".to_string(),
+                        });
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::ShowToast {
+                            message: format!("更新失败: {}", e),
+                            toast_type: "error".to_string(),
+                        });
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
+
     /// 删除后刷新列表
     pub(crate) fn handle_conversation_deleted(
         &mut self,
@@ -466,7 +509,12 @@ impl MainModel {
 
     /// 存储 task_id
     pub(crate) fn handle_task_started(&mut self, task_id: String) -> std::result::Result<bool, Error> {
-        self.task_id = Some(task_id);
+        self.task_id = Some(task_id.clone());
+        // 结构化传递 task_id 给 JS（取代正则解析日志订阅 trace）
+        self.js(&format!(
+            "window.app.subscribeTrace('{}')",
+            Self::js_escape(&task_id)
+        ));
         Ok(false)
     }
 
