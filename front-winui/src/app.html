@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataVisualServer - 数据可视化平台</title>
+<style>__CSS__</style>
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="header-logo"><div class="logo-icon">📊</div><span>DataVisualServer</span></div>
+    <nav class="header-tabs">
+      <button class="header-tab active" id="tab-chat" onclick="switchHeaderMode('chat')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</button>
+      <button class="header-tab" id="tab-code" onclick="switchHeaderMode('code')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>代码补全</button>
+    </nav>
+    <div class="header-right">
+      <span id="status-bar" style="font-size:11px;color:var(--text-secondary);margin-right:4px">就绪</span>
+      <button class="icon-btn" onclick="sendToRust('openChartsDir',{})" title="打开图表文件夹"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></button>
+      <button class="icon-btn" onclick="sendToRust('toggleSettings',{})" title="设置"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+      <div class="avatar">K</div>
+    </div>
+  </header>
+
+  <div class="body">
+    <aside class="sidebar">
+      <div class="sidebar-tabs">
+        <div class="sidebar-tab active" onclick="switchSidebarTab('conversations',this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</div>
+        <div class="sidebar-tab" onclick="switchSidebarTab('files',this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>文件</div>
+      </div>
+
+      <div class="tab-panel active" id="panel-conversations">
+        <div class="conv-panel-top"><button class="new-chat-btn" onclick="newChat()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建对话</button></div>
+        <div class="search-box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="搜索对话..." oninput="filterConversations(this.value)"></div>
+        <div class="conversation-list" id="convList"></div>
+      </div>
+
+      <div class="tab-panel" id="panel-files">
+        <div class="files-panel-top">
+          <button class="open-project-btn" onclick="sendToRust('openFolder',{})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>打开项目文件夹</button>
+          <div id="projectInfo" style="display:none" class="project-info"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="proj-name" id="projName"></span><span class="close" onclick="closeProject()">✕</span></div>
+          <div class="search-box" id="fileSearchBox" style="display:none;margin:6px 0 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="搜索文件..." oninput="filterFiles(this.value)"></div>
+        </div>
+        <div class="file-tree" id="fileTree"><div class="files-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><div>打开项目文件夹<br>浏览数据文件</div></div></div>
+      </div>
+
+      <div class="sidebar-footer"><button class="settings-btn" onclick="sendToRust('toggleSettings',{})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</button></div>
+    </aside>
+
+    <div class="chat-area">
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-messages-inner" id="chatInner">
+          <div class="welcome" id="welcomeState">
+            <div class="welcome-logo">📊</div>
+            <div class="welcome-title">DataVisualServer</div>
+            <div class="welcome-desc">上传数据文件或从左侧文件浏览器添加，用自然语言描述你想要的图表，AI 自动为你生成可视化分析</div>
+            <div class="welcome-suggestions">
+              <div class="suggestion-card" onclick="useSuggestion('csv')"><div class="suggestion-icon" style="background:rgba(82,196,26,0.1)">📈</div><div class="suggestion-text"><div class="suggestion-title">CSV 趋势分析</div><div class="suggestion-desc">上传销售数据，生成趋势折线图</div></div></div>
+              <div class="suggestion-card" onclick="useSuggestion('excel')"><div class="suggestion-icon" style="background:rgba(91,141,239,0.1)">📊</div><div class="suggestion-text"><div class="suggestion-title">Excel 多表对比</div><div class="suggestion-desc">多 Excel 合并，生成对比柱状图</div></div></div>
+              <div class="suggestion-card" onclick="useSuggestion('db')"><div class="suggestion-icon" style="background:rgba(146,84,222,0.1)">🗄️</div><div class="suggestion-text"><div class="suggestion-title">数据库可视化</div><div class="suggestion-desc">连接数据库，LLM 自动选表生成图表</div></div></div>
+              <div class="suggestion-card" onclick="useSuggestion('pdf')"><div class="suggestion-icon" style="background:rgba(250,140,22,0.1)">📄</div><div class="suggestion-text"><div class="suggestion-title">PDF 报表提取</div><div class="suggestion-desc">从 PDF 提取表格数据并可视化</div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <div class="chat-input-inner">
+          <div class="chat-input-box" id="chatInputBox">
+            <div class="file-chips" id="fileChips"></div>
+            <div class="chat-input-row">
+              <textarea class="chat-input" id="prompt-input" placeholder="描述你想要的图表，按 Enter 发送..." rows="1" oninput="autoResize(this)" onkeydown="handleInputKey(event)"></textarea>
+              <div class="input-actions">
+                <button class="input-action-btn" onclick="sendToRust('attachFile',{})" title="上传文件"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                <button class="input-action-btn" onclick="showDbSelector()" title="数据库连接"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></button>
+                <button class="send-btn" id="send-btn" onclick="sendPrompt()" title="发送"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+                <button class="send-btn danger" id="cancel-btn" style="display:none" onclick="cancelTask()" title="取消"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-hint">
+            <div class="mode-chips">
+              <div class="mode-chip active" onclick="selectMode(this,'auto')">Auto</div>
+              <div class="mode-chip" onclick="selectMode(this,'chart')">Chart</div>
+              <div class="mode-chip" onclick="selectMode(this,'scientific')">Scientific</div>
+            </div>
+            <span>Enter 发送 · Shift+Enter 换行</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="chart-viewer" id="chartViewer" onclick="if(event.target===this)closeChartViewer()">
+  <div class="cv-inner">
+    <div class="cv-header">
+      <div class="cv-title" id="cvTitle">图表预览</div>
+      <div class="cv-toolbar">
+        <button class="cv-tool-btn" onclick="revealChartInFolder()" title="在文件夹中显示"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button class="cv-tool-btn" onclick="exportCurrentChart()" title="导出到本地"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+        <button class="cv-tool-btn" onclick="openChartNewTab()" title="新窗口打开"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>
+        <button class="cv-tool-btn" onclick="closeChartViewer()" title="关闭"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+    </div>
+    <div class="cv-body">
+      <div class="cv-chart"><iframe id="cvIframe" sandbox="allow-scripts allow-same-origin"></iframe></div>
+      <div class="cv-sidebar">
+        <div class="cv-tabs">
+          <div class="cv-tab active" onclick="cvTab('info',this)">详情</div>
+          <div class="cv-tab" onclick="cvTab('logs',this)">Agent 日志</div>
+          <div class="cv-tab" onclick="cvTab('code',this)">代码</div>
+        </div>
+        <div class="cv-panel active" id="cvPanel-info">
+          <div class="cv-info-row"><span class="cv-info-label">图表类型</span><span class="cv-info-value" id="cvType">-</span></div>
+          <div class="cv-info-row"><span class="cv-info-label">状态</span><span class="cv-info-value" id="cvStatus">-</span></div>
+          <div class="cv-info-row"><span class="cv-info-label">文件</span><span class="cv-info-value" id="cvFile">-</span></div>
+          <div class="cv-desc" id="cvDesc"></div>
+        </div>
+        <div class="cv-panel" id="cvPanel-logs" style="font-family:var(--font-mono);font-size:12px;line-height:1.6"><div id="cvLogs" style="color:var(--text-secondary)">暂无日志</div></div>
+        <div class="cv-panel" id="cvPanel-code" style="font-family:var(--font-mono);font-size:12px;line-height:1.6;white-space:pre-wrap;color:var(--text-primary)"><div id="cvCode">暂无代码</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="settings-modal" id="settingsModal" onclick="if(event.target===this)sendToRust('toggleSettings',{})">
+  <div class="settings-modal-inner" onclick="event.stopPropagation()">
+    <div class="settings-header"><div class="settings-title">设置</div><div class="modal-close" onclick="sendToRust('toggleSettings',{})">✕</div></div>
+    <div class="settings-body" id="settingsBody"></div>
+    <div class="settings-footer"><button class="btn btn-ghost" onclick="sendToRust('toggleSettings',{})">取消</button><button class="btn btn-primary" onclick="saveSettings()">保存</button></div>
+  </div>
+</div>
+
+<div class="db-selector-modal" id="dbSelectorModal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="db-selector-inner" onclick="event.stopPropagation()">
+    <div class="db-selector-header"><div class="settings-title" style="font-size:15px">选择数据库连接</div><div class="modal-close" onclick="document.getElementById('dbSelectorModal').classList.remove('show')">✕</div></div>
+    <div class="db-selector-body" id="dbSelectorBody"></div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>__JS__</script>
+</body>
+</html>

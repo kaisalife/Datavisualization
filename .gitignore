@@ -81,6 +81,8 @@ viz_data_cache/
 charts/
 output/
 *.html
+# 例外:前端 UI 源码 html 需纳入版本控制
+!front-winui/src/app.html
 *.png
 *.jpg
 *.jpeg
