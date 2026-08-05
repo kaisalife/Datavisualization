@@ -147,8 +147,9 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
     plan_prompt = get_agent_chart_designer_prompt()
 
     # ==== 提前派生输出目录（data_preview 需要保存接口代码）====
-    base_charts_folder = Path("./charts")
-    base_charts_folder.mkdir(exist_ok=True)
+    from service.constants import get_charts_dir
+    base_charts_folder = get_charts_dir()
+    base_charts_folder.mkdir(parents=True, exist_ok=True)
     first_file_stem = Path(model_.file_paths[0]).stem if model_.file_paths else "dataset"
     output_folder = base_charts_folder / first_file_stem
     output_folder.mkdir(exist_ok=True)

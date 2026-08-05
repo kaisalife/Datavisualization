@@ -34,6 +34,8 @@ impl MainModel {
             "switchMode" => self.handle_switch_mode(msg.data),
             "completeCode" => self.handle_complete_code(msg.data, sender),
             "openChart" => self.handle_open_chart(msg.data),
+            "openChartsDir" => self.handle_open_charts_dir(sender),
+            "exportChart" => self.handle_export_chart(msg.data, sender).await,
             _ => {
                 println!("[Bridge] 未知 action: {}", msg.action);
                 Ok(false)
@@ -1097,6 +1099,94 @@ impl MainModel {
             }
             self.js_open_chart(path);
         }
+        Ok(true)
+    }
+
+    /// 请求后端图表目录路径（异步），收到后打开文件管理器
+    fn handle_open_charts_dir(
+        &mut self,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.get_charts_dir().await {
+                    Ok(dir) => {
+                        sender.post(MainMessage::OpenChartsDir(dir));
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::ShowToast {
+                            message: format!("获取图表目录失败: {}", e),
+                            toast_type: "error".to_string(),
+                        });
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 在文件管理器中打开图表目录
+    pub(crate) fn handle_open_charts_dir_exec(
+        &mut self,
+        dir: String,
+    ) -> std::result::Result<bool, Error> {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(&dir)
+                .spawn()
+                .ok();
+        }
+        Ok(true)
+    }
+
+    /// 导出图表到用户选定的本地目录（后端不写用户路径，安全）
+    async fn handle_export_chart(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let chart_id = match data.get("chartId").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return Ok(false),
+        };
+        let dir = match FileBox::new()
+            .title("选择导出目录")
+            .open_folder(&self.window)?
+            .await?
+        {
+            Some(d) => d,
+            None => return Ok(false), // 用户取消
+        };
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.download_chart(&chart_id).await {
+                    Ok(bytes) => {
+                        let out_path = dir.join(&chart_id);
+                        match std::fs::write(&out_path, &bytes) {
+                            Ok(()) => sender.post(MainMessage::ShowToast {
+                                message: format!("已导出: {}", out_path.display()),
+                                toast_type: "success".to_string(),
+                            }),
+                            Err(e) => sender.post(MainMessage::ShowToast {
+                                message: format!("写入失败: {}", e),
+                                toast_type: "error".to_string(),
+                            }),
+                        }
+                    }
+                    Err(e) => sender.post(MainMessage::ShowToast {
+                        message: format!("下载失败: {}", e),
+                        toast_type: "error".to_string(),
+                    }),
+                }
+            });
+        });
         Ok(true)
     }
 }

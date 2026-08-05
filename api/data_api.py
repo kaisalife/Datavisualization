@@ -64,6 +64,17 @@ def data_profile():
         _cleanup_duckdb(profile)
 
 
+@data_bp.route("/charts-dir", methods=["GET"])
+@monitor_response("data_api:charts_dir")
+def charts_dir():
+    """返回后端固定图表目录的绝对路径，供前端"打开图表文件夹"使用。"""
+    auth_error = check_api_key()
+    if auth_error:
+        return auth_error
+    from service.constants import get_charts_dir
+    return jsonify({"dir": str(get_charts_dir().resolve())}), 200
+
+
 def _cleanup_duckdb(profile) -> None:
     """删除预览产生的临时 .duckdb 文件及其空目录（预览无需保留）。"""
     if profile is None:

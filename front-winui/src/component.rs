@@ -121,6 +121,7 @@ impl Component for MainModel {
             MainMessage::SetStatus(msg) => self.handle_set_status(msg),
             MainMessage::SetProgress { percent, text } => self.handle_set_progress(percent, text),
             MainMessage::ShowToast { message, toast_type } => self.handle_show_toast(message, toast_type),
+            MainMessage::OpenChartsDir(dir) => self.handle_open_charts_dir_exec(dir),
             MainMessage::HistoryLoaded(convs) => self.handle_history_loaded(convs),
             MainMessage::ConversationDetailLoaded(detail) => self.handle_conversation_detail_loaded(detail),
             MainMessage::ConversationDeleted => self.handle_conversation_deleted(sender),

@@ -15,6 +15,7 @@ pub enum MainMessage {
     SetStatus(String),
     SetProgress { percent: f64, text: String },
     ShowToast { message: String, toast_type: String },
+    OpenChartsDir(String),
     HistoryLoaded(Vec<api::types::ConversationSummary>),
     ConversationDetailLoaded(api::types::ConversationDetail),
     ConversationDeleted,

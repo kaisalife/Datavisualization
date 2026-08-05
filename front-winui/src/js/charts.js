@@ -97,3 +97,9 @@ function openChartNewTab() {
   const src = document.getElementById('cvIframe').src;
   if (src) sendToRust('openChart', { path: src });
 }
+
+function exportCurrentChart() {
+  const src = document.getElementById('cvIframe').src || '';
+  const m = src.match(/\/api\/chart\/(.+)$/);
+  if (m && m[1]) sendToRust('exportChart', { chartId: decodeURIComponent(m[1]) });
+}

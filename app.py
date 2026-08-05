@@ -22,6 +22,7 @@ from Entity import ErrorResponse
 from service.exceptions import ConfigError, ServiceError
 from service.observability.logger import configure_logging, get_logger
 from service.conversation_store import init_db
+from service.constants import get_charts_dir
 from api.common import monitor_response
 
 load_dotenv()
@@ -37,14 +38,12 @@ CORS(app)
 sock = Sock(app)
 
 _DEFAULT_UPLOAD_DIR = _RUNTIME_DIR / "uploads"
-_DEFAULT_CHARTS_DIR = _RUNTIME_DIR / "charts"
-
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", str(50 * 1024 * 1024)))
 
 _UPLOAD_DIR = Path(os.getenv("TEMP_UPLOAD_DIR", "")) if os.getenv("TEMP_UPLOAD_DIR", "") else _DEFAULT_UPLOAD_DIR
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-_CHARTS_DIR = Path(os.getenv("CHARTS_DIR", "")) if os.getenv("CHARTS_DIR", "") else _DEFAULT_CHARTS_DIR
+_CHARTS_DIR = get_charts_dir()
 _CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 
 _SERVICE_API_KEY = os.getenv("SERVICE_API_KEY", "")

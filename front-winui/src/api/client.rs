@@ -225,6 +225,47 @@ impl ApiClient {
         format!("{}/api/chart/{}", self.base_url, chart_id)
     }
 
+    /// 获取后端固定图表目录的绝对路径
+    pub async fn get_charts_dir(&self) -> Result<String> {
+        let url = format!("{}/api/charts-dir", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("网络请求失败")?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("dir").and_then(|d| d.as_str()).map(String::from))
+                .ok_or_else(|| anyhow::anyhow!("解析 charts-dir 响应失败"))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
+    /// 下载图表 HTML 字节（用于导出到用户本地，后端不写用户路径）
+    pub async fn download_chart(&self, chart_id: &str) -> Result<Vec<u8>> {
+        let url = self.chart_url(chart_id);
+        let resp = self
+            .client
+            .get(&url)
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("网络请求失败")?;
+        let status = resp.status();
+        if status.is_success() {
+            Ok(resp.bytes().await?.to_vec())
+        } else {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
     /// 提交代码可视化补全
     ///
     /// 错误返回分级信息：
