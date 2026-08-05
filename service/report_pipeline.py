@@ -16,16 +16,45 @@ import asyncio
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
+import aiohttp
 import pandas as pd
 
-from service.viz_data.adapters.worldbank_adapter import (
-    WorldBankAdapter,
+from service.data_ingestion.builtin_data.worldbank_constants import (
     select_indicators_with_llm,
     _COUNTRY_MAP,
+    _INDICATOR_DESCRIPTIONS,
 )
-from service.viz_data.adapters.stats_gov_adapter import StatsGovAdapter
-from service.viz_data.adapters.stats_gov_data import CHINA_MACRO_INDICATORS
+from service.data_ingestion.builtin_data.stats_gov_data import (
+    CHINA_MACRO_INDICATORS,
+    get_indicator_data,
+)
+from service.data_ingestion.models import DataProfile
 from service.report_generator import generate_and_save_report
+
+
+# 指标代码 -> 中文名称的反查表
+_INDICATOR_NAME_MAP = {ind["code"]: ind["name_cn"] for ind in _INDICATOR_DESCRIPTIONS}
+
+# 中国宏观指标代码 -> 名称的反查表
+_CHINA_INDICATOR_NAME_MAP = {ind["code"]: ind["name"] for ind in CHINA_MACRO_INDICATORS}
+
+
+def _df_to_profile(
+    df: pd.DataFrame, name: str, source_kind: str = "api", source_path: str = ""
+) -> DataProfile:
+    """从 DataFrame 构建 DataProfile。"""
+    schema = [{"name": col, "type": str(df[col].dtype)} for col in df.columns]
+    preview = df.head(10).fillna("").to_dict(orient="records")
+    return DataProfile(
+        table_name=name,
+        source_kind=source_kind,
+        source_path=source_path,
+        schema=schema,
+        row_count=len(df),
+        preview=preview,
+        stats={},
+        duckdb_path="",
+    )
 
 
 async def fetch_multiple_indicators(
@@ -35,13 +64,13 @@ async def fetch_multiple_indicators(
     end_year: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """并发拉取单个国家的多个指标数据。
-    
+
     Args:
         indicator_codes: 指标代码列表
         country: 国家代码
         start_year: 起始年份
         end_year: 结束年份（默认当年）
-    
+
     Returns:
         [
             {
@@ -49,7 +78,7 @@ async def fetch_multiple_indicators(
                 "name": "GDP（现价美元）",
                 "country_code": "CN",
                 "country_name": "中国",
-                "dataset": VizDataset,
+                "profile": DataProfile,
                 "df": pd.DataFrame,
             },
             ...
@@ -57,40 +86,71 @@ async def fetch_multiple_indicators(
     """
     if end_year is None:
         end_year = pd.Timestamp.now().year
-    
-    from service.viz_data.adapters.worldbank_adapter import _COUNTRY_MAP
+
     country_name = _COUNTRY_MAP.get(country.upper(), country)
-    
-    # 并发创建 Adapter 并拉取
+
     async def _fetch_one(code: str):
-        adapter = WorldBankAdapter(
-            indicator=code,
-            country=country,
-            start_year=start_year,
-            end_year=end_year,
+        url = (
+            f"http://api.worldbank.org/v2/country/{country}/indicator/{code}"
+            f"?format=json&date={start_year}:{end_year}&per_page=10000"
         )
-        dataset = await adapter.fetch()
-        result = {
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                raw = await resp.json()
+
+        # data[0] 是元信息，data[1] 是数据数组
+        if not raw or len(raw) < 2 or raw[1] is None:
+            return None
+
+        records = raw[1]
+        rows = []
+        for rec in records:
+            value = rec.get("value")
+            if value is None:
+                continue  # 跳过空值
+            rows.append({
+                "年份": int(rec["date"]),
+                "国家代码": rec.get("countryiso3code", country.upper()),
+                "国家": rec.get("country", {}).get("value", country_name),
+                "指标代码": rec.get("indicator", {}).get("id", code),
+                "指标名称": rec.get("indicator", {}).get("value", code),
+                "数值": float(value),
+                "单位": "美元" if "GDP" in code else
+                        "%" if "ZG" in code or "ZS" in code else
+                        "人" if "POP" in code else "",
+                "数据来源": "世界银行",
+            })
+
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+        df = df.sort_values("年份").reset_index(drop=True)
+
+        name = _INDICATOR_NAME_MAP.get(code, rows[0]["指标名称"])
+
+        profile = _df_to_profile(
+            df,
+            name=name,
+            source_kind="api",
+            source_path="世界银行",
+        )
+
+        return {
             "indicator_code": code,
-            "name": dataset.name if dataset.name else code,
+            "name": name,
             "country_code": country.upper(),
             "country_name": country_name,
-            "dataset": dataset,
-            "df": None,
+            "profile": profile,
+            "df": df,
         }
-        
-        # 填充 DataFrame（从 parquet 读取）
-        if dataset.tabular and dataset.tabular.data_ref:
-            parquet_path = dataset.tabular.data_ref.path
-            if parquet_path and Path(parquet_path).exists():
-                result["df"] = pd.read_parquet(parquet_path)
-        
-        return result
-    
+
     tasks = [_fetch_one(code) for code in indicator_codes]
     results = await asyncio.gather(*tasks)
-    
-    return [r for r in results if r.get("df") is not None]
+
+    return [r for r in results if r is not None]
 
 
 async def fetch_multi_country_indicators(
@@ -472,7 +532,7 @@ async def generate_report_from_prompt(
             "report_path": str,
             "countries": list,
             "selected_indicators": list,
-            "datasets": list[VizDataset],
+            "profiles": list[DataProfile],
             "charts": list[str],
         }
     """
@@ -516,9 +576,9 @@ async def generate_report_from_prompt(
         country_names = [c["name"] for c in countries]
         
         # Step 2: 拉取数据
-        datasets = []
+        profiles = []
         charts = []
-        
+
         if is_compare_mode:
             # 对比模式：多国家 + 多指标
             multi_data = await fetch_multi_country_indicators(
@@ -527,15 +587,15 @@ async def generate_report_from_prompt(
                 start_year=start_year,
                 end_year=end_year,
             )
-            
-            # 收集所有 dataset
+
+            # 收集所有 profile
             for data in multi_data["all_data"]:
-                if data.get("dataset"):
-                    datasets.append(data["dataset"])
-            
+                if data.get("profile"):
+                    profiles.append(data["profile"])
+
             # 生成对比图表
             charts = generate_compare_charts(multi_data["by_indicator"])
-            
+
             # 报告标题
             title_countries = " vs ".join(country_names[:3])
             report_title = f"{title_countries}宏观经济对比分析报告"
@@ -543,32 +603,32 @@ async def generate_report_from_prompt(
             # 单国家模式
             country = country_codes[0]
             country_name = country_names[0]
-            
+
             data_list = await fetch_multiple_indicators(
                 indicator_codes=indicator_codes,
                 country=country,
                 start_year=start_year,
                 end_year=end_year,
             )
-            
-            datasets = [d["dataset"] for d in data_list if d.get("dataset")]
+
+            profiles = [d["profile"] for d in data_list if d.get("profile")]
             charts = generate_charts_from_dataframes(data_list)
-            
+
             # 报告标题
             report_title = f"{country_name}宏观经济分析报告"
             if "GDP" in user_prompt or "gdp" in user_prompt:
                 report_title = f"{country_name} GDP 趋势分析报告"
             elif "人口" in user_prompt:
                 report_title = f"{country_name}人口数据分析报告"
-        
-        if not datasets:
+
+        if not profiles:
             return {
                 "success": False,
                 "error": "未获取到有效数据",
                 "selected_indicators": indicators,
                 "countries": countries,
             }
-        
+
         # Step 3: 确定输出路径
         if output_path is None:
             from datetime import datetime
@@ -576,20 +636,20 @@ async def generate_report_from_prompt(
             output_dir = Path("charts")
             output_dir.mkdir(exist_ok=True)
             output_path = str(output_dir / f"report_{timestamp}.html")
-        
+
         # Step 4: 生成完整报告
         report_path = await generate_and_save_report(
             output_path=output_path,
             title=report_title,
-            datasets=datasets,
+            datasets=profiles,
             charts=charts,
             user_prompt=user_prompt,
             llm_client=llm_client,
         )
-        
+
         # 读取报告 HTML
         report_html = Path(report_path).read_text(encoding="utf-8")
-        
+
         return {
             "success": True,
             "is_compare_mode": is_compare_mode,
@@ -597,7 +657,7 @@ async def generate_report_from_prompt(
             "report_path": str(report_path),
             "countries": countries,
             "selected_indicators": indicators,
-            "datasets": datasets,
+            "profiles": profiles,
             "charts": charts,
             "selection_explanation": selection.get("explanation", ""),
         }
@@ -708,37 +768,60 @@ async def fetch_china_macro_indicators(
     end_year: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """并发获取中国宏观经济指标数据。
-    
+
     Args:
         indicator_codes: 指标代码列表
         start_year: 起始年份
         end_year: 结束年份（默认当年）
-    
+
     Returns:
-        每个指标的数据，含 df, dataset 等字段
+        每个指标的数据，含 df, profile 等字段
     """
+    if end_year is None:
+        end_year = pd.Timestamp.now().year
+
     async def _fetch_one(code: str):
-        adapter = StatsGovAdapter(
-            indicator_code=code,
-            start_year=start_year,
-            end_year=end_year,
+        data = get_indicator_data(code)
+        if not data:
+            return None
+
+        df = pd.DataFrame(data)
+
+        # 年份过滤
+        if "年份" in df.columns:
+            df = df[(df["年份"] >= start_year) & (df["年份"] <= end_year)]
+
+        if df.empty:
+            return None
+
+        # 添加时间列用于排序和显示
+        if "季度" in df.columns:
+            df["时间"] = df.apply(
+                lambda row: f"{int(row['年份'])}Q{int(row['季度'])}", axis=1
+            )
+        elif "月份" in df.columns:
+            df["时间"] = df.apply(
+                lambda row: f"{int(row['年份'])}-{int(row['月份']):02d}", axis=1
+            )
+
+        name = _CHINA_INDICATOR_NAME_MAP.get(code, code)
+        profile = _df_to_profile(
+            df,
+            name=name,
+            source_kind="builtin",
+            source_path="国家统计局",
         )
-        dataset = await adapter.fetch()
-        # 从 parquet 读取 df
-        df = None
-        if dataset.tabular and dataset.tabular.data_ref:
-            import pandas as pd
-            df = pd.read_parquet(dataset.tabular.data_ref.path)
+
         return {
             "indicator_code": code,
-            "name": dataset.name,
-            "dataset": dataset,
+            "name": name,
+            "profile": profile,
             "df": df,
         }
 
     tasks = [_fetch_one(code) for code in indicator_codes]
     results = await asyncio.gather(*tasks)
-    return [r for r in results if r.get("df") is not None]
+    return [r for r in results if r is not None]
 
 
 # ============================================================

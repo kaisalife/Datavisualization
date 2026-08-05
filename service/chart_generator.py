@@ -9,6 +9,8 @@ from pathlib import Path
 
 from agent_tools.sandbox import run_python_safely
 
+from service.monitoring import trace
+
 try:
     from agent import BaseAgent
     from service.utils import extract_code_from_response
@@ -46,10 +48,21 @@ try:
     _PyBase.render = _patched_render
 except Exception as _e:
     print(f"[chart_generator header] pyecharts patch skipped: {_e}")
+
+# --- DuckDB 连接初始化 (通过环境变量 DUCKDB_PATH 传入) ---
+_DUCKDB_PATH = _os.environ.get("DUCKDB_PATH", "")
+if _DUCKDB_PATH:
+    try:
+        import duckdb as _duckdb
+        conn = _duckdb.connect(_DUCKDB_PATH, read_only=True)
+        print(f"[chart_generator header] DuckDB connected: {_DUCKDB_PATH}")
+    except Exception as _e:
+        print(f"[chart_generator header] DuckDB init failed: {_e}")
 # --- end header ---
 
 '''
 
+@trace(category="chart_gen")
 async def generate_single_chart(
     chat: BaseAgent,
     plan: dict,
@@ -64,6 +77,10 @@ async def generate_single_chart(
     retriever=None,
     max_retries: int = 3,
     dataset_summary: str = "",
+    # DuckDB 集成参数 (新方案)
+    duckdb_path: str = "",
+    table_name: str = "",
+    user_config: str = "(未提供)",
 ) -> tuple[bool, str, str]:
     plan_id = plan.get("plan_id", "unknown")
     plan_name = plan.get("plan_name", "Unknown Plan")
@@ -133,6 +150,9 @@ async def generate_single_chart(
                     "plan_details": plan_details,
                     "reference_docs": reference_docs,
                     "dataset_summary": dataset_summary or "(未提供)",
+                    "table_name": table_name,
+                    "duckdb_path": duckdb_path,
+                    "user_config": user_config,
                 }
                 if engine and generate_prompt:
                     content = await engine.run_prompt(generate_prompt.invoke(gen_input))
@@ -148,6 +168,9 @@ async def generate_single_chart(
                     "error_message": last_error,
                     "data_preview": data_preview,
                     "dataset_summary": dataset_summary or "(未提供)",
+                    "table_name": table_name,
+                    "duckdb_path": duckdb_path,
+                    "user_config": user_config,
                 }
                 if engine and debug_prompt:
                     content = await engine.run_prompt(debug_prompt.invoke(debug_input))
@@ -178,6 +201,8 @@ async def generate_single_chart(
                 run_env = dict(os.environ)
                 run_env["CHART_OUTPUT_DIR"] = charts_folder_abs
                 run_env["CHART_OUTPUT_NAME"] = chart_filename
+                if duckdb_path:
+                    run_env["DUCKDB_PATH"] = duckdb_path
 
                 proc_result = run_python_safely(
                     modified_code,

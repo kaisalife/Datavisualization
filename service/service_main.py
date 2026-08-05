@@ -26,9 +26,10 @@ try:
     from service.memory.project_memory import get_project_memory
     from service.query_engine import QueryEngine
     from service.exceptions import ConfigError
-    from service.viz_data import VizDataset
-    from service.viz_data.factory import create_adapter
-    from service.viz_data.adapters.base import AdapterError
+    from service.data_ingestion import ingest as duckdb_ingest
+    from service.data_ingestion import ingest_files as duckdb_ingest_files
+    from service.data_ingestion import DataSource as DuckDBSource
+    from service.data_ingestion.models import DataProfile
 except ImportError:
     from ..Entity import GenerateChartWithPromptRequest
     from ..prompts.agent_prompt import (
@@ -44,9 +45,18 @@ except ImportError:
     from .memory.project_memory import get_project_memory
     from .query_engine import QueryEngine
     from .exceptions import ConfigError
-    from .viz_data import VizDataset
-    from .viz_data.factory import create_adapter
-    from .viz_data.adapters.base import AdapterError
+    try:
+        from ..data_ingestion import ingest as duckdb_ingest
+        from ..data_ingestion import ingest_files as duckdb_ingest_files
+        from ..data_ingestion import DataSource as DuckDBSource
+        from ..data_ingestion.models import DataProfile
+    except ImportError:
+        duckdb_ingest = None
+        duckdb_ingest_files = None
+        DuckDBSource = None
+        DataProfile = None
+
+from service.monitoring import trace
 
 load_dotenv()
 
@@ -92,10 +102,25 @@ def _check_cancelled(task_id):
     return is_cancelled(task_id)
 
 
+@trace(category="pipeline")
 async def service_main(model_: GenerateChartWithPromptRequest, config_path=None, task_id=None):
     agent_logs: list[str] = []
     config = load_config(config_path)
     mcp_config = config["mcp_config"]
+
+    # 解析用户自定义图表配置（model_.config 为 JSON 字符串，与系统 config 不同）
+    user_chart_config: dict = {}
+    if model_.config:
+        try:
+            _parsed_cfg = json.loads(model_.config)
+            if isinstance(_parsed_cfg, dict):
+                user_chart_config = _parsed_cfg
+            else:
+                agent_logs.append("⚠️ 用户 config 不是 JSON 对象，已忽略")
+        except Exception as e:
+            print(f"⚠️ 用户 config 解析失败，忽略: {e}")
+            agent_logs.append(f"⚠️ 用户 config 解析失败: {e}")
+    user_chart_config_json = json.dumps(user_chart_config, ensure_ascii=False) if user_chart_config else "(未提供)"
 
     if _check_cancelled(task_id):
         agent_logs.append("❌ 任务已被用户取消")
@@ -115,78 +140,78 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
         raise ConfigError(f"Agent initialization failed: {e}") from e
 
     print("\n" + "="*60)
-    print("📄 步骤 0: 通过 Adapter 层生成 VizDataset")
+    print("📄 步骤 0: 通过 DuckDB 接入数据源")
     print("="*60)
-    agent_logs.append("📄 步骤 0: 通过 Adapter 层生成 VizDataset")
+    agent_logs.append("📄 步骤 0: 通过 DuckDB 接入数据源")
 
     plan_prompt = get_agent_chart_designer_prompt()
 
-    # ==== 构造 Adapter（新路径唯一入口）====
-    try:
-        adapter = create_adapter(model_)
-    except AdapterError as e:
-        raise ConfigError(f"无法匹配数据源 Adapter: {e}") from e
+    # ==== 提前派生输出目录（data_preview 需要保存接口代码）====
+    base_charts_folder = Path("./charts")
+    base_charts_folder.mkdir(exist_ok=True)
+    first_file_stem = Path(model_.file_paths[0]).stem if model_.file_paths else "dataset"
+    output_folder = base_charts_folder / first_file_stem
+    output_folder.mkdir(exist_ok=True)
+    print(f"\n📁 输出文件夹: {output_folder}")
 
-    # 提前初始化 QueryEngine（DatabaseAdapter 生成 SQL 时需要）
+    # ==== 文件源：先走 data_preview，生成原始文本预览 ====
+    data_test = ""
+    if model_.file_paths:
+        data_test, _ = await get_smart_file_preview(
+            chat, model_.file_paths, output_folder=output_folder
+        )
+
+    # ==== DuckDB 数据接入 ====
+    if duckdb_ingest is None:
+        raise ConfigError("data_ingestion 模块未安装，请检查依赖")
+
+    # 构造 DataSource 并接入
     engine = QueryEngine(chat_model=chat, model_name=model_.model_type)
 
-    # 根据 Adapter 能力决定是否注入 engine
-    needs_llm = adapter.capabilities().needs_llm
-    print(f"🔀 Adapter={type(adapter).__name__} source={adapter.source_kind()} needs_llm={needs_llm}")
-    agent_logs.append(f"🔀 Adapter={type(adapter).__name__} source={adapter.source_kind()} needs_llm={needs_llm}")
-
     try:
-        dataset = await adapter.adapt(engine=engine if needs_llm else None)
-    except AdapterError as e:
-        raise ConfigError(f"Adapter 失败: {e}") from e
+        if model_.file_paths:
+            if len(model_.file_paths) > 1:
+                # 多文件: 全部接入同一个 DuckDB 会话
+                profile = await duckdb_ingest_files(model_.file_paths)
+            else:
+                # 单文件
+                source = DuckDBSource(kind="file", path=model_.file_paths[0], name=first_file_stem)
+                profile = await duckdb_ingest(source)
+        elif model_.db_config:
+            # 数据库源
+            db_type = model_.db_config.get("type", "postgresql")
+            source = DuckDBSource(
+                kind="database",
+                db_type=db_type,
+                db_config=model_.db_config,
+                options={"tables": model_.db_config.get("tables"), "query": model_.db_config.get("query")},
+            )
+            profile = await duckdb_ingest(source)
+        else:
+            raise ConfigError("必须提供文件或数据库配置")
+    except Exception as e:
+        raise ConfigError(f"DuckDB 数据接入失败: {e}") from e
 
-    print(f"✅ VizDataset 生成成功: {dataset.name} (id={dataset.dataset_id})")
-    print(f"   primary_form={dataset.primary_form}, "
-          f"tabular_rows={dataset.tabular.row_count if dataset.tabular else 0}")
+    print(f"✅ 数据接入成功: 表名={profile.table_name}, 行数={profile.row_count}")
+    print(f"   DuckDB 路径: {profile.duckdb_path}")
+    print(f"   Schema: {[(c['name'], c['type']) for c in profile.schema]}")
+    agent_logs.append(f"✅ 数据接入成功: {profile.table_name} ({profile.row_count} 行)")
 
     if _check_cancelled(task_id):
         agent_logs.append("❌ 任务已被用户取消")
         raise RuntimeError("Task cancelled by user")
 
-    # ==== 派生输出目录 & 主数据路径 ====
-    data_file_name = dataset.logical_id()
-    base_charts_folder = Path("./charts")
-    base_charts_folder.mkdir(exist_ok=True)
-    output_folder = base_charts_folder / data_file_name
-    output_folder.mkdir(exist_ok=True)
-    print(f"\n📁 输出文件夹: {output_folder}")
+    # DuckDB 路径和表名传给 chart_generator
+    file_test = profile.source_path  # 兼容旧字段
+    duckdb_path = profile.duckdb_path
+    table_name = profile.table_name
 
-    # 主数据文件路径：优先用 VizDataset 落盘的 parquet；
-    # 文件源在多文件场景可能与 primary_data_path 不同，兼容处理。
-    file_test = dataset.primary_data_path() or (
-        model_.file_paths[0] if model_.file_paths else ""
-    )
-
-    # ==== 派生数据预览 & 接口代码 ====
-    # 文件源保留 get_smart_file_preview（会生成 data_interface_codes 供 LLM 用）
-    if dataset.source_kind == "file" and model_.file_paths:
-        data_test, data_interface_codes = await get_smart_file_preview(
-            chat, model_.file_paths, output_folder=output_folder
-        )
-    else:
-        data_test = adapter.preview_text(dataset)
-        data_interface_codes = []
-        if file_test:
-            print(f"📎 主数据文件: {file_test}")
+    # ==== 用 DataProfile 生成数据预览 (如果 data_preview 未生成) ====
+    if not data_test:
+        data_test = profile.to_prompt_str()
+        print(f"📎 数据预览 (DataProfile):\n{data_test[:500]}...")
 
     data_interface_info = ""
-    if data_interface_codes:
-        # 只传函数签名摘要，避免完整代码 (~4KB/file) 反复塞进 prompt
-        summarized = [
-            {
-                "file_path": item["file_path"],
-                "code_file": item["code_file"],
-                "functions": _extract_function_signatures(item["code"]),
-            }
-            for item in data_interface_codes
-        ]
-        data_interface_info = json.dumps(summarized, ensure_ascii=False, indent=2)
-        print(f"\n📊 数据接口信息（摘要 {len(data_interface_info)} 字符）:\n{data_interface_info}")
     
     print("\n" + "="*60)
     print("📋 步骤 1: 生成图表计划")
@@ -196,21 +221,23 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
     project_memory = get_project_memory()
     skill_prompt = (project_memory + "\n" + model_.skill_prompt) if project_memory else model_.skill_prompt
 
-    # Adapter 生成的 VizDataset 通过独立字段 canonical_dataset 注入 planner
+    # DataProfile 通过 canonical_dataset 注入 planner
     canonical_dataset_json = "(未提供)"
-    if dataset is not None:
+    if profile is not None:
         try:
-            canonical_dataset_json = dataset.to_prompt_json()
+            import json as _json
+            canonical_dataset_json = _json.dumps(profile.to_prompt_dict(), ensure_ascii=False, indent=2)
             print(f"📎 canonical_dataset 生成成功 (len={len(canonical_dataset_json)})")
             agent_logs.append(f"📎 canonical_dataset 生成成功 (len={len(canonical_dataset_json)})")
         except Exception as e:
-            print(f"⚠️ VizDataset 序列化失败: {e}")
+            print(f"⚠️ DataProfile 序列化失败: {e}")
 
     plan_input = {
         "data_file_path": file_test,
         "data_preview": data_test,
         "data_interface_info": data_interface_info,
         "canonical_dataset": canonical_dataset_json,
+        "user_chart_config": user_chart_config_json,
         "user_prompt": model_.user_prompt,
         "mcp_prompt": model_.mcp_prompt,
         "skill_prompt": skill_prompt
@@ -218,13 +245,25 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
     plans_content = await engine.run_prompt(plan_prompt.invoke(plan_input))
     print(f"\n📝 计划响应:\n{plans_content}")
     print(f"\n🔧 QueryEngine 状态: {engine}")
-    
+
+    # 保存原始计划响应，便于排查 LLM 输出格式问题
+    try:
+        plan_response_file = output_folder / "plan_response.txt"
+        with open(plan_response_file, "w", encoding="utf-8") as f:
+            f.write(plans_content or "")
+    except Exception as e:
+        print(f"⚠️ 保存计划响应失败: {e}")
+
     plans_data = extract_json_from_response(plans_content)
-    
+
+    # 兼容 LLM 直接返回 plans 数组的情况
+    if isinstance(plans_data, list):
+        plans_data = {"plans": plans_data}
+
     if not plans_data or "plans" not in plans_data:
-        print("❌ 无法解析计划数据")
-        return
-    
+        snippet = (plans_content or "").strip()[:500]
+        raise ConfigError(f"无法解析计划数据，LLM 响应前 500 字符: {snippet}")
+
     plans = plans_data.get("plans", [])
     print(f"\n📊 共找到 {len(plans)} 个计划")
 
@@ -258,13 +297,13 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
 
     # 生成简化的 dataset_summary（列 schema），供 chart_generator 每个 chart 复用
     dataset_summary_json = "(未提供)"
-    if dataset is not None and dataset.tabular is not None:
+    if profile is not None:
         try:
             dataset_summary_json = json.dumps({
-                "source_kind": dataset.source_kind,
-                "primary_form": dataset.primary_form,
-                "columns": [c.to_dict() for c in dataset.tabular.columns],
-                "row_count": dataset.tabular.row_count,
+                "source_kind": profile.source_kind,
+                "table_name": profile.table_name,
+                "columns": profile.schema,
+                "row_count": profile.row_count,
             }, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"⚠️ dataset_summary 生成失败: {e}")
@@ -311,6 +350,9 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
                     retriever=rag_retriever,
                     max_retries=max_retries,
                     dataset_summary=dataset_summary_json,
+                    duckdb_path=duckdb_path,
+                    table_name=table_name,
+                    user_config=user_chart_config_json,
                 )
                 return plan_item, success, chart_path, error
 
@@ -335,12 +377,8 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
                     "error": error,
                 })
     finally:
-        # 清理 VizDataset 临时目录
-        if dataset is not None:
-            try:
-                dataset.cleanup()
-            except Exception as e:
-                print(f"⚠️ VizDataset 清理失败: {e}")
+        # DuckDB 文件在 profile.duckdb_path，可按需清理
+        pass
     
     if _check_cancelled(task_id):
         agent_logs.append("❌ 任务已被用户取消")

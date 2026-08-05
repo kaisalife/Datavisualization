@@ -22,6 +22,7 @@ from Entity import ErrorResponse
 from service.exceptions import ConfigError, ServiceError
 from service.observability.logger import configure_logging, get_logger
 from service.conversation_store import init_db
+from api.common import monitor_response
 
 load_dotenv()
 
@@ -55,20 +56,23 @@ _tasks_lock = threading.Lock()
 
 # ========== 全局错误处理器 ==========
 @app.errorhandler(ConfigError)
+@monitor_response("error_handler:ConfigError")
 def handle_config_error(e):
-    return jsonify(ErrorResponse(detail=str(e)).dict()), 500
+    return jsonify(ErrorResponse(detail=str(e)).model_dump()), 500
 
 
 @app.errorhandler(ServiceError)
+@monitor_response("error_handler:ServiceError")
 def handle_service_error(e):
     _logger.error("service_error", error=str(e), error_type=type(e).__name__)
-    return jsonify(ErrorResponse(detail=str(e)).dict()), 500
+    return jsonify(ErrorResponse(detail=str(e)).model_dump()), 500
 
 
 @app.errorhandler(Exception)
+@monitor_response("error_handler:Exception")
 def handle_unexpected_error(e):
     _logger.error("unexpected_error", error=str(e), error_type=type(e).__name__)
-    return jsonify(ErrorResponse(detail=f"内部错误: {type(e).__name__}: {e}").dict()), 500
+    return jsonify(ErrorResponse(detail=f"内部错误: {type(e).__name__}: {e}").model_dump()), 500
 
 
 # ========== 注入共享依赖到蓝图 ==========
@@ -88,15 +92,17 @@ init_api_deps(
 init_db()
 
 # ========== 注册蓝图 ==========
-from api import chart_bp, task_bp, code_bp
+from api import chart_bp, task_bp, code_bp, data_bp
 from api.conversation_api import bp as conversation_bp
 app.register_blueprint(chart_bp)
 app.register_blueprint(task_bp)
 app.register_blueprint(code_bp)
+app.register_blueprint(data_bp)
 app.register_blueprint(conversation_bp)
 
 # ========== WebSocket 端点 ==========
 from api.common import register_ws_connection, unregister_ws_connection
+from service.monitoring.ws_streamer import ws_streamer
 
 
 @sock.route("/ws/task/<task_id>")
@@ -108,6 +114,17 @@ def ws_task(ws, task_id: str):
             time.sleep(0.5)
     finally:
         unregister_ws_connection(task_id, ws)
+
+
+@sock.route("/ws/trace/<task_id>")
+def ws_trace(ws, task_id: str):
+    """WebSocket 端点：实时推送 trace / error / token 事件"""
+    ws_streamer.register(task_id, ws)
+    try:
+        while ws.connected:
+            time.sleep(0.5)
+    finally:
+        ws_streamer.unregister(task_id, ws)
 
 
 if __name__ == "__main__":

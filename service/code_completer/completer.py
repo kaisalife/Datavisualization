@@ -114,11 +114,10 @@ async def complete_visualization_code(request: Any) -> dict:
 
     config = load_config(None)
     chat = get_agent_class(
-        agent_class=config["agent_class"],
-        model_url=getattr(request, "model_url", None) or config.get("model_url"),
-        model_type=getattr(request, "model_type", None) or config.get("model_type"),
-        model_api_key=getattr(request, "model_api_key", None) or config.get("model_api_key"),
-        mcp_config=config.get("mcp_config") or {},
+        getattr(request, "model_type", None),
+        getattr(request, "model_url", None),
+        getattr(request, "model_api_key", None),
+        config.get("mcp_config") or {},
     )
     await chat.initialize()
     engine = QueryEngine(chat_model=chat, model_name=getattr(request, "model_type", None))

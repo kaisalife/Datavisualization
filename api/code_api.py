@@ -8,13 +8,14 @@ import uuid
 
 from flask import Blueprint, request, jsonify
 from Entity import CompleteVizCodeRequest, ErrorResponse
-from api.common import check_api_key, get_upload_dir, get_logger
+from api.common import check_api_key, get_upload_dir, get_logger, monitor_response
 
 
 code_bp = Blueprint("code", __name__, url_prefix="/api")
 
 
 @code_bp.route("/complete-viz-code", methods=["POST"])
+@monitor_response("code_api:complete")
 def complete_viz_code():
     auth_error = check_api_key()
     if auth_error:
@@ -56,7 +57,7 @@ def complete_viz_code():
             model_api_key = request.form.get("model_api_key")
 
         if not code_file_paths:
-            return jsonify(ErrorResponse(detail="code_file_paths 不能为空").dict()), 400
+            return jsonify(ErrorResponse(detail="code_file_paths 不能为空").model_dump()), 400
 
         req = CompleteVizCodeRequest(
             code_file_paths=code_file_paths,
@@ -83,4 +84,4 @@ def complete_viz_code():
 
     except Exception as e:
         get_logger().error("code_completion_failed", error=str(e), error_type=type(e).__name__)
-        return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").dict()), 500
+        return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500

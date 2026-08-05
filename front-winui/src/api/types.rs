@@ -117,6 +117,30 @@ pub struct TaskResult {
 }
 
 // ============================================================
+// 模型配置（持久化到 settings.json）
+// ============================================================
+
+/// 单个模型配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConfig {
+    /// 唯一标识
+    pub id: String,
+    /// 配置名称（如 "智谱 GLM"）
+    pub name: String,
+    /// 模型类型/名称（如 glm-4.5）
+    #[serde(rename = "modelType")]
+    pub model_type: String,
+    /// 模型 API URL
+    #[serde(rename = "modelUrl")]
+    pub model_url: String,
+    /// 模型 API Key
+    #[serde(rename = "modelApiKey")]
+    pub model_api_key: String,
+    /// 是否启用（同一时刻建议只有一个启用）
+    pub enabled: bool,
+}
+
+// ============================================================
 // 代码补全 API
 // ============================================================
 
@@ -186,4 +210,52 @@ pub struct TaskCompleteNotification {
     pub status: String,
     pub result: Option<TaskResult>,
     pub error: Option<String>,
+}
+
+// ============================================================
+// 数据库配置（持久化到 settings.json）
+// ============================================================
+
+/// 单个数据库连接配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbConfig {
+    /// 唯一标识
+    pub id: String,
+    /// 连接名称（如 "生产环境 MySQL"）
+    pub name: String,
+    /// 数据库类型（MySQL / PostgreSQL / SQLite / SQL Server）
+    #[serde(rename = "type")]
+    pub db_type: String,
+    /// 主机地址
+    pub host: String,
+    /// 端口
+    pub port: String,
+    /// 用户名
+    pub user: String,
+    /// 密码
+    #[serde(default)]
+    pub password: String,
+    /// 数据库名
+    #[serde(default)]
+    pub database: String,
+}
+
+impl DbConfig {
+    /// 生成用于后端 API 的 JSON 字符串
+    pub fn to_json_string(&self) -> String {
+        serde_json::json!({
+            "type": self.db_type,
+            "host": self.host,
+            "port": self.port,
+            "user": self.user,
+            "password": self.password,
+            "database": self.database,
+        })
+        .to_string()
+    }
+
+    /// 显示用的简短描述
+    pub fn display_short(&self) -> String {
+        format!("{} [{}] {}:{}/{}", self.name, self.db_type, self.host, self.port, self.database)
+    }
 }

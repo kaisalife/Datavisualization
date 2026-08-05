@@ -180,10 +180,16 @@ impl ApiClient {
         F: Fn(u64),
     {
         let max_attempts = 300; // 5 分钟
+        let mut consecutive_errors = 0;
         for i in 0..max_attempts {
             let task = match self.get_task(task_id).await {
                 Ok(task) => task,
                 Err(e) => {
+                    consecutive_errors += 1;
+                    // 连续 3 次错误（含 404 任务不存在）直接放弃
+                    if consecutive_errors >= 3 {
+                        anyhow::bail!("查询任务失败（连续 {} 次）: {}", consecutive_errors, e);
+                    }
                     if i % 5 == 0 {
                         tracing::warn!("查询任务失败，继续重试: {}", e);
                     }
@@ -191,6 +197,7 @@ impl ApiClient {
                     continue;
                 }
             };
+            consecutive_errors = 0;
             match task.status {
                 TaskStatus::Success => return Ok(task),
                 TaskStatus::Failed => {

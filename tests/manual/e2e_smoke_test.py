@@ -48,7 +48,7 @@ from service.service_main import service_main
 
 
 def _get_default_data_file() -> str:
-    return str(project_root / "test_env" / "data_files" / "季度数据.csv")
+    return str(project_root / "tests" / "fixtures" / "data_files" / "季度数据.csv")
 
 
 def _parse_args():

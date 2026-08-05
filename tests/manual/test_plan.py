@@ -46,7 +46,7 @@ async def test_service_main():
     print(f"API密钥: {'已设置' if model_api_key else '未设置'}")
     
     # 数据文件路径：命令行参数优先，其次环境变量，最后项目内默认路径
-    DEFAULT_DATA_FILE = str(project_root / "test_env" / "data_files" / "季度数据.csv")
+    DEFAULT_DATA_FILE = str(project_root / "tests" / "fixtures" / "data_files" / "季度数据.csv")
     data_file = sys.argv[1] if len(sys.argv) > 1 else os.getenv("TEST_DATA_FILE", DEFAULT_DATA_FILE)
     if not Path(data_file).exists():
         print(f"❌ 数据文件不存在: {data_file}")

@@ -40,6 +40,8 @@ from service.observability.logger import (
     EVENT_LLM_CALL_START,
     get_logger,
 )
+from service.monitoring import trace
+from service.monitoring.tracer import _task_id
 
 
 class QueryEngine:
@@ -64,6 +66,7 @@ class QueryEngine:
         if system_prompt:
             self.messages.append(SystemMessage(content=system_prompt))
 
+    @trace(category="llm_call")
     async def run_prompt(self, prompt, chat=None,
                          query_source: str = QuerySource.GENERATE) -> str:
         """执行一次 LLM 调用，自动累积 messages 与 usage。
@@ -153,6 +156,38 @@ class QueryEngine:
                           total_tokens=used,
                           cost_rmb=cost,
                           messages_count=len(self.messages))
+
+        # ── 监控：token 广播 ──────────────────────────────────
+        try:
+            from service.monitoring.ws_streamer import ws_streamer
+            from service.monitoring.trace_store import trace_store as _ts
+            from datetime import datetime, timezone
+            task_id = _task_id.get("")
+            if task_id:
+                delta_in = input_tokens - self.budget_tracker.total_input_tokens
+                delta_out = output_tokens - self.budget_tracker.total_output_tokens
+                _ts.add_tokens(task_id, {
+                    "prompt_tokens": delta_in,
+                    "completion_tokens": delta_out,
+                    "total_tokens": delta_in + delta_out,
+                    "model_name": self._model_name or "",
+                    "func_name": "run_prompt",
+                })
+                ws_streamer.broadcast(task_id, {
+                    "type": "token",
+                    "task_id": task_id,
+                    "model_name": self._model_name or "",
+                    "func_name": "run_prompt",
+                    "prompt_tokens": delta_in,
+                    "completion_tokens": delta_out,
+                    "total_tokens": delta_in + delta_out,
+                    "cumulative_total": used,
+                    "call_index": self.usage["calls"] - 1,
+                    "cost_rmb": cost,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+        except Exception:
+            pass
 
         if isinstance(decision, StopDecision):
             self.aborted = True

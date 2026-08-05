@@ -34,6 +34,15 @@ agent_chart_designer_prompt ="""
 数据接口信息（若提供）：
 数据接口已完成数据清洗、类型转换，提供标准化数据格式。请仔细阅读函数签名与 docstring，理解可用的函数及其返回的数据格式。
 
+**用户自定义图表配置（user_chart_config）**：
+若提供（非"(未提供)"），是用户对图表渲染的 JSON 偏好，可能包含：
+- chart_type：期望图表类型（若与数据特征冲突，以数据特征优先，并在 chart_reason 注明）
+- width / height：图表尺寸（如 "1200px"）
+- theme：主题（如 LIGHT/DARK）
+- color / palette：配色
+- 其他 pyecharts 可配置项
+规划时尽量采纳；与数据特征矛盾时以数据特征优先。
+
 你的目标：
 - 分析数据特征（优先 canonical_dataset.stats / preview_rows / semantic_hints）
 - 制定可视化计划
@@ -141,6 +150,27 @@ agent_generate_chart_prompt ="""
 
 如果计划中没有数据接口或 data_interface.available = false，则按照以下步骤执行：
 
+1.5. DuckDB 数据查询（当 table_name 非空时，优先使用此方式）
+如果输入中提供了 `table_name`（非空字符串），则数据已注册到 DuckDB 中，**不要用 pandas 读取文件**。
+DuckDB 连接 `conn` 已由框架 header 自动初始化，直接使用：
+
+```python
+# 查询全部数据
+df = conn.sql("SELECT * FROM {table_name}").df()
+
+# 带过滤和聚合的查询
+df = conn.sql("SELECT category, SUM(amount) as total FROM {table_name} GROUP BY category ORDER BY total DESC").df()
+
+# 查询指定列
+df = conn.sql("SELECT col1, col2 FROM {table_name} WHERE col1 > 100").df()
+```
+
+注意：
+- `conn` 是全局变量，直接使用，不需要 import duckdb
+- SQL 语法为 DuckDB 方言 (类似 PostgreSQL)
+- 表名和列名区分大小写，用双引号包裹: `SELECT "ColumnName" FROM "TableName"`
+- 结果用 `.df()` 转 pandas DataFrame，再传给 pyecharts
+
 2. 严格遵循参考文档
 仔细阅读 {{reference_docs}} 中的 pyecharts 示例代码。
 
@@ -205,6 +235,14 @@ agent_generate_chart_prompt ="""
   os.makedirs("./charts", exist_ok=True)       # ❌ 目录已由框架创建
   ```
 - 无需构造时间戳或 plan_id 组成的文件名，无需 `datetime.now().strftime(...)`
+
+5.5. 用户自定义图表配置（user_config）
+若 user_config 非"(未提供)"，它是用户对图表渲染的 JSON 偏好，生成 pyecharts 代码时务必遵守：
+- width / height -> `InitOpts(width=..., height=...)`
+- theme -> 传入图表构造函数（如 `Bar(init_opts=InitOpts(theme=ThemeType.DARK))`）
+- color / palette -> 通过 `set_series_opts` / `itemstyle` 配置
+- 其他字段按 pyecharts 对应 API 应用
+若 user_config 为 "(未提供)"，使用默认：`InitOpts(width="900px", height="500px")` + `ThemeType.LIGHT`。
 
 6. 代码输出规范
 仅返回 Python 代码，不要包含任何解释、注释或额外文本。
@@ -369,16 +407,16 @@ def get_agent_chart_designer_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate(
         [
         ("system",agent_chart_designer_prompt),
-        ("human","{data_file_path}\n数据表格的相关数据的预览:{data_preview}\n数据接口信息:{data_interface_info}\ncanonical_dataset(权威):\n{canonical_dataset}\n{user_prompt}\n{mcp_prompt}\n{skill_prompt}")
+        ("human","{data_file_path}\n数据表格的相关数据的预览:{data_preview}\n数据接口信息:{data_interface_info}\ncanonical_dataset(权威):\n{canonical_dataset}\n用户自定义图表配置:{user_chart_config}\n{user_prompt}\n{mcp_prompt}\n{skill_prompt}")
         ]
-    ).partial(canonical_dataset="(未提供)")
+    ).partial(canonical_dataset="(未提供)", user_chart_config="(未提供)")
 def get_agent_generate_chart_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate(
         [
         ("system",agent_generate_chart_prompt),
-        ("human","数据文件: {data_file_path}\n数据预览: {data_preview}\n数据列 schema(canonical):\n{dataset_summary}\n计划: {plan_details}\n参考文档: {reference_docs}")
+        ("human","数据文件: {data_file_path}\n数据预览: {data_preview}\n数据列 schema(canonical):\n{dataset_summary}\nDuckDB表名: {table_name}\n计划: {plan_details}\n参考文档: {reference_docs}\n用户自定义图表配置: {user_config}")
         ]
-    ).partial(dataset_summary="(未提供)")
+    ).partial(dataset_summary="(未提供)", table_name="", user_config="(未提供)")
 def get_agent_data_preview_prompt(pandas_reference: str = "") -> ChatPromptTemplate:
     return ChatPromptTemplate(
         [
@@ -391,9 +429,9 @@ def get_agent_debug_chart_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate(
         [
         ("system",agent_debug_chart_prompt),
-        ("human","计划: {plan_details}\n失败代码:\n{failed_code}\n错误:\n{error_message}\n数据预览:\n{data_preview}\n数据列 schema(canonical):\n{dataset_summary}")
+        ("human","计划: {plan_details}\n失败代码:\n{failed_code}\n错误:\n{error_message}\n数据预览:\n{data_preview}\n数据列 schema(canonical):\n{dataset_summary}\nDuckDB表名: {table_name}\n用户自定义图表配置: {user_config}")
         ]
-    ).partial(dataset_summary="(未提供)")
+    ).partial(dataset_summary="(未提供)", table_name="", user_config="(未提供)")
 
 
 agent_db_query_prompt = """

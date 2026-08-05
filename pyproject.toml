@@ -48,6 +48,8 @@ dependencies = [
     "pandas>=2.0",
     "openpyxl>=3.1",   # .xlsx 读写
     "xlrd>=2.0",       # .xls 读取
+    "duckdb>=1.1",     # 统一数据访问层 (CSV/JSON/Parquet/DB 直接 SQL 查询)
+    "unstructured[all-docs]>=0.23",  # PDF/DOCX/图片 非结构化文档解析
     # ---- MCP 工具 ----
     "fastmcp>=0.1",
     # ---- 图表生成（LLM 生成的代码运行时依赖）----

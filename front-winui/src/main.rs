@@ -6,5 +6,6 @@ fn main() -> Result<(), main::Error> {
     use main::MainModel;
     use winio::prelude::*;
 
-    App::new("rs.datavisual.winui")?.run::<MainModel>(())
+    let app = App::builder().name("rs.datavisual.winui").build()?;
+    app.block_on(MainModel::run(()))
 }

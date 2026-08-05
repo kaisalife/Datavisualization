@@ -7,5 +7,6 @@ API 层总入口
 from api.chart_api import chart_bp
 from api.task_api import task_bp
 from api.code_api import code_bp
+from api.data_api import data_bp
 
-__all__ = ["chart_bp", "task_bp", "code_bp"]
+__all__ = ["chart_bp", "task_bp", "code_bp", "data_bp"]

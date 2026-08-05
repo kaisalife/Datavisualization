@@ -6,11 +6,12 @@ GET  /api/chart/<chart_id>             获取图表 HTML
 """
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 
-from flask import Blueprint, request, jsonify, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from Entity import GenerateChartWithPromptRequest, ErrorResponse
-from api.common import check_api_key, get_upload_dir, get_tasks, get_tasks_lock, get_executor, _run_service_main_in_executor
+from api.common import check_api_key, get_upload_dir, get_tasks, get_tasks_lock, get_executor, _run_service_main_in_executor, monitor_response
 from service.conversation_store import create_conversation
 
 
@@ -18,6 +19,7 @@ chart_bp = Blueprint("chart", __name__, url_prefix="/api")
 
 
 @chart_bp.route("/generate-chart-with-prompt", methods=["POST"])
+@monitor_response("chart_api:generate")
 def generate_chart_with_prompt():
     auth_error = check_api_key()
     if auth_error:
@@ -51,11 +53,11 @@ def generate_chart_with_prompt():
             try:
                 db_config = json.loads(db_config_str)
             except Exception as e:
-                return jsonify(ErrorResponse(detail=f"db_config JSON 解析失败: {e}").dict()), 400
+                return jsonify(ErrorResponse(detail=f"db_config JSON 解析失败: {e}").model_dump()), 400
 
         # 必须至少提供一种数据源
         if not saved_paths and not db_config:
-            return jsonify(ErrorResponse(detail="必须提供 files 或 db_config 其中之一").dict()), 400
+            return jsonify(ErrorResponse(detail="必须提供 files 或 db_config 其中之一").model_dump()), 400
 
         request_model = GenerateChartWithPromptRequest(
             file_paths=saved_paths if saved_paths else None,
@@ -84,17 +86,20 @@ def generate_chart_with_prompt():
         )
         with get_tasks_lock():
             get_tasks()[task_id] = {"status": "pending", "result": None, "error": None,
-                                    "raw": None, "created_at": get_executor()._thread_name_prefix}
+                                    "raw": None, "created_at": datetime.now().isoformat()}
 
-        get_executor().submit(_run_service_main_in_executor, task_id, request_model, conversation_id)
+        # 线程池中没有 Flask 应用上下文，需传入 app 并在函数内手动推入
+        app = current_app._get_current_object()
+        get_executor().submit(_run_service_main_in_executor, app, task_id, request_model, conversation_id)
 
         return jsonify({"task_id": task_id, "status": "pending", "conversation_id": conversation_id}), 202
 
     except Exception as e:
-        return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").dict()), 500
+        return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
 
 
 @chart_bp.route("/chart/<chart_id>", methods=["GET"])
+@monitor_response("chart_api:get_chart")
 def get_chart(chart_id):
     auth_error = check_api_key()
     if auth_error:
@@ -102,11 +107,11 @@ def get_chart(chart_id):
 
     # 安全校验：防止路径穿越
     if not chart_id or "/" in chart_id or "\\" in chart_id or ".." in chart_id:
-        return jsonify(ErrorResponse(detail="Invalid chart ID").dict()), 400
+        return jsonify(ErrorResponse(detail="Invalid chart ID").model_dump()), 400
 
     charts_dir = get_charts_dir()
     if not charts_dir.exists():
-        return jsonify(ErrorResponse(detail="Charts directory not found").dict()), 404
+        return jsonify(ErrorResponse(detail="Charts directory not found").model_dump()), 404
 
     candidate = charts_dir / chart_id
     if not candidate.exists():
@@ -115,12 +120,12 @@ def get_chart(chart_id):
             candidate = p
             break
         else:
-            return jsonify(ErrorResponse(detail="Chart not found").dict()), 404
+            return jsonify(ErrorResponse(detail="Chart not found").model_dump()), 404
 
     try:
         return send_from_directory(str(candidate.parent), candidate.name)
     except Exception as e:
-        return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").dict()), 500
+        return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
 
 
 def get_charts_dir() -> Path:

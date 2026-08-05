@@ -42,46 +42,57 @@ def get_file_preview(files:list):
         id=id+1
     return res_str
 
-def _compute_csv_preview(f:str):
-    df = None
-    for encoding in CSV_ENCODINGS:
+def _read_text_preview(f: str, max_chars: int = 8000) -> str:
+    """按文本方式读取文件前 max_chars 个字符，自动尝试常见编码。"""
+    encodings = list(CSV_ENCODINGS) if CSV_ENCODINGS else ["utf-8"]
+    if "utf-8" not in encodings:
+        encodings.append("utf-8")
+
+    for encoding in encodings:
         try:
-            df = pd.read_csv(f, encoding=encoding)
-            print(f"✅ 使用 {encoding} 编码读取成功")
-            break
+            with open(f, "r", encoding=encoding) as fh:
+                content = fh.read(max_chars)
+            print(f"✅ 使用 {encoding} 编码读取文本成功")
+            return content.replace("\r\n", "\n")
         except UnicodeDecodeError:
             continue
         except Exception as e:
-            print(f"⚠️ 使用 {encoding} 编码读取失败: {e}")
+            print(f"⚠️ 使用 {encoding} 编码读取文本失败: {e}")
             continue
-    if df is None:
-        df = pd.read_csv(f, encoding='utf-8', errors='ignore')
-        print("⚠️ 使用 utf-8 编码并忽略错误读取")
-    
-    rows, cols = df.shape
+
+    with open(f, "r", encoding="utf-8", errors="ignore") as fh:
+        content = fh.read(max_chars)
+    print("⚠️ 使用 utf-8 编码并忽略错误读取文本")
+    return content.replace("\r\n", "\n")
+
+
+def _compute_csv_preview(f: str):
+    """CSV 不再用 pandas 解析，直接读原始文本交给 AI 判断格式。"""
+    preview = _read_text_preview(f, max_chars=8000)
     res_str = f"文件: {os.path.basename(f)}\n"
-    res_str += f"数据形状: {rows} 行 × {cols} 列\n"
-    res_str += f"列名: {list(df.columns)}\n"
-    res_str += f"\n前10行数据预览:\n"
-    res_str += df.head(10).to_string()
+    res_str += f"原始文本预览（前 {len(preview)} 字符）:\n{preview}\n"
+    if len(preview) >= 8000:
+        res_str += "（内容已截断，后续由代码生成阶段按需读取完整文件）\n"
     print(res_str)
     return res_str
 
 def get_csv(f:str):
     return get_file_cache().get_or_compute(f, _compute_csv_preview)
 
-def _compute_xls_preview(f:str):
-    df=pd.read_excel(f)
-    
-    rows, cols = df.shape
-    res_str = f"文件: {os.path.basename(f)}\n"
-    res_str += f"数据形状: {rows} 行 × {cols} 列\n"
-    df_rows=df.iloc[:,0]
-    res_str += f"行名:{df_rows.to_string()}\n"
-    res_str += f"\n前10行数据预览:\n"
-    res_str += df.head(10).to_string()
-    print(res_str)
-    return res_str
+def _compute_xls_preview(f: str):
+    """Excel 仅做最小化读取，输出为原始文本表格，由 AI 判断结构。"""
+    try:
+        df = pd.read_excel(f)
+        preview = df.head(50).to_csv(sep="\t", index=False)
+        res_str = f"文件: {os.path.basename(f)}\n"
+        res_str += f"原始文本预览（前 50 行，制表符分隔）:\n{preview}\n"
+        print(res_str)
+        return res_str
+    except Exception as e:
+        res_str = f"文件: {os.path.basename(f)}\n"
+        res_str += f"Excel 读取失败: {e}\n"
+        print(res_str)
+        return res_str
 
 def get_xsl(f:str):
     return get_file_cache().get_or_compute(f, _compute_xls_preview)

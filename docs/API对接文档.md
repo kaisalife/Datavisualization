@@ -14,6 +14,14 @@
 | 2 | GET | `/api/chart/<chart_id>` | 是 | - | 否 | `ApiClient::chart_url()` |
 | 3 | GET | `/api/task/<task_id>` | 是 | - | 否 | `ApiClient::get_task()` |
 | 4 | POST | `/api/complete-viz-code` | 是 | JSON | 否（同步） | `ApiClient::complete_viz_code()` |
+| 5 | POST | `/api/task/<task_id>/cancel` | 是 | - | 否 | (待对接) |
+| 6 | GET | `/api/conversations` | 是 | - | 否（分页） | (待对接) |
+| 7 | GET | `/api/conversations/<id>` | 是 | - | 否 | (待对接) |
+| 8 | DELETE | `/api/conversations/<id>` | 是 | - | 否 | (待对接) |
+| 9 | PUT | `/api/conversations/<id>/prompt` | 是 | JSON | 否 | (待对接) |
+| 10 | POST | `/api/data-profile` | 是 | multipart/form-data | 否（同步） | (待对接) |
+| WS | - | `/ws/task/<task_id>` | 是 | - | - | `wait_for_completion_ws` |
+| WS | - | `/ws/trace/<task_id>` | 是 | - | - | (待对接) |
 
 ---
 
@@ -62,7 +70,7 @@ let api_key = std::env::var("API_KEY")
 | `model_api_key` | string | 否 | - | `request.model_api_key: Option<String>` |
 | `mcp_prompt` | string | 否 | `""` | `request.mcp_prompt: Option<String>` |
 | `skill_prompt` | string | 否 | `""` | `request.skill_prompt: Option<String>` |
-| `config` | string | 否 | - | *未映射（前端暂不支持）* |
+| `config` | string | 否 | - | *已对接（图表配置 JSON：width/height/theme/color）* |
 
 **viz_mode 枚举值：** `auto` / `chart` / `scientific`
 
@@ -182,7 +190,7 @@ components::webview::open_url(&url);  // 用浏览器打开
 }
 ```
 
-**status 枚举值：** `pending` / `running` / `success` / `failed`
+**status 枚举值：** `pending` / `running` / `success` / `failed` / `cancelled`
 
 #### 前端类型定义（`src/api/types.rs`）
 
@@ -407,7 +415,11 @@ class GenerateChartWithPromptResponse(BaseModel):
 | 任务轮询 | ✅ 已对接 | `poll_task_until_done()` |
 | 图表查看 | ✅ 已对接 | `chart_url()` + `open_url()` |
 | 代码补全 | ✅ 已对接 | `complete_viz_code()` |
-| `config` 参数 | ❌ 未对接 | 图表配置 JSON，前端暂不支持 |
+| `config` 参数 | ✅ 已对接 | 图表配置 JSON（width/height/theme/color），后端已接线（修复02） |
+| 数据预览/特征 | ❌ 未对接 | `POST /api/data-profile`，返回 schema/语义角色/推荐模式（修复05/07） |
+| 历史对话 CRUD | ❌ 未对接 | `/api/conversations` 列表/详情/删除/改提示词 |
+| 取消任务 | ❌ 未对接 | `POST /api/task/<id>/cancel` |
+| WebSocket trace | ⚠️ 部分对接 | `/ws/task/<id>` 已用，`/ws/trace/<id>` 待对接 |
 | `db_config` 参数 | ⚠️ 部分对接 | 类型已定义，UI 未提供输入 |
 | WebView2 嵌入 | ⏳ 预留接口 | 当前用 `open_url()` 浏览器替代 |
 | 任务轮询 UI 更新 | ⏳ 待实现 | `on_generate` 中需添加轮询回调更新状态文本 |

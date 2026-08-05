@@ -1,6 +1,7 @@
 """M3 CodeCompleter 冒烟测试（不调 LLM）。"""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from service.code_completer.completer import (
 
 
 def test_ast_analysis():
-    source = (Path(__file__).parent / "code_files" / "signal_fft.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "fixtures" / "signal_fft.py").read_text(encoding="utf-8")
     summary = analyze_python_source(source)
     print("=== AST 摘要 ===")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -33,17 +34,20 @@ def test_ast_analysis():
 
 def test_path_validation():
     print("\n=== 路径校验 ===")
-    p = _validate_path("test_env/code_files/signal_fft.py")
+    # 测试 fixtures 默认不在生产白名单内，通过 env 临时扩展
+    fixtures = Path(__file__).resolve().parent.parent / "fixtures"
+    os.environ["CODE_COMPLETER_ALLOWED_ROOTS"] = str(fixtures)
+    p = _validate_path(str(fixtures / "signal_fft.py"))
     print("✅ 白名单内路径:", p)
 
     try:
         _validate_path("C:/Windows/System32/notepad.exe")
         raise AssertionError("未拦截越权路径")
     except CodeCompletionError as e:
-        print("✅ 拦截越权:", str(e)[:80])
+        print("✅ 拦截越权/非py:", str(e)[:80])
 
     try:
-        _validate_path("test_env/data_files/季度数据.csv")
+        _validate_path(str(fixtures / "data_files" / "季度数据.csv"))
         raise AssertionError("未拦截 .csv")
     except CodeCompletionError as e:
         print("✅ 拦截非 .py:", str(e)[:80])

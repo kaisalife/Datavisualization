@@ -5,7 +5,8 @@
 
 from flask import Blueprint, request, jsonify, current_app
 
-from api.common import check_api_key
+from Entity import ErrorResponse
+from api.common import check_api_key, monitor_response
 from service.conversation_store import (
     list_conversations,
     get_conversation,
@@ -17,6 +18,7 @@ bp = Blueprint("conversation_api", __name__)
 
 
 @bp.route("/api/conversations", methods=["GET"])
+@monitor_response("conversation:list")
 def list_conversations_api():
     """列出所有对话（分页）"""
     err = check_api_key()
@@ -27,10 +29,11 @@ def list_conversations_api():
     offset = int(request.args.get("offset", 0))
 
     conversations = list_conversations(limit=limit, offset=offset)
-    return jsonify({"conversations": conversations, "total": len(conversations)})
+    return jsonify({"conversations": conversations, "total": len(conversations)}), 200
 
 
 @bp.route("/api/conversations/<conversation_id>", methods=["GET"])
+@monitor_response("conversation:get")
 def get_conversation_api(conversation_id: str):
     """获取单个对话详情（含完整 agent_logs）"""
     err = check_api_key()
@@ -39,11 +42,12 @@ def get_conversation_api(conversation_id: str):
 
     conv = get_conversation(conversation_id)
     if conv is None:
-        return jsonify({"detail": "对话不存在"}), 404
-    return jsonify(conv)
+        return jsonify(ErrorResponse(detail="对话不存在").model_dump()), 404
+    return jsonify(conv), 200
 
 
 @bp.route("/api/conversations/<conversation_id>", methods=["DELETE"])
+@monitor_response("conversation:delete")
 def delete_conversation_api(conversation_id: str):
     """删除对话"""
     err = check_api_key()
@@ -51,11 +55,12 @@ def delete_conversation_api(conversation_id: str):
         return err
 
     if delete_conversation(conversation_id):
-        return jsonify({"detail": "已删除"})
-    return jsonify({"detail": "对话不存在"}), 404
+        return jsonify(ErrorResponse(detail="已删除").model_dump()), 200
+    return jsonify(ErrorResponse(detail="对话不存在").model_dump()), 404
 
 
 @bp.route("/api/conversations/<conversation_id>/prompt", methods=["PUT"])
+@monitor_response("conversation:update_prompt")
 def update_prompt_api(conversation_id: str):
     """修改提示词（用于重提）"""
     err = check_api_key()
@@ -65,8 +70,8 @@ def update_prompt_api(conversation_id: str):
     data = request.get_json(silent=True) or {}
     new_prompt = data.get("user_prompt", "").strip()
     if not new_prompt:
-        return jsonify({"detail": "user_prompt 不能为空"}), 400
+        return jsonify(ErrorResponse(detail="user_prompt 不能为空").model_dump()), 400
 
     if update_prompt(conversation_id, new_prompt):
-        return jsonify({"detail": "提示词已更新", "user_prompt": new_prompt})
-    return jsonify({"detail": "对话不存在"}), 404
+        return jsonify({"detail": "提示词已更新", "user_prompt": new_prompt}), 200
+    return jsonify(ErrorResponse(detail="对话不存在").model_dump()), 404

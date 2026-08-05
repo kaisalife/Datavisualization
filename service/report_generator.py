@@ -6,7 +6,7 @@
     generator = ReportGenerator(llm_client)
     report_html = await generator.generate(
         title="中国 GDP 分析报告",
-        datasets=[viz_dataset1, viz_dataset2],
+        datasets=[profile1, profile2],
         charts=[chart_html1, chart_html2],
         user_prompt="分析中国 GDP 趋势",
     )
@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from service.viz_data.schema import VizDataset
+from service.data_ingestion.models import DataProfile
 
 
 class ReportGenerator:
@@ -203,7 +203,7 @@ class ReportGenerator:
     async def generate(
         self,
         title: str,
-        datasets: List[VizDataset],
+        datasets: List[DataProfile],
         charts: List[str],
         user_prompt: str = "",
     ) -> str:
@@ -211,7 +211,7 @@ class ReportGenerator:
         
         Args:
             title: 报告标题
-            datasets: 数据集列表（用于数据来源标注和摘要）
+            datasets: 数据画像列表（用于数据来源标注和摘要）
             charts: 图表 HTML 列表
             user_prompt: 用户的原始需求（用于 LLM 生成分析文字）
             
@@ -250,16 +250,14 @@ class ReportGenerator:
             sections="\n".join(section_htmls),
         )
     
-    def _collect_data_sources(self, datasets: List[VizDataset]) -> str:
+    def _collect_data_sources(self, datasets: List[DataProfile]) -> str:
         """收集所有数据集的来源信息。"""
         sources = set()
-        for ds in datasets:
-            if ds.descriptor and ds.descriptor.extra:
-                src = ds.descriptor.extra.get("source")
-                if src:
-                    sources.add(src)
-            elif ds.name:
-                sources.add(ds.name)
+        for profile in datasets:
+            if profile.source_path:
+                sources.add(profile.source_path)
+            elif profile.table_name:
+                sources.add(profile.table_name)
         
         if not sources:
             return "用户上传"
@@ -276,7 +274,7 @@ class ReportGenerator:
     
     async def _generate_sections(
         self,
-        datasets: List[VizDataset],
+        datasets: List[DataProfile],
         charts: List[str],
         user_prompt: str,
     ) -> List[Dict[str, str]]:
@@ -308,7 +306,7 @@ class ReportGenerator:
     
     async def _generate_summary_section(
         self,
-        datasets: List[VizDataset],
+        datasets: List[DataProfile],
         user_prompt: str,
     ) -> Dict[str, str]:
         """生成摘要章节。"""
@@ -349,7 +347,7 @@ class ReportGenerator:
         self,
         chart_idx: int,
         chart_html: str,
-        datasets: List[VizDataset],
+        datasets: List[DataProfile],
         user_prompt: str,
     ) -> Dict[str, str]:
         """生成图表分析章节。"""
@@ -391,7 +389,7 @@ class ReportGenerator:
     
     async def _generate_conclusion_section(
         self,
-        datasets: List[VizDataset],
+        datasets: List[DataProfile],
         user_prompt: str,
     ) -> Dict[str, str]:
         """生成结论建议章节。"""
@@ -425,29 +423,26 @@ class ReportGenerator:
             "source_note": "",
         }
     
-    def _build_data_summary(self, datasets: List[VizDataset]) -> str:
+    def _build_data_summary(self, datasets: List[DataProfile]) -> str:
         """构建数据摘要字符串（供 LLM 使用）。"""
         lines = []
-        for idx, ds in enumerate(datasets):
-            if ds.tabular and ds.tabular.preview_rows:
-                cols = ds.tabular.preview_rows[0]
-                rows_count = ds.tabular.row_count
-                lines.append(f"数据集 {idx + 1}：{ds.name}")
+        for idx, profile in enumerate(datasets):
+            if profile.preview:
+                cols = [c["name"] for c in profile.schema]
+                rows_count = profile.row_count
+                lines.append(f"数据集 {idx + 1}：{profile.table_name}")
                 lines.append(f"  - 行数：{rows_count}")
                 lines.append(f"  - 列名：{', '.join(map(str, cols))}")
-                if len(ds.tabular.preview_rows) > 1:
-                    sample_row = ds.tabular.preview_rows[1]
-                    lines.append(f"  - 示例行：{sample_row}")
+                sample_row = profile.preview[0]
+                lines.append(f"  - 示例行：{sample_row}")
         return "\n".join(lines)
     
-    def _build_source_note(self, datasets: List[VizDataset]) -> str:
+    def _build_source_note(self, datasets: List[DataProfile]) -> str:
         """构建数据来源标注 HTML。"""
         sources = set()
-        for ds in datasets:
-            if ds.descriptor and ds.descriptor.extra:
-                src = ds.descriptor.extra.get("source")
-                if src:
-                    sources.add(src)
+        for profile in datasets:
+            if profile.source_path:
+                sources.add(profile.source_path)
         
         if not sources:
             return ""
@@ -458,9 +453,9 @@ class ReportGenerator:
         </div>
         """
     
-    def _fallback_summary(self, datasets: List[VizDataset]) -> str:
+    def _fallback_summary(self, datasets: List[DataProfile]) -> str:
         """LLM 不可用时的降级摘要。"""
-        total_rows = sum(ds.tabular.row_count for ds in datasets if ds.tabular)
+        total_rows = sum(profile.row_count for profile in datasets)
         return f"""
 <p>本报告基于 {len(datasets)} 个数据集、共 {total_rows} 行数据分析生成。</p>
 <p>数据涵盖宏观经济指标、行业统计等多个维度，通过可视化图表展示趋势变化。</p>
@@ -498,7 +493,7 @@ class ReportGenerator:
 async def generate_and_save_report(
     output_path: str | Path,
     title: str,
-    datasets: List[VizDataset],
+    datasets: List[DataProfile],
     charts: List[str],
     user_prompt: str = "",
     llm_client=None,
@@ -508,7 +503,7 @@ async def generate_and_save_report(
     Args:
         output_path: 输出文件路径
         title: 报告标题
-        datasets: 数据集列表
+        datasets: 数据画像列表
         charts: 图表 HTML 列表
         user_prompt: 用户需求
         llm_client: LLM 客户端
