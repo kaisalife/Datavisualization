@@ -154,13 +154,6 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
     output_folder.mkdir(exist_ok=True)
     print(f"\n📁 输出文件夹: {output_folder}")
 
-    # ==== 文件源：先走 data_preview，生成原始文本预览 ====
-    data_test = ""
-    if model_.file_paths:
-        data_test, _ = await get_smart_file_preview(
-            chat, model_.file_paths, output_folder=output_folder
-        )
-
     # ==== DuckDB 数据接入 ====
     if duckdb_ingest is None:
         raise ConfigError("data_ingestion 模块未安装，请检查依赖")
@@ -196,6 +189,21 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
     print(f"   DuckDB 路径: {profile.duckdb_path}")
     print(f"   Schema: {[(c['name'], c['type']) for c in profile.schema]}")
     agent_logs.append(f"✅ 数据接入成功: {profile.table_name} ({profile.row_count} 行)")
+
+    # ==== Agent 自主流水线分流（viz_mode=agent/auto 替换固定流水线）====
+    if model_.viz_mode in ("agent", "auto"):
+        from service.agent_pipeline import run_agent_pipeline
+        agent_logs.append("🔀 进入 Agent 自主流水线")
+        return await run_agent_pipeline(
+            chat, model_, profile, output_folder, task_id=task_id
+        )
+
+    # ==== 旧流水线（viz_mode=legacy/chart/scientific）：data_preview + 计划 + 生成 ====
+    data_test = ""
+    if model_.file_paths:
+        data_test, _ = await get_smart_file_preview(
+            chat, model_.file_paths, output_folder=output_folder
+        )
 
     if _check_cancelled(task_id):
         agent_logs.append("❌ 任务已被用户取消")

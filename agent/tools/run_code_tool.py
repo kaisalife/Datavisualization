@@ -24,11 +24,14 @@ class RunCodeTool(Tool):
     is_concurrency_safe=False：代码执行有副作用。
     """
 
-    def __init__(self, auto_confirm: bool = False, default_cwd: Optional[str] = None):
+    def __init__(self, auto_confirm: bool = False, default_cwd: Optional[str] = None,
+                 output_dir: Optional[str] = None, duckdb_path: Optional[str] = None,
+                 prelude: str = ""):
         super().__init__(
             name="run_code",
             description="在沙箱中执行 Python 代码，返回 stdout/stderr。"
-                        "禁止 os.system/subprocess/socket/eval 等危险调用。",
+                        "禁止 os.system/subprocess/socket/eval 等危险调用。"
+                        "若配置了 output_dir，可生成 pyecharts 图表 HTML。",
             args_schema=RunCodeInput,
             is_read_only=False,
             is_destructive=True,
@@ -36,6 +39,9 @@ class RunCodeTool(Tool):
             auto_confirm=auto_confirm,
         )
         self._default_cwd = default_cwd
+        self._output_dir = output_dir
+        self._duckdb_path = duckdb_path
+        self._prelude = prelude
 
     def check_permissions(self, ctx: ToolContext) -> Decision:
         if self._auto_confirm or ctx.auto_confirm:
@@ -56,14 +62,45 @@ class RunCodeTool(Tool):
         except ImportError:
             from ..agent_tools.sandbox import run_python_safely
 
+        import os
+        import uuid
+        from pathlib import Path
+
         cwd = ctx.working_dir or self._default_cwd
-        result = run_python_safely(code, cwd=cwd, timeout=timeout)
+        # 拼接 prelude（如 _RENDER_HEADER：monkey-patch render 路径 + DuckDB conn）
+        full_code = (self._prelude + "\n") if self._prelude else ""
+        full_code += code
+
+        # 构造执行环境
+        run_env = dict(os.environ)
+        chart_filename = None
+        chart_path = None
+        if self._output_dir:
+            chart_filename = f"chart_{uuid.uuid4().hex[:8]}.html"
+            run_env["CHART_OUTPUT_DIR"] = str(self._output_dir)
+            run_env["CHART_OUTPUT_NAME"] = chart_filename
+            chart_path = str(Path(self._output_dir) / chart_filename)
+        if self._duckdb_path:
+            run_env["DUCKDB_PATH"] = self._duckdb_path
+
+        result = run_python_safely(
+            full_code,
+            cwd=cwd,
+            timeout=timeout,
+            env=run_env,
+            extra_pythonpath=str(Path(__file__).resolve().parents[2]),
+        )
+
+        metadata: Dict[str, Any] = {"returncode": result.returncode}
+        if chart_filename:
+            metadata["chart_filename"] = chart_filename
+            metadata["chart_path"] = chart_path
 
         if result.success:
             return ToolOutput(
                 success=True,
                 output=result.stdout or "OK",
-                metadata={"returncode": result.returncode},
+                metadata=metadata,
             )
         else:
             error_parts = []
@@ -77,5 +114,5 @@ class RunCodeTool(Tool):
                 success=False,
                 output=result.stdout,
                 error="\n".join(error_parts) or "执行失败",
-                metadata={"returncode": result.returncode},
+                metadata=metadata,
             )

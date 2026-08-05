@@ -137,12 +137,13 @@ class BaseAgent(Runnable):
         input: Any,
         max_iterations: int = 10,
         config: Optional[RunnableConfig] = None,
+        tools: Optional[List] = None,
     ) -> Dict[str, Any]:
         """工具调用循环（agent loop）。
 
-        LLM 自主决定是否调用已加载的 MCP 工具：每轮若返回 tool_calls 则执行
-        对应工具并把结果作为 ToolMessage 喂回，直到 LLM 不再调用工具给出最终回答，
-        或达到 max_iterations 强制停止。
+        LLM 自主决定是否调用工具：每轮若返回 tool_calls 则执行对应工具并把结果
+        作为 ToolMessage 喂回，直到 LLM 不再调用工具给出最终回答，或达到
+        max_iterations 强制停止。
 
         与 ainvoke 的区别：ainvoke 是单次 LLM 调用（供 QueryEngine 固定流水线使用）；
         arun_with_tools 让 LLM 自主编排工具，适用于需要 Agent 自主决策的场景。
@@ -151,6 +152,8 @@ class BaseAgent(Runnable):
             input: ChatPromptValue / dict / str / 消息列表
             max_iterations: 最大工具调用轮次，防止无限循环
             config: 可选运行时配置
+            tools: 可选工具列表（LangChain BaseTool），默认用 self.tools（MCP 工具）。
+                传入自定义工具池（如本地 ReadDataFileTool/RunCodeTool）可覆盖。
 
         Returns:
             {"content": 最终回答, "agent_logs": [...], "tool_calls": [...]}
@@ -159,11 +162,12 @@ class BaseAgent(Runnable):
 
         if self.chat is None:
             raise RuntimeError("Agent not initialized. Call initialize() first.")
-        if not self.tools:
+        use_tools = tools if tools is not None else self.tools
+        if not use_tools:
             # 无工具可用，降级为普通单次调用
             return await self.ainvoke(input, config)
 
-        chat_with_tools = self.chat.bind_tools(self.tools)
+        chat_with_tools = self.chat.bind_tools(use_tools)
         messages = self._to_messages(input)
 
         agent_logs: List[str] = []
@@ -193,7 +197,7 @@ class BaseAgent(Runnable):
                 tool_calls_log.append({"iteration": i + 1, "name": tool_name, "args": tool_args})
 
                 tool_found = None
-                for t in self.tools:
+                for t in use_tools:
                     t_name = getattr(t, "name", None) or getattr(t, "__name__", "")
                     if t_name == tool_name:
                         tool_found = t
