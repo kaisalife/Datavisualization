@@ -49,8 +49,20 @@ pub(crate) fn connect_websocket_blocking(
     loop {
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
-                return serde_json::from_str(&text)
-                    .map_err(|e| format!("解析 WebSocket 消息失败: {}", e));
+                // 解析通知；仅终态（success/failed/cancelled）返回，忽略 running/pending 中间态
+                match serde_json::from_str::<api::types::TaskCompleteNotification>(&text) {
+                    Ok(notif) => {
+                        let is_terminal = matches!(
+                            notif.status.as_str(),
+                            "success" | "failed" | "cancelled"
+                        );
+                        if is_terminal {
+                            return Ok(notif);
+                        }
+                        // 非终态，继续等待
+                    }
+                    Err(_) => continue,
+                }
             }
             Ok(tungstenite::Message::Close(_)) => return Err("WebSocket 连接已关闭".to_string()),
             Ok(_) => continue,

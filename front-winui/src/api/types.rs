@@ -155,12 +155,22 @@ pub struct CompleteVizCodeRequest {
     pub model_api_key: Option<String>,
 }
 
-/// 代码补全响应
+/// 代码补全响应（对应后端 completer.py 返回 {status, results:[...]}）
 #[derive(Debug, Clone, Deserialize)]
 pub struct CompleteVizCodeResponse {
-    pub snippet: String,
-    pub explanation: String,
-    pub libs: Vec<String>,
+    pub status: String,
+    pub results: Vec<CompletionResult>,
+}
+
+/// 单个文件的补全结果
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompletionResult {
+    pub source_file: Option<String>,
+    pub completed_code: Option<String>,
+    pub inserted_snippet: Option<String>,
+    pub explanation: Option<String>,
+    #[serde(default)]
+    pub recommended_libs: Vec<String>,
 }
 
 // ============================================================

@@ -187,6 +187,10 @@ window.app = {
     state.selectedDb = name;
   },
 
+  setBackend(url) {
+    state.backendUrl = url || '';
+  },
+
   openChart(url) {
     window.open(url, '_blank');
   },
@@ -322,7 +326,8 @@ window.app = {
     window.app._traceTokenCalls = 0;
 
     try {
-      const wsUrl = 'ws://127.0.0.1:5000/ws/trace/' + taskId;
+      const base = (state.backendUrl || 'http://127.0.0.1:5000').replace(/\/$/, '');
+      const wsUrl = base.replace(/^http/, 'ws') + '/ws/trace/' + taskId;
       const ws = new WebSocket(wsUrl);
       window.app._traceWs = ws;
 

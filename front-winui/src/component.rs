@@ -53,7 +53,7 @@ impl Component for MainModel {
 
         let client = api::ApiClient::new(&settings.backend_url, &settings.api_key);
 
-        let model = Self {
+        let mut model = Self {
             window,
             webview,
             app_mode: AppMode::Chat,
@@ -69,6 +69,10 @@ impl Component for MainModel {
             show_settings: false,
             bridge_rx: Some(rx),
         };
+
+        // 注入后端地址到 JS（供 Trace WebSocket 直连，避免硬编码）
+        let backend_for_js = model.settings.backend_url.clone();
+        model.js_set_backend(&backend_for_js);
 
         // HTML 加载后会自动通过桥接发送 loadHistory 请求
         let _ = sender;
@@ -112,8 +116,11 @@ impl Component for MainModel {
             MainMessage::TaskStarted(task_id) => self.handle_task_started(task_id),
             MainMessage::TaskCompleted { charts, html_files } => self.handle_task_completed(charts, html_files),
             MainMessage::TaskFailed(err) => self.handle_task_failed(err),
+            MainMessage::TaskCancelled => self.handle_task_cancelled(),
             MainMessage::AppendLog(msg) => self.handle_append_log(msg),
             MainMessage::SetStatus(msg) => self.handle_set_status(msg),
+            MainMessage::SetProgress { percent, text } => self.handle_set_progress(percent, text),
+            MainMessage::ShowToast { message, toast_type } => self.handle_show_toast(message, toast_type),
             MainMessage::HistoryLoaded(convs) => self.handle_history_loaded(convs),
             MainMessage::ConversationDetailLoaded(detail) => self.handle_conversation_detail_loaded(detail),
             MainMessage::ConversationDeleted => self.handle_conversation_deleted(sender),

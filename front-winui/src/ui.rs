@@ -263,4 +263,12 @@ impl MainModel {
     pub(crate) fn js_cancel_task(&mut self) {
         self.js("window.app.cancelTask()");
     }
+
+    /// 注入后端地址到 JS（供 Trace WebSocket 等直连使用，避免硬编码 127.0.0.1:5000）
+    pub(crate) fn js_set_backend(&mut self, url: &str) {
+        self.js(&format!(
+            "window.app.setBackend('{}')",
+            Self::js_escape(url)
+        ));
+    }
 }

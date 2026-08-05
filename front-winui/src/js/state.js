@@ -16,6 +16,7 @@ const state = {
   activeTaskEl: null,
   activeLogs: [],
   lastChartData: null,
+  backendUrl: '',
 };
 
 // JS -> Rust 桥接
@@ -24,5 +25,8 @@ function sendToRust(action, data) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: action, data: data || {} })
-  }).catch(err => console.error('[Bridge] 发送失败:', err));
+  }).catch(err => {
+    console.error('[Bridge] 发送失败:', err);
+    if (window.app && window.app.showToast) window.app.showToast('操作失败，请重试', 'error');
+  });
 }

@@ -146,6 +146,8 @@ impl MainModel {
                                         sender.post(MainMessage::AppendLog(log));
                                     }
                                     sender.post(MainMessage::TaskCompleted { charts, html_files });
+                                } else if notification.status == "cancelled" {
+                                    sender.post(MainMessage::TaskCancelled);
                                 } else {
                                     let err = notification.error.unwrap_or_else(|| "任务失败".to_string());
                                     sender.post(MainMessage::TaskFailed(format!("任务失败: {}", err)));
@@ -174,19 +176,35 @@ impl MainModel {
                         if need_poll {
                             match client
                                 .poll_task_until_done(&task_id, |elapsed| {
-                                    sender.post(MainMessage::SetStatus(format!(
-                                        "生成中... 已等待 {}s",
-                                        elapsed
-                                    )));
+                                    let percent = ((elapsed as f64 / 300.0) * 100.0).min(95.0);
+                                    sender.post(MainMessage::SetProgress {
+                                        percent,
+                                        text: format!("生成中... 已等待 {}s", elapsed),
+                                    });
                                 })
                                 .await
                             {
                                 Ok(task_resp) => {
-                                    let (html_files, charts) = match task_resp.result {
-                                        Some(r) => (r.html_file_paths, r.charts),
-                                        None => (Vec::new(), Vec::new()),
-                                    };
-                                    sender.post(MainMessage::TaskCompleted { charts, html_files });
+                                    use api::types::TaskStatus;
+                                    match task_resp.status {
+                                        TaskStatus::Success => {
+                                            let (html_files, charts, agent_logs) = match task_resp.result {
+                                                Some(r) => (r.html_file_paths, r.charts, r.agent_logs),
+                                                None => (Vec::new(), Vec::new(), Vec::new()),
+                                            };
+                                            for log in agent_logs {
+                                                sender.post(MainMessage::AppendLog(log));
+                                            }
+                                            sender.post(MainMessage::TaskCompleted { charts, html_files });
+                                        }
+                                        TaskStatus::Cancelled => {
+                                            sender.post(MainMessage::TaskCancelled);
+                                        }
+                                        _ => {
+                                            let err = task_resp.error.unwrap_or_else(|| "任务失败".to_string());
+                                            sender.post(MainMessage::TaskFailed(format!("任务失败: {}", err)));
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     sender.post(MainMessage::TaskFailed(format!("轮询失败: {}", e)));
@@ -325,7 +343,7 @@ impl MainModel {
                         sender.post(MainMessage::HistoryLoaded(resp.conversations));
                     }
                     Err(e) => {
-                        sender.post(MainMessage::AppendLog(format!("加载历史失败: {}", e)));
+                        sender.post(MainMessage::ShowToast { message: format!("加载历史失败: {}", e), toast_type: "error".to_string() });
                     }
                 }
             });
@@ -364,7 +382,7 @@ impl MainModel {
                         sender.post(MainMessage::ConversationDetailLoaded(detail));
                     }
                     Err(e) => {
-                        sender.post(MainMessage::AppendLog(format!("获取详情失败: {}", e)));
+                        sender.post(MainMessage::ShowToast { message: format!("获取详情失败: {}", e), toast_type: "error".to_string() });
                     }
                 }
             });
@@ -392,7 +410,7 @@ impl MainModel {
                         sender.post(MainMessage::ConversationDeleted);
                     }
                     Err(e) => {
-                        sender.post(MainMessage::AppendLog(format!("删除失败: {}", e)));
+                        sender.post(MainMessage::ShowToast { message: format!("删除失败: {}", e), toast_type: "error".to_string() });
                     }
                 }
             });
@@ -458,6 +476,10 @@ impl MainModel {
         charts: Vec<String>,
         html_files: Vec<String>,
     ) -> std::result::Result<bool, Error> {
+        // 防竞态:已取消则忽略过期的完成回调
+        if !self.is_generating {
+            return Ok(false);
+        }
         self.is_generating = false;
         self.task_id = None;
         self.js_set_generating(false);
@@ -496,11 +518,29 @@ impl MainModel {
 
     /// 任务失败
     pub(crate) fn handle_task_failed(&mut self, err: String) -> std::result::Result<bool, Error> {
+        // 防竞态:已取消(或已完成)则忽略过期的失败回调
+        if !self.is_generating {
+            return Ok(false);
+        }
         self.is_generating = false;
         self.task_id = None;
         self.js_set_generating(false);
         self.js_fail_task(&format!("任务失败: {}", err));
         self.js_set_status("失败");
+        Ok(true)
+    }
+
+    /// 任务取消(WS 收到 cancelled 状态,或轮询检测到取消)
+    pub(crate) fn handle_task_cancelled(&mut self) -> std::result::Result<bool, Error> {
+        // 若已被 handle_cancel_task 处理(is_generating=false),忽略过期回调
+        if !self.is_generating {
+            return Ok(false);
+        }
+        self.is_generating = false;
+        self.task_id = None;
+        self.js_set_generating(false);
+        self.js_cancel_task();
+        self.js_set_status("已取消");
         Ok(true)
     }
 
@@ -513,6 +553,26 @@ impl MainModel {
     /// 更新状态栏
     pub(crate) fn handle_set_status(&mut self, msg: String) -> std::result::Result<bool, Error> {
         self.js_set_status(&msg);
+        Ok(true)
+    }
+
+    /// 更新进度条
+    pub(crate) fn handle_set_progress(
+        &mut self,
+        percent: f64,
+        text: String,
+    ) -> std::result::Result<bool, Error> {
+        self.js_set_progress(percent, &text);
+        Ok(true)
+    }
+
+    /// 显示 Toast 通知
+    pub(crate) fn handle_show_toast(
+        &mut self,
+        message: String,
+        toast_type: String,
+    ) -> std::result::Result<bool, Error> {
+        self.js_show_toast(&message, &toast_type);
         Ok(true)
     }
 
@@ -596,21 +656,36 @@ impl MainModel {
                 };
                 match client.complete_viz_code(&request).await {
                     Ok(resp) => {
-                        let libs_str = if resp.libs.is_empty() {
-                            String::new()
-                        } else {
-                            format!("依赖库: {}\n", resp.libs.join(", "))
-                        };
-                        let code_text = format!(
-                            "说明: {}\n{}代码:\n{}",
-                            resp.explanation, libs_str, resp.snippet
-                        );
-                        let result = serde_json::json!({
-                            "type": "code",
-                            "code": code_text,
-                        })
-                        .to_string();
-                        sender.post(MainMessage::CodeCompleted(result));
+                        match resp.results.into_iter().next() {
+                            Some(r) => {
+                                let libs_str = if r.recommended_libs.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("依赖库: {}\n", r.recommended_libs.join(", "))
+                                };
+                                let snippet = r
+                                    .inserted_snippet
+                                    .or_else(|| r.completed_code.clone())
+                                    .unwrap_or_default();
+                                let code_text = format!(
+                                    "说明: {}\n{}代码:\n{}",
+                                    r.explanation.unwrap_or_default(),
+                                    libs_str,
+                                    snippet
+                                );
+                                let result = serde_json::json!({
+                                    "type": "code",
+                                    "code": code_text,
+                                })
+                                .to_string();
+                                sender.post(MainMessage::CodeCompleted(result));
+                            }
+                            None => {
+                                sender.post(MainMessage::TaskFailed(
+                                    "代码补全返回空结果".to_string(),
+                                ));
+                            }
+                        }
                     }
                     Err(e) => {
                         sender.post(MainMessage::TaskFailed(format!("代码补全失败: {}", e)));
@@ -807,6 +882,8 @@ impl MainModel {
         self.show_settings = false;
         self.js_hide_settings();
         self.js_set_status("设置已更新");
+        let backend_for_js = self.settings.backend_url.clone();
+        self.js_set_backend(&backend_for_js);
         Ok(true)
     }
 

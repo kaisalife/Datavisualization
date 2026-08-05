@@ -29,20 +29,41 @@ impl BridgeServer {
                             Err(_) => continue,
                         };
 
-                        // 读取 HTTP 请求
-                        let mut buf = vec![0u8; 65536];
-                        let n = match stream.read(&mut buf).await {
-                            Ok(n) if n > 0 => n,
-                            _ => continue,
-                        };
+                        // 读取 HTTP 请求（循环读至读满 Content-Length，避免大请求体截断）
+                        let mut buf: Vec<u8> = Vec::new();
+                        let mut header_end: Option<usize> = None;
+                        loop {
+                            let mut chunk = vec![0u8; 8192];
+                            let n = match stream.read(&mut chunk).await {
+                                Ok(n) if n > 0 => n,
+                                _ => break,
+                            };
+                            buf.extend_from_slice(&chunk[..n]);
+                            if header_end.is_none() {
+                                header_end = find_header_end(&buf);
+                            }
+                            if let Some(hend) = header_end {
+                                let clen = content_length(&buf[..hend]);
+                                let body_have = buf.len() - (hend + 4);
+                                if body_have >= clen {
+                                    break;
+                                }
+                            }
+                            // 上限 16MB 防滥用
+                            if buf.len() > 16 * 1024 * 1024 {
+                                break;
+                            }
+                        }
 
-                        let request = String::from_utf8_lossy(&buf[..n]).to_string();
-
-                        // 提取 body（简单的 HTTP 解析）
-                        let body = if let Some(pos) = request.find("\r\n\r\n") {
-                            &request[pos + 4..]
-                        } else {
-                            ""
+                        // 提取 body（按 Content-Length 截取，避免含尾部/分片噪声）
+                        let body = match header_end {
+                            Some(hend) => {
+                                let clen = content_length(&buf[..hend]);
+                                let start = hend + 4;
+                                let end = (start + clen).min(buf.len());
+                                std::str::from_utf8(&buf[start..end]).unwrap_or("")
+                            }
+                            None => "",
                         };
 
                         // 解析 JSON
@@ -93,4 +114,23 @@ impl BridgeServer {
 pub struct BridgeMessage {
     pub action: String,
     pub data: serde_json::Value,
+}
+
+/// 在缓冲区中查找 HTTP 头部结束位置（\r\n\r\n）
+fn find_header_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|w| w == b"\r\n\r\n")
+}
+
+/// 从 HTTP 头部解析 Content-Length
+fn content_length(headers: &[u8]) -> usize {
+    let s = std::str::from_utf8(headers).unwrap_or("");
+    for line in s.split("\r\n") {
+        let lower = line.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("content-length:") {
+            if let Ok(n) = rest.trim().parse::<usize>() {
+                return n;
+            }
+        }
+    }
+    0
 }
