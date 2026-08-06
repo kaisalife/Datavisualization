@@ -70,6 +70,7 @@ function saveModelEdit(idx) {
   editingModelId = null;
   renderModelList();
   window.app.showToast('模型配置已保存', 'success');
+  sendToRust('syncModelConfigs', { modelConfigs: state.modelConfigs });
 }
 
 function deleteModelConfig(idx) {
@@ -77,6 +78,7 @@ function deleteModelConfig(idx) {
   if (editingModelId === idx) editingModelId = null;
   renderModelList();
   window.app.showToast('已删除', 'info');
+  sendToRust('syncModelConfigs', { modelConfigs: state.modelConfigs });
 }
 
 function enableModel(idx) {

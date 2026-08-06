@@ -27,6 +27,7 @@ impl MainModel {
             "attachFile" => self.handle_attach_file().await,
             "selectDb" => self.handle_select_db(msg.data),
             "enableModel" => self.handle_enable_model(msg.data),
+            "syncModelConfigs" => self.handle_sync_model_configs(msg.data),
             "toggleSettings" => self.handle_toggle_settings(),
             "saveSettings" => self.handle_save_settings(msg.data),
             "addDbConfig" => self.handle_add_db_config(msg.data),
@@ -1020,6 +1021,44 @@ impl MainModel {
             }
             Err(e) => {
                 self.js_show_toast(&format!("保存失败: {}", e), "error");
+            }
+        }
+        Ok(true)
+    }
+
+    /// 同步模型配置（新增/编辑/删除后立即持久化，不关闭设置面板）
+    fn handle_sync_model_configs(&mut self, data: serde_json::Value) -> std::result::Result<bool, Error> {
+        if let Some(arr) = data.get("modelConfigs").and_then(|v| v.as_array()) {
+            let ts = chrono::Local::now().timestamp_millis();
+            let mut new_configs: Vec<api::types::ModelConfig> = Vec::new();
+            for (i, item) in arr.iter().enumerate() {
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if name.trim().is_empty() {
+                    continue;
+                }
+                let id = item
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| format!("model_{}_{}", ts, i));
+                new_configs.push(api::types::ModelConfig {
+                    id,
+                    name,
+                    model_type: item.get("modelType").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    model_url: item.get("modelUrl").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    model_api_key: item.get("modelApiKey").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    enabled: item.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                });
+            }
+            self.settings.model_configs = new_configs;
+            match self.settings.save() {
+                Ok(()) => {
+                    let configs = self.settings.model_configs.clone();
+                    self.js_set_model_configs(&configs);
+                }
+                Err(e) => {
+                    self.js_show_toast(&format!("保存失败: {}", e), "error");
+                }
             }
         }
         Ok(true)
