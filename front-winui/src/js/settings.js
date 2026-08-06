@@ -80,7 +80,7 @@ function deleteModelConfig(idx) {
 }
 
 function enableModel(idx) {
-  sendToRust('enableModel', { index: idx });
+  sendToRust('enableModel', { index: idx, modelConfigs: state.modelConfigs });
 }
 
 function renderDbList() {

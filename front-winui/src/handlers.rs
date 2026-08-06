@@ -976,8 +976,35 @@ impl MainModel {
     }
 
     /// 切换启用的模型（单选，立即持久化）
+    /// 接收 JS 传来的 modelConfigs（含未保存的新增/编辑），同步到 self.settings，
+    /// 避免用旧 self.settings 覆盖 JS state 中的新增模型。
     fn handle_enable_model(&mut self, data: serde_json::Value) -> std::result::Result<bool, Error> {
         let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        // 同步 JS state 的 modelConfigs（含未保存的新增/编辑）
+        if let Some(arr) = data.get("modelConfigs").and_then(|v| v.as_array()) {
+            let ts = chrono::Local::now().timestamp_millis();
+            let mut new_configs: Vec<api::types::ModelConfig> = Vec::new();
+            for (i, item) in arr.iter().enumerate() {
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if name.trim().is_empty() {
+                    continue;
+                }
+                let id = item
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| format!("model_{}_{}", ts, i));
+                new_configs.push(api::types::ModelConfig {
+                    id,
+                    name,
+                    model_type: item.get("modelType").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    model_url: item.get("modelUrl").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    model_api_key: item.get("modelApiKey").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    enabled: item.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                });
+            }
+            self.settings.model_configs = new_configs;
+        }
         if index >= self.settings.model_configs.len() {
             return Ok(false);
         }
