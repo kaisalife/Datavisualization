@@ -44,7 +44,9 @@ class FileReader:
             raise ValueError(f"FileReader 不支持 {ext} 格式")
 
         name = table_name or DuckDBManager.safe_table_name(Path(path).name)
+        # 统一净化表名：register_* 内部会再次净化（幂等），build_profile 必须用同一表名查询
+        safe_name = DuckDBManager.safe_table_name(name)
         method = getattr(db, _EXT_MAP[ext])
-        method(name, path)
+        method(safe_name, path)
 
-        return build_profile(db, name, source_kind="file", source_path=path)
+        return build_profile(db, safe_name, source_kind="file", source_path=path)
