@@ -60,7 +60,6 @@ async def run_agent_pipeline(
     from agent.tools.base import ToolContext
     from agent.tool_adapter import wrap_local_tools
     from service.chart_generator import _RENDER_HEADER
-    from prompts.agent_autonomous_prompt import get_agent_autonomous_prompt
 
     file_paths = model_.file_paths or []
     duckdb_path = profile.duckdb_path if profile else ""
