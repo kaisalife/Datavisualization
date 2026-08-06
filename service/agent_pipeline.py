@@ -165,6 +165,7 @@ async def run_agent_pipeline(
             pass
 
     user_chart_config_json = (model_.config or "(未提供)") if model_.config else "(未提供)"
+    agent_logs.append(f"📋 [调试] engine={type(engine).__name__}, generate_prompt={type(generate_prompt).__name__}, chat={type(chat).__name__}, chat.chat={type(getattr(chat, 'chat', None)).__name__ if getattr(chat, 'chat', None) else 'None'}")
 
     # 若 plan 未产出，构造默认 plan（agent 自主）
     if not plans:
