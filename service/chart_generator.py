@@ -156,6 +156,9 @@ async def generate_single_chart(
                 }
                 if engine and generate_prompt:
                     content = await engine.run_prompt(generate_prompt.invoke(gen_input))
+                elif generate_prompt:
+                    response = await chat.ainvoke(generate_prompt.invoke(gen_input))
+                    content = response["content"] if isinstance(response, dict) else str(response)
                 else:
                     response = await generate_chain.ainvoke(gen_input)
                     content = response.get("content", "") if isinstance(response, dict) else str(response)
@@ -174,6 +177,9 @@ async def generate_single_chart(
                 }
                 if engine and debug_prompt:
                     content = await engine.run_prompt(debug_prompt.invoke(debug_input))
+                elif debug_prompt:
+                    response = await chat.ainvoke(debug_prompt.invoke(debug_input))
+                    content = response["content"] if isinstance(response, dict) else str(response)
                 else:
                     response = await debug_chain.ainvoke(debug_input)
                     content = response.get("content", "") if isinstance(response, dict) else str(response)
