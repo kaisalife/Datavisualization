@@ -80,8 +80,7 @@ function deleteModelConfig(idx) {
 }
 
 function enableModel(idx) {
-  state.modelConfigs.forEach((m, i) => { m.enabled = (i === idx); });
-  renderModelList();
+  sendToRust('enableModel', { index: idx });
 }
 
 function renderDbList() {

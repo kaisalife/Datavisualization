@@ -211,6 +211,28 @@ impl MainModel {
         ));
     }
 
+    /// 更新模型配置列表（切换启用后刷新 UI，不碰其他 input）
+    pub(crate) fn js_set_model_configs(&mut self, configs: &[api::types::ModelConfig]) {
+        let json_arr: Vec<serde_json::Value> = configs
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "name": m.name,
+                    "modelType": m.model_type,
+                    "modelUrl": m.model_url,
+                    "modelApiKey": m.model_api_key,
+                    "enabled": m.enabled,
+                })
+            })
+            .collect();
+        let json = serde_json::to_string(&json_arr).unwrap_or_else(|_| "[]".to_string());
+        self.js(&format!(
+            "window.app.setModelConfigs('{}')",
+            Self::js_escape(&json)
+        ));
+    }
+
     /// 在 WebView 中打开图表查看器
     pub(crate) fn js_open_chart(&mut self, url: &str) {
         self.js(&format!(

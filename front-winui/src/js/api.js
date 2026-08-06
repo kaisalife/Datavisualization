@@ -191,6 +191,11 @@ window.app = {
     state.backendUrl = url || '';
   },
 
+  setModelConfigs(jsonStr) {
+    try { state.modelConfigs = JSON.parse(jsonStr); } catch(e) { state.modelConfigs = []; }
+    if (typeof renderModelList === 'function') renderModelList();
+  },
+
   openChart(url) {
     window.open(url, '_blank');
   },

@@ -26,6 +26,7 @@ impl MainModel {
             "openFolder" => self.handle_open_folder().await,
             "attachFile" => self.handle_attach_file().await,
             "selectDb" => self.handle_select_db(msg.data),
+            "enableModel" => self.handle_enable_model(msg.data),
             "toggleSettings" => self.handle_toggle_settings(),
             "saveSettings" => self.handle_save_settings(msg.data),
             "addDbConfig" => self.handle_add_db_config(msg.data),
@@ -969,6 +970,29 @@ impl MainModel {
             }
             None => {
                 self.js_show_toast("未找到该数据库配置", "error");
+            }
+        }
+        Ok(true)
+    }
+
+    /// 切换启用的模型（单选，立即持久化）
+    fn handle_enable_model(&mut self, data: serde_json::Value) -> std::result::Result<bool, Error> {
+        let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        if index >= self.settings.model_configs.len() {
+            return Ok(false);
+        }
+        // 单选：仅 index 启用，其余关闭
+        for (i, m) in self.settings.model_configs.iter_mut().enumerate() {
+            m.enabled = (i == index);
+        }
+        match self.settings.save() {
+            Ok(()) => {
+                let configs = self.settings.model_configs.clone();
+                self.js_set_model_configs(&configs);
+                self.js_show_toast("已切换模型", "success");
+            }
+            Err(e) => {
+                self.js_show_toast(&format!("保存失败: {}", e), "error");
             }
         }
         Ok(true)
