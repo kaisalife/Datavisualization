@@ -68,7 +68,8 @@ class BaseAgent(Runnable):
                                          base_url=self.model_url,
                                         api_key=self.model_key,
                                         timeout=120,
-                                        max_retries=3)
+                                        max_retries=3,
+                                        max_tokens=8192)
         except Exception as e:
             raise RuntimeError(f"❌ Failed to initialize AI model: {e}")
         print(f"✅ Agent {self.model_name} initialization completed")
