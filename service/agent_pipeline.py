@@ -107,6 +107,12 @@ async def run_agent_pipeline(
         }
         plan_result = await chat.ainvoke(get_agent_chart_designer_prompt().invoke(plan_input))
         plan_content = plan_result["content"] if isinstance(plan_result, dict) else str(plan_result)
+        # 调试:记录 plan 响应,排查"未产出有效规划"
+        agent_logs.append(f"📋 [调试] plan 响应前 400 字: {plan_content[:400]}")
+        try:
+            (output_folder / "plan_response_debug.txt").write_text(plan_content, encoding="utf-8")
+        except Exception:
+            pass
         plans_data = extract_json_from_response(plan_content)
         if not plans_data:
             # 兜底:extract 未命中(纯 JSON 无围栏),直接 json.loads
@@ -131,60 +137,80 @@ async def run_agent_pipeline(
     except Exception as e:
         agent_logs.append(f"⚠️ plan 阶段失败({e})，agent 将自主规划")
 
-    # ==== 阶段 2: agent 自主执行（参考 plan 规划）====
-    prompt = get_agent_autonomous_prompt().invoke({
-        "file_paths": ", ".join(file_paths) if file_paths else "(无)",
-        "table_name": table_name,
-        "canonical_dataset": canonical_dataset,
-        "planned_charts": planned_charts,
-        "user_prompt": model_.user_prompt,
-        "output_dir": str(charts_folder),
-    })
+    # ==== 阶段 2: 逐个 plan 执行（每个图表单独 task，只注入该 plan 规范）====
+    from service.chart_generator import generate_single_chart
+    from prompts.agent_prompt import get_agent_generate_chart_prompt, get_agent_debug_chart_prompt
+    from service.query_engine import QueryEngine
+    from RAG.RAG_main import RAGRetriever
 
-    if _check_cancelled(task_id):
-        agent_logs.append("❌ 任务已被用户取消")
-        raise RuntimeError("Task cancelled by user")
+    engine = QueryEngine(chat_model=chat, model_name=model_.model_type or "")
+    generate_prompt = get_agent_generate_chart_prompt()
+    debug_prompt = get_agent_debug_chart_prompt()
 
-    # 执行 agent loop
     try:
-        result = await chat.arun_with_tools(
-            prompt, max_iterations=max_iterations, tools=tools
-        )
+        rag_retriever = RAGRetriever()
     except Exception as e:
-        agent_logs.append(f"❌ Agent 执行异常: {e}")
-        return {
-            "successful_charts": [],
-            "failed_plans": [{"plan": {}, "error": f"Agent 异常: {e}"}],
-            "agent_logs": agent_logs,
-        }
+        agent_logs.append(f"⚠️ RAG 初始化失败: {e}")
+        rag_retriever = None
 
-    # 合并 agent 日志
-    agent_logs.extend(result.get("agent_logs", []))
-    agent_logs.append(f"📊 Agent 完成，工具调用 {len(result.get('tool_calls', []))} 次")
+    dataset_summary_json = "(未提供)"
+    if profile is not None:
+        try:
+            dataset_summary_json = json.dumps({
+                "source_kind": profile.source_kind,
+                "table_name": profile.table_name,
+                "columns": profile.schema,
+                "row_count": profile.row_count,
+            }, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
-    # 扫描新增 HTML 作为成功图表
-    after_files = {p.name for p in charts_folder.glob("*.html")}
-    new_files = sorted(after_files - before_files)
+    user_chart_config_json = (model_.config or "(未提供)") if model_.config else "(未提供)"
+
+    # 若 plan 未产出，构造默认 plan（agent 自主）
+    if not plans:
+        plans = [{"plan_id": "1", "plan_name": "自主图表", "chart_type": "auto",
+                  "chart_title": model_.user_prompt[:30], "use_column_names": True,
+                  "data_interface": {"available": False}}]
+        agent_logs.append("⚠️ 无 plan，使用自主规划")
 
     successful_charts = []
-    for fname in new_files:
-        chart_path = str(charts_folder / fname)
-        successful_charts.append({
-            "plan": {"plan_name": fname, "chart_type": "auto"},
-            "chart_path": chart_path,
-        })
-
-    if successful_charts:
-        agent_logs.append(
-            f"✅ 生成 {len(successful_charts)} 个图表: "
-            f"{[c['plan']['plan_name'] for c in successful_charts]}"
-        )
-    else:
-        agent_logs.append("⚠️ 未生成任何图表 HTML")
-
     failed_plans = []
-    if not successful_charts:
-        failed_plans.append({"plan": {}, "error": "Agent 未产出图表"})
+
+    for idx, plan_item in enumerate(plans):
+        if _check_cancelled(task_id):
+            agent_logs.append("❌ 任务已被用户取消")
+            raise RuntimeError("Task cancelled by user")
+
+        plan_name = plan_item.get("plan_name", f"图表{idx + 1}")
+        agent_logs.append(f"📊 执行 plan {idx + 1}/{len(plans)}: {plan_name}")
+
+        try:
+            success, chart_path, error = await generate_single_chart(
+                chat=chat,
+                plan=plan_item,
+                data_file_path=", ".join(file_paths) if file_paths else "",
+                data_preview=profile.to_prompt_str() if profile else "",
+                output_folder=output_folder,
+                engine=engine,
+                generate_prompt=generate_prompt,
+                debug_prompt=debug_prompt,
+                retriever=rag_retriever,
+                max_retries=3,
+                dataset_summary=dataset_summary_json,
+                duckdb_path=duckdb_path,
+                table_name=table_name,
+                user_config=user_chart_config_json,
+            )
+        except Exception as e:
+            success, chart_path, error = False, "", f"generate_single_chart 异常: {e}"
+
+        if success and chart_path:
+            successful_charts.append({"plan": plan_item, "chart_path": chart_path})
+            agent_logs.append(f"✅ plan {idx + 1} 成功: {chart_path}")
+        else:
+            failed_plans.append({"plan": plan_item, "error": error})
+            agent_logs.append(f"❌ plan {idx + 1} 失败: {(error or '未知')[:100]}")
 
     return {
         "successful_charts": successful_charts,
