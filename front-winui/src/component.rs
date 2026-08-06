@@ -40,6 +40,7 @@ impl Component for MainModel {
             include_str!("js/settings.js"),
             include_str!("js/input.js"),
             include_str!("js/api.js"),
+            include_str!("js/trace.js"),
         ].concat();
         let html = include_str!("app.html")
             .replace("__CSS__", css)
