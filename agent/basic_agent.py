@@ -66,7 +66,9 @@ class BaseAgent(Runnable):
         try:
             self.chat= ChatOpenAI(model_name=self.model_name,
                                          base_url=self.model_url,
-                                        api_key=self.model_key)
+                                        api_key=self.model_key,
+                                        timeout=120,
+                                        max_retries=3)
         except Exception as e:
             raise RuntimeError(f"❌ Failed to initialize AI model: {e}")
         print(f"✅ Agent {self.model_name} initialization completed")
