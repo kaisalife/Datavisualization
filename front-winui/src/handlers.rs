@@ -565,18 +565,6 @@ impl MainModel {
             .to_string();
             self.js_complete_task(&chart_json);
         }
-        // 自动打开生成的图表到浏览器新标签页（用户无需手动去文件夹查找）
-        for hf in &html_files {
-            let filename = filename_from_path(hf);
-            let url = self.client.chart_url(&filename);
-            #[cfg(target_os = "windows")]
-            {
-                std::process::Command::new("cmd")
-                    .args(["/C", "start", "", &url])
-                    .spawn()
-                    .ok();
-            }
-        }
         self.js_set_status("完成");
         Ok(true)
     }

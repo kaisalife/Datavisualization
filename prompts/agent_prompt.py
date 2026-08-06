@@ -108,7 +108,24 @@ agent_chart_designer_prompt ="""
    - db/其他源（available=false）：所有数据字段填 canonical_dataset.tabular.columns[].name 的真实列名字符串
 */
 
-计划必填字段：plan_id, plan_name, plan_description, data_file_path, data_analysis, chart_type, chart_title, chart_reason, use_column_names, execution_order, data_interface, overall_analysis
+**布局规划（避免标题/图例/标签文字重叠）**：
+每个 plan 应包含 `layout` 字段，指定图表元素位置（生成阶段会严格遵守）：
+```json
+"layout": {{
+  "legend_pos": "bottom",
+  "legend_orient": "horizontal",
+  "title_pos": "top",
+  "grid_top": "12%",
+  "grid_bottom": "8%"
+}}
+```
+规划原则（根据 series 数量与名称长度）：
+- series ≤ 4 且名称短：legend_pos="top"（右上），grid_top="12%", grid_bottom="8%"
+- series > 4 或名称长：legend_pos="bottom"，grid_top="8%", grid_bottom="12%"
+- Pie/Funnel：legend_pos="top" 或 "right"
+- 标题过长：用 subtitle 或缩短，title_pos 保持 "top"
+
+计划必填字段：plan_id, plan_name, plan_description, data_file_path, data_analysis, chart_type, chart_title, chart_reason, use_column_names, execution_order, data_interface, overall_analysis, layout
 
 重要说明：
 - `data_interface.available` 的取值必须与源类型一致：
@@ -243,6 +260,17 @@ df = conn.sql("SELECT col1, col2 FROM {table_name} WHERE col1 > 100").df()
 - color / palette -> 通过 `set_series_opts` / `itemstyle` 配置
 - 其他字段按 pyecharts 对应 API 应用
 若 user_config 为 "(未提供)"，使用默认：`InitOpts(width="900px", height="500px")` + `ThemeType.LIGHT`。
+
+5.6. 布局与防重叠规范（必须遵守，避免标题/图例/标签文字重叠）
+pyecharts 默认布局在多 series、长标题时易重叠。生成代码时必须显式设置元素位置：
+- 标题：`TitleOpts(title=..., pos_top="2%", pos_left="center")`，标题顶部居中。
+- 图例（根据 plan_details.layout.legend_pos，无则按 series 数量默认）：
+  - "top" 或 series ≤ 4：`LegendOpts(pos_top="2%", pos_right="3%", orient="horizontal")`
+  - "bottom" 或 series > 4：`LegendOpts(pos_bottom="2%", pos_left="center", orient="horizontal")`
+- Grid（Bar/Line/Scatter/Area）：`GridOpts(pos_top=layout.grid_top 或 "12%", pos_bottom=layout.grid_bottom 或 "8%", pos_left="8%", pos_right="5%")`，为标题/图例留空间。
+- Pie：无 grid。`center=["50%", "55%"], radius=["30%", "60%"]`；图例 pos_top 或 pos_right，避免与饼图重叠。
+- 标题过长：用 subtitle 或缩短，避免与图例重叠。
+- 数据标签：多 series 时 `set_series_opts(label_opts=opts.LabelOpts(is_show=False))` 避免重叠；单 series 可显示。
 
 6. 代码输出规范
 仅返回 Python 代码，不要包含任何解释、注释或额外文本。

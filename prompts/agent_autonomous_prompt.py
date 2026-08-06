@@ -34,6 +34,17 @@ agent_autonomous_prompt = """
   - 用全局 DuckDB 连接 conn（已由框架注入）：df = conn.sql("SELECT * FROM {{table_name}}").df()
 - 代码必须完整可执行，包含所有 import（pyecharts、pandas 等）
 
+## 布局与防重叠规范（必须遵守，避免标题/图例/标签文字重叠）
+pyecharts 默认布局在多 series、长标题时易重叠。生成代码时必须显式设置元素位置：
+- 标题：`TitleOpts(title=..., pos_top="2%", pos_left="center")`，标题顶部居中。
+- 图例（参考 planned_charts 的 layout.legend_pos，无则按 series 数量默认）：
+  - series ≤ 4：`LegendOpts(pos_top="2%", pos_right="3%", orient="horizontal")`（右上）
+  - series > 4 或名称长：`LegendOpts(pos_bottom="2%", pos_left="center", orient="horizontal")`（底部）
+- Grid（Bar/Line/Scatter/Area）：`GridOpts(pos_top="12%", pos_bottom="8%"[或"12%"若图例底部], pos_left="8%", pos_right="5%")`，为标题/图例留空间。
+- Pie：无 grid。`center=["50%", "55%"], radius=["30%", "60%"]`；图例 pos_top 或 pos_right，避免与饼图重叠。
+- 标题过长：用 subtitle 或缩短，避免与图例重叠。
+- 数据标签：多 series 时 `set_series_opts(label_opts=opts.LabelOpts(is_show=False))` 避免重叠；单 series 可显示。
+
 ## 数据特征驱动的图表选择（参考 canonical_dataset.semantic_hints.detected_patterns）
 - 含 time_series -> 优先 Line / Area
 - 含 categorical_comparison -> 优先 Bar / Pie
