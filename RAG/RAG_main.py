@@ -47,7 +47,11 @@ class Qwen3Embeddings(Embeddings):
         return embeddings.tolist()
     
     def embed_query(self, text):
-        embedding = self.model.encode(text, prompt_name="query", normalize_embeddings=True)
+        try:
+            embedding = self.model.encode(text, prompt_name="query", normalize_embeddings=True)
+        except Exception:
+            # 模型不支持 prompt_name（如 bge），用普通 encode
+            embedding = self.model.encode(text, normalize_embeddings=True)
         return embedding.tolist()
 
 
@@ -112,10 +116,12 @@ class RAGRetriever:
         )
 
     def _init_embeddings(self):
-        """初始化 Qwen3 嵌入模型"""
-        return Qwen3Embeddings(
-            model_path=self.embedding_model_path
-        )
+        """初始化嵌入模型：优先本地 Qwen3，路径不存在时用在线 fallback"""
+        if os.path.exists(self.embedding_model_path):
+            return Qwen3Embeddings(model_path=self.embedding_model_path)
+        # fallback: 用 HuggingFace 在线 embedding（自动下载，首次需网络）
+        print(f"⚠️ embedding 模型路径不存在: {self.embedding_model_path}，使用 fallback: BAAI/bge-small-zh-v1.5")
+        return Qwen3Embeddings(model_path="BAAI/bge-small-zh-v1.5")
 
     def _load_documents(self):
         """
