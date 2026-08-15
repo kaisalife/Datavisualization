@@ -77,6 +77,9 @@ viz_data_cache/
 *.parquet
 *.feather
 
+# 本地嵌入模型权重（HuggingFace 下载产物，不入库；用下载脚本获取）
+RAG/models/
+
 # 图表输出
 charts/
 output/
