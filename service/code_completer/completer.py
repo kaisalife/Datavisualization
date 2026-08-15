@@ -2,7 +2,7 @@
 
 流程：
 1. 校验代码文件路径（防止越权访问）
-2. AST 静态分析（复用 service.introspection.py_ast）
+2. AST 静态分析（复用 service.runtime.introspection.py_ast）
 3. 调 LLM 生成可视化片段
 4. 拼装完整脚本返回（不执行）
 """
@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from service.introspection.py_ast import analyze_python_source
+from service.runtime.introspection.py_ast import analyze_python_source
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -68,7 +68,7 @@ def _extract_completion_json(response_text: str) -> dict:
 
     响应可能是纯 JSON 或包裹在 ```json ... ``` 中。
     """
-    from service.utils import extract_json_from_response
+    from service.runtime.utils import extract_json_from_response
 
     parsed = extract_json_from_response(response_text)
     if not parsed:
@@ -80,7 +80,52 @@ def _extract_completion_json(response_text: str) -> dict:
             raise CodeCompletionError(f"LLM 响应缺少字段 {key}: {parsed}")
 
     parsed.setdefault("libs", [])
+    parsed.setdefault("result_var", "")
+    parsed.setdefault("mock_data", "")
     return parsed
+
+
+def _test_snippet_with_mock(snippet: str, mock_data: str) -> tuple[bool, str]:
+    """用 mock 数据测试可视化代码（沙箱执行，不跑原代码）。
+
+    只验证可视化代码本身能跑通——用 mock 数据模拟原代码的输出结果。
+    不执行原代码（避开环境依赖/副作用）。
+    """
+    import tempfile
+    from agent_tools.sandbox import run_python_safely
+    from service.pipeline.chart_generator import _RENDER_HEADER
+
+    if not mock_data.strip():
+        return False, "LLM 未提供 mock_data，无法测试"
+
+    test_code = (
+        _RENDER_HEADER
+        + "\n# --- mock 数据（模拟原代码输出） ---\n"
+        + mock_data
+        + "\n# --- 可视化代码（待验证） ---\n"
+        + snippet
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = dict(os.environ)
+        env["CHART_OUTPUT_DIR"] = tmpdir
+        env["CHART_OUTPUT_NAME"] = "test_render.html"
+        env.pop("DUCKDB_PATH", None)  # 测试不需要 DuckDB
+        try:
+            result = run_python_safely(
+                test_code,
+                cwd=tmpdir,
+                timeout=30,
+                env=env,
+                extra_pythonpath=str(PROJECT_ROOT),
+            )
+            if result.success:
+                html_path = Path(tmpdir) / "test_render.html"
+                if html_path.exists():
+                    return True, ""
+                return False, "执行成功但未生成图表 HTML"
+            return False, (result.error or result.stderr or "执行失败")[:500]
+        except Exception as e:
+            return False, f"测试异常: {e}"
 
 
 async def complete_visualization_code(request: Any) -> dict:
@@ -108,8 +153,8 @@ async def complete_visualization_code(request: Any) -> dict:
     scientific_lib = getattr(request, "scientific_lib", None) or "auto"
 
     # 延迟导入避免循环依赖
-    from service.config import load_config, get_agent_class
-    from service.query_engine import QueryEngine
+    from service.runtime.config import load_config, get_agent_class
+    from service.runtime.query_engine import QueryEngine
     from prompts.agent_prompt import get_agent_viz_code_completion_prompt
 
     config = load_config(None)
@@ -132,7 +177,7 @@ async def complete_visualization_code(request: Any) -> dict:
         summary = analyze_python_source(source)
         summary_text = json.dumps(summary, ensure_ascii=False, indent=2)
 
-        # LLM 生成片段
+        # LLM 生成片段（含 mock_data + result_var）
         response_text = await engine.run_prompt(prompt_template.invoke({
             "source_summary": summary_text,
             "full_source": source,
@@ -143,15 +188,26 @@ async def complete_visualization_code(request: Any) -> dict:
         completion = _extract_completion_json(response_text)
 
         snippet = completion["snippet"]
-        # 拼装完整脚本
-        completed_code = source.rstrip() + "\n\n# --- 追加的可视化代码 ---\n" + snippet
+        mock_data = completion.get("mock_data", "")
+        # 用 mock 数据测试可视化代码（不跑原代码）
+        test_success, test_error = _test_snippet_with_mock(snippet, mock_data)
+
+        if test_success:
+            completed_code = source.rstrip() + "\n\n# --- 追加的可视化代码 ---\n" + snippet
+            inserted = snippet
+        else:
+            completed_code = source
+            inserted = ""
+            logger.warning("可视化代码测试失败，未追加", test_error=test_error)
         line_count = len(source.splitlines())
 
         results.append({
             "source_file": str(validated),
             "completed_code": completed_code,
-            "inserted_snippet": snippet,
+            "inserted_snippet": inserted,
             "insertion_point": {"line": line_count + 2, "position": "end_of_file"},
+            "test_success": test_success,
+            "test_error": test_error,
             "explanation": completion["explanation"],
             "recommended_libs": completion.get("libs", []),
         })

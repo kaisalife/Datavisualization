@@ -21,6 +21,8 @@ class BaseAgent(Runnable):
         self.verbose = verbose
         self.client: Optional[MultiServerMCPClient] = None
         self.tools: Optional[List] = None
+        self.task_id: str = ""
+        self.total_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
         self.signature = f"{self.model_name}@{self.model_url[:20]}..." if self.model_url else f"{self.model_name}@(no url)"
 
     @trace(category="init")
@@ -74,6 +76,45 @@ class BaseAgent(Runnable):
             raise RuntimeError(f"❌ Failed to initialize AI model: {e}")
         print(f"✅ Agent {self.model_name} initialization completed")
 
+    def _track_usage(self, response) -> None:
+        """提取 LLM 响应的 usage_metadata，累加并推送 token 事件到前端。"""
+        try:
+            usage_meta = getattr(response, "usage_metadata", None) or {}
+            prompt_tokens = int(usage_meta.get("input_tokens", 0))
+            completion_tokens = int(usage_meta.get("output_tokens", 0))
+            if prompt_tokens == 0 and completion_tokens == 0:
+                return
+            self.total_usage["prompt_tokens"] += prompt_tokens
+            self.total_usage["completion_tokens"] += completion_tokens
+            self.total_usage["calls"] += 1
+            self.total_usage["total_tokens"] = self.total_usage["prompt_tokens"] + self.total_usage["completion_tokens"]
+            if self.task_id:
+                from service.monitoring.ws_streamer import ws_streamer
+                from service.monitoring.trace_store import trace_store as _ts
+                from datetime import datetime, timezone
+                _ts.add_tokens(self.task_id, {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                    "model_name": self.model_name,
+                    "func_name": "ainvoke",
+                })
+                ws_streamer.broadcast(self.task_id, {
+                    "type": "token",
+                    "task_id": self.task_id,
+                    "model_name": self.model_name,
+                    "func_name": "ainvoke",
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                    "cumulative_total": self.total_usage["total_tokens"],
+                    "call_index": self.total_usage["calls"] - 1,
+                    "cost_rmb": 0,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+        except Exception:
+            pass
+
     @trace(category="llm_call")
     async def ainvoke(
         self, 
@@ -113,7 +154,8 @@ class BaseAgent(Runnable):
             ]
         
         response = await self.chat.ainvoke(messages)
-        
+        self._track_usage(response)
+
         return {
             "content": response.content,
             "agent_logs": [f"Processed user prompt: {user_prompt[:50]}..."]
@@ -179,6 +221,7 @@ class BaseAgent(Runnable):
 
         for i in range(max_iterations):
             response = await chat_with_tools.ainvoke(messages)
+            self._track_usage(response)
             content = response.content if hasattr(response, "content") else str(response)
             messages.append(response)
 

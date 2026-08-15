@@ -77,6 +77,9 @@ impl ApiClient {
         if let Some(db_config) = &request.db_config {
             form = form.text("db_config", db_config.clone());
         }
+        if let Some(api_config) = &request.api_config {
+            form = form.text("api_config", api_config.clone());
+        }
         if let Some(config) = &request.config {
             form = form.text("config", config.clone());
         }
@@ -366,6 +369,39 @@ impl ApiClient {
             anyhow::bail!(format_http_error(status, &body))
         }
         Ok(())
+    }
+
+    /// 删除最早的 N 个对话
+    pub async fn delete_oldest(&self, count: u32) -> Result<serde_json::Value> {
+        let url = format!("{}/api/conversations/oldest?count={}", self.base_url, count);
+        let resp = self.client.delete(&url)
+            .header("X-API-Key", &self.api_key)
+            .send().await.context("网络请求失败")?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&body).context(format!("解析失败: {}", body))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
+    /// 批量删除对话
+    pub async fn batch_delete(&self, ids: Vec<String>) -> Result<serde_json::Value> {
+        let url = format!("{}/api/conversations/batch", self.base_url);
+        let body = serde_json::json!({ "ids": ids }).to_string();
+        let resp = self.client.delete(&url)
+            .header("X-API-Key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send().await.context("网络请求失败")?;
+        let status = resp.status();
+        let resp_body = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&resp_body).context(format!("解析失败: {}", resp_body))
+        } else {
+            anyhow::bail!(format_http_error(status, &resp_body))
+        }
     }
 
     /// 修改提示词

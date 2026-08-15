@@ -22,6 +22,8 @@ impl MainModel {
             "loadHistory" => self.handle_load_history(sender),
             "viewDetail" => self.handle_view_detail(msg.data, sender),
             "deleteConversation" => self.handle_delete_conversation(msg.data, sender),
+            "deleteOldest" => self.handle_delete_oldest(msg.data, sender),
+            "batchDelete" => self.handle_batch_delete(msg.data, sender),
             "updatePrompt" => self.handle_update_prompt(msg.data, sender),
             "openFolder" => self.handle_open_folder().await,
             "attachFile" => self.handle_attach_file().await,
@@ -84,13 +86,14 @@ impl MainModel {
         let db_config = db_name
             .and_then(|name| self.settings.db_configs.iter().find(|db| db.name == name))
             .map(|db| db.to_json_string());
+        let api_config = data.get("apiConfig").map(|v| v.to_string());
 
         if prompt.trim().is_empty() {
             self.js_add_message("assistant", "请输入分析需求。");
             return Ok(true);
         }
-        if files.is_empty() && db_config.is_none() {
-            self.js_add_message("assistant", "请先选择数据文件或数据库。");
+        if files.is_empty() && db_config.is_none() && api_config.is_none() {
+            self.js_add_message("assistant", "请先选择数据文件、数据库或 API。");
             return Ok(true);
         }
 
@@ -122,6 +125,7 @@ impl MainModel {
                     user_prompt: prompt,
                     viz_mode,
                     db_config,
+                    api_config,
                     config,
                     model_url,
                     model_type,
@@ -148,14 +152,14 @@ impl MainModel {
                         match ws_result {
                             Ok(Ok(Ok(notification))) => {
                                 if notification.status == "success" {
-                                    let (html_files, charts, agent_logs) = match notification.result {
-                                        Some(r) => (r.html_file_paths, r.charts, r.agent_logs),
-                                        None => (Vec::new(), Vec::new(), Vec::new()),
+                                    let (html_files, charts, codes, agent_logs) = match notification.result {
+                                        Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs),
+                                        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
                                     };
                                     for log in agent_logs {
                                         sender.post(MainMessage::AppendLog(log));
                                     }
-                                    sender.post(MainMessage::TaskCompleted { charts, html_files });
+                                    sender.post(MainMessage::TaskCompleted { charts, html_files, codes });
                                 } else if notification.status == "cancelled" {
                                     sender.post(MainMessage::TaskCancelled);
                                 } else {
@@ -198,14 +202,14 @@ impl MainModel {
                                     use api::types::TaskStatus;
                                     match task_resp.status {
                                         TaskStatus::Success => {
-                                            let (html_files, charts, agent_logs) = match task_resp.result {
-                                                Some(r) => (r.html_file_paths, r.charts, r.agent_logs),
-                                                None => (Vec::new(), Vec::new(), Vec::new()),
+                                            let (html_files, charts, codes, agent_logs) = match task_resp.result {
+                                                Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs),
+                                                None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
                                             };
                                             for log in agent_logs {
                                                 sender.post(MainMessage::AppendLog(log));
                                             }
-                                            sender.post(MainMessage::TaskCompleted { charts, html_files });
+                                            sender.post(MainMessage::TaskCompleted { charts, html_files, codes });
                                         }
                                         TaskStatus::Cancelled => {
                                             sender.post(MainMessage::TaskCancelled);
@@ -350,7 +354,7 @@ impl MainModel {
             handle.block_on(async move {
                 match client.list_conversations(20, 0).await {
                     Ok(resp) => {
-                        sender.post(MainMessage::HistoryLoaded(resp.conversations));
+                        sender.post(MainMessage::HistoryLoaded { conversations: resp.conversations, total: resp.total });
                     }
                     Err(e) => {
                         sender.post(MainMessage::ShowToast { message: format!("加载历史失败: {}", e), toast_type: "error".to_string() });
@@ -365,9 +369,10 @@ impl MainModel {
     pub(crate) fn handle_history_loaded(
         &mut self,
         convs: Vec<api::types::ConversationSummary>,
+        total: usize,
     ) -> std::result::Result<bool, Error> {
         self.conversations = convs.clone();
-        self.js_set_conversation_list(&convs);
+        self.js_set_conversation_list(&convs, total);
         Ok(true)
     }
 
@@ -417,6 +422,67 @@ impl MainModel {
             handle.block_on(async move {
                 match client.delete_conversation(&conv_id).await {
                     Ok(()) => {
+                        sender.post(MainMessage::ConversationDeleted);
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::ShowToast { message: format!("删除失败: {}", e), toast_type: "error".to_string() });
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 删除最早的 N 个对话
+    fn handle_delete_oldest(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let count = data.get("count").and_then(|v| v.as_u64()).unwrap_or(30) as u32;
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.delete_oldest(count).await {
+                    Ok(resp) => {
+                        let deleted = resp.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0);
+                        sender.post(MainMessage::ShowToast { message: format!("已删除最老 {} 个对话", deleted), toast_type: "success".to_string() });
+                        sender.post(MainMessage::ConversationDeleted);
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::ShowToast { message: format!("删除失败: {}", e), toast_type: "error".to_string() });
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 批量删除选中的对话
+    fn handle_batch_delete(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let ids: Vec<String> = data.get("ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        if ids.is_empty() {
+            self.js_show_toast("未选择对话", "error");
+            return Ok(false);
+        }
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.batch_delete(ids).await {
+                    Ok(resp) => {
+                        let deleted = resp.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0);
+                        sender.post(MainMessage::ShowToast { message: format!("已删除 {} 个对话", deleted), toast_type: "success".to_string() });
                         sender.post(MainMessage::ConversationDeleted);
                     }
                     Err(e) => {
@@ -482,6 +548,7 @@ impl MainModel {
     ) -> std::result::Result<bool, Error> {
         let charts = detail.charts.clone().unwrap_or_default();
         let html_files = detail.html_file_paths.clone().unwrap_or_default();
+        let codes = detail.codes.clone().unwrap_or_default();
         let chart_items: Vec<serde_json::Value> = html_files
             .iter()
             .enumerate()
@@ -493,6 +560,7 @@ impl MainModel {
                     "path": self.client.chart_url(&filename),
                     "title": filename,
                     "status": "success",
+                    "code": codes.get(i).cloned().unwrap_or_default(),
                 })
             })
             .collect();
@@ -528,6 +596,7 @@ impl MainModel {
         &mut self,
         charts: Vec<String>,
         html_files: Vec<String>,
+        codes: Vec<String>,
     ) -> std::result::Result<bool, Error> {
         // 防竞态:已取消则忽略过期的完成回调
         if !self.is_generating {
@@ -555,6 +624,7 @@ impl MainModel {
                         "path": self.client.chart_url(&filename),
                         "title": filename,
                         "status": "success",
+                        "code": codes.get(i).cloned().unwrap_or_default(),
                     })
                 })
                 .collect();

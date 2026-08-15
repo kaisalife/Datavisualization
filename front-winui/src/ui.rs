@@ -59,7 +59,7 @@ impl MainModel {
     }
 
     /// 设置对话列表
-    pub(crate) fn js_set_conversation_list(&mut self, convs: &[api::types::ConversationSummary]) {
+    pub(crate) fn js_set_conversation_list(&mut self, convs: &[api::types::ConversationSummary], total: usize) {
         let json_arr: Vec<serde_json::Value> = convs
             .iter()
             .map(|c| {
@@ -73,8 +73,8 @@ impl MainModel {
             .collect();
         let json = serde_json::to_string(&json_arr).unwrap_or_else(|_| "[]".to_string());
         self.js(&format!(
-            "window.app.setConversationList('{}')",
-            Self::js_escape(&json)
+            "window.app.setConversationList('{}', {})",
+            Self::js_escape(&json), total
         ));
     }
 

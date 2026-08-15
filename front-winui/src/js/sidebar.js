@@ -22,7 +22,16 @@ function renderConversations(filter) {
     return;
   }
   if (filter) list = list.filter(c => (c.prompt || '').includes(filter));
-  let html = '<div class="conv-section-label">最近</div>';
+  let html = '';
+  // 多选模式操作栏
+  if (state.selectMode) {
+    const n = (state.selectedIds || []).length;
+    html += '<div class="select-bar"><span>已选 ' + n + ' 个</span>' +
+      '<button class="btn-sm" onclick="selectAllConvs()">全选</button>' +
+      '<button class="btn-sm danger" onclick="batchDeleteSelected()">删除选中</button>' +
+      '<button class="btn-sm" onclick="exitSelectMode()">取消</button></div>';
+  }
+  html += '<div class="conv-section-label">最近</div>';
   html += list.slice(0, Math.min(2, list.length)).map(c => convItemHtml(c)).join('');
   if (list.length > 2) {
     html += '<div class="conv-section-label">更早</div>';
@@ -36,16 +45,23 @@ function convItemHtml(c) {
   const stCls = ['success','failed','running','pending'].includes(st) ? st : 'pending';
   const icon = '📈';
   const date = (c.createdAt || '').substring(0, 16);
-  return '<div class="conversation-item" onclick="loadConv(\'' + escAttr(c.id) + '\')">' +
-    '<div class="conv-icon">' + icon + '</div>' +
-    '<div class="conv-content">' +
-      '<div class="conv-title">' + escHtml(c.prompt || '(无提示词)') + '</div>' +
-      '<div class="conv-meta"><span>' + date + '</span><span class="conv-status ' + stCls + '">' + st + '</span></div>' +
+  const sel = state.selectMode;
+  const checked = sel && state.selectedIds && state.selectedIds.indexOf(c.id) >= 0 ? 'checked' : '';
+  const checkbox = sel ? '<input type="checkbox" class="conv-checkbox" ' + checked + ' onclick="event.stopPropagation();toggleSelect(\'' + escAttr(c.id) + '\')">' : '';
+  const click = sel ? 'toggleSelect(\'' + escAttr(c.id) + '\')' : 'loadConv(\'' + escAttr(c.id) + '\')';
+  const actions = sel ? '' :
       '<div class="conv-actions">' +
         '<button class="conv-action-btn" onclick="event.stopPropagation();loadConv(\'' + escAttr(c.id) + '\')">查看</button>' +
         '<button class="conv-action-btn" onclick="event.stopPropagation();editConvPrompt(\'' + escAttr(c.id) + '\',\'' + escAttr(c.prompt || '') + '\')">改提示词</button>' +
         '<button class="conv-action-btn del" onclick="event.stopPropagation();deleteConv(\'' + escAttr(c.id) + '\')">删除</button>' +
-      '</div>' +
+      '</div>';
+  return '<div class="conversation-item' + (checked ? ' selected' : '') + '" onclick="' + click + '">' +
+    checkbox +
+    '<div class="conv-icon">' + icon + '</div>' +
+    '<div class="conv-content">' +
+      '<div class="conv-title">' + escHtml(c.prompt || '(无提示词)') + '</div>' +
+      '<div class="conv-meta"><span>' + date + '</span><span class="conv-status ' + stCls + '">' + st + '</span></div>' +
+      actions +
     '</div></div>';
 }
 
@@ -55,6 +71,110 @@ function deleteConv(id) { sendToRust('deleteConversation', { conversationId: id 
 function editConvPrompt(id, oldPrompt) {
   const np = prompt('修改提示词后可重新提交:', oldPrompt || '');
   if (np !== null && np.trim()) sendToRust('updatePrompt', { conversationId: id, prompt: np });
+}
+
+// ===== 对话数量清理提醒 =====
+function checkCleanupReminder() {
+  const total = state.total || 0;
+  hideCleanupBanner();
+  if (total > 100) {
+    showCleanupModal(total);
+  } else if (total > 30 && !localStorage.getItem('hideCleanupReminder')) {
+    showCleanupBanner(total);
+  }
+}
+
+function showCleanupBanner(total) {
+  let el = document.getElementById('cleanupBanner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cleanupBanner';
+    el.className = 'cleanup-banner';
+    const panel = document.getElementById('panel-conversations');
+    panel.insertBefore(el, panel.firstChild);
+  }
+  el.innerHTML = '<span>📋 历史对话较多(' + total + '个)，建议清理</span>' +
+    '<button class="banner-btn" onclick="enterSelectMode()">批量清理</button>' +
+    '<button class="banner-btn" onclick="dismissCleanupReminder()">不再提醒</button>';
+}
+
+function hideCleanupBanner() {
+  const el = document.getElementById('cleanupBanner');
+  if (el) el.remove();
+}
+
+function dismissCleanupReminder() {
+  localStorage.setItem('hideCleanupReminder', '1');
+  hideCleanupBanner();
+  window.app.showToast('已关闭提醒（超过100仍会提示）', 'info');
+}
+
+function showCleanupModal(total) {
+  let el = document.getElementById('cleanupModal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cleanupModal';
+    el.className = 'modal-overlay';
+    el.innerHTML = '<div class="modal-dialog">' +
+      '<div class="modal-title">⚠️ 历史对话超过 100 个</div>' +
+      '<div class="modal-body">当前共 ' + total + ' 个对话，过多可能影响性能。请选择清理方式：</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-primary" onclick="enterSelectMode()">手动选择删除</button>' +
+        '<button class="btn" onclick="deleteOldest(30)">自动清理最老30个</button>' +
+        '<button class="btn" onclick="closeCleanupModal()">稍后</button>' +
+      '</div></div>';
+    document.body.appendChild(el);
+  } else {
+    el.querySelector('.modal-body').textContent = '当前共 ' + total + ' 个对话，过多可能影响性能。请选择清理方式：';
+  }
+  el.style.display = 'flex';
+}
+
+function closeCleanupModal() {
+  const el = document.getElementById('cleanupModal');
+  if (el) el.style.display = 'none';
+}
+
+function deleteOldest(count) {
+  closeCleanupModal();
+  sendToRust('deleteOldest', { count: count });
+}
+
+// ===== 多选模式 =====
+function enterSelectMode() {
+  state.selectMode = true;
+  state.selectedIds = [];
+  closeCleanupModal();
+  hideCleanupBanner();
+  renderConversations();
+}
+
+function exitSelectMode() {
+  state.selectMode = false;
+  state.selectedIds = [];
+  renderConversations();
+}
+
+function toggleSelect(id) {
+  if (!state.selectedIds) state.selectedIds = [];
+  const i = state.selectedIds.indexOf(id);
+  if (i >= 0) state.selectedIds.splice(i, 1);
+  else state.selectedIds.push(id);
+  renderConversations();
+}
+
+function selectAllConvs() {
+  state.selectedIds = (state.conversations || []).map(c => c.id);
+  renderConversations();
+}
+
+function batchDeleteSelected() {
+  if (!state.selectedIds || state.selectedIds.length === 0) {
+    window.app.showToast('未选择对话', 'info');
+    return;
+  }
+  sendToRust('batchDelete', { ids: state.selectedIds });
+  exitSelectMode();
 }
 
 // ===== 文件列表 =====
@@ -132,6 +252,24 @@ function renderFileChips() {
     chip.appendChild(remove);
     container.appendChild(chip);
   });
+  if (state.apiConfig) {
+    const chip = document.createElement('div');
+    chip.className = 'file-chip';
+    const icon = document.createElement('span');
+    icon.textContent = '🌐';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'chip-name';
+    nameEl.textContent = state.apiConfig.url.substring(0, 30);
+    nameEl.title = state.apiConfig.url;
+    const remove = document.createElement('span');
+    remove.className = 'remove';
+    remove.textContent = '✕';
+    remove.onclick = function() { state.apiConfig = null; renderFileChips(); };
+    chip.appendChild(icon);
+    chip.appendChild(nameEl);
+    chip.appendChild(remove);
+    container.appendChild(chip);
+  }
 }
 
 // ===== 数据库选择弹窗 =====
@@ -160,4 +298,27 @@ function selectDb(name) {
   renderFileChips();
   window.app.showToast('已选择数据库: ' + db.name, 'success');
   sendToRust('selectDb', { name: name });
+}
+
+// ===== API 数据源配置 =====
+function showApiConfig() {
+  document.getElementById('apiConfigModal').classList.add('show');
+}
+
+function saveApiConfig() {
+  const url = document.getElementById('apiUrl').value.trim();
+  if (!url) { window.app.showToast('请输入 URL', 'error'); return; }
+  const method = document.getElementById('apiMethod').value;
+  let headers = null, params = null;
+  try { headers = JSON.parse(document.getElementById('apiHeaders').value || 'null'); }
+  catch(e) { window.app.showToast('请求头 JSON 格式错误', 'error'); return; }
+  try { params = JSON.parse(document.getElementById('apiParams').value || 'null'); }
+  catch(e) { window.app.showToast('查询参数 JSON 格式错误', 'error'); return; }
+  const body = document.getElementById('apiBody').value.trim() || null;
+  state.apiConfig = { url, method, headers, params, body };
+  state.selectedDb = null;
+  state.files = [];
+  renderFileChips();
+  document.getElementById('apiConfigModal').classList.remove('show');
+  window.app.showToast('已配置 API 数据源', 'success');
 }

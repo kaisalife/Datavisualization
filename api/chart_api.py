@@ -12,7 +12,7 @@ from pathlib import Path
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from Entity import GenerateChartWithPromptRequest, ErrorResponse
 from api.common import check_api_key, get_upload_dir, get_tasks, get_tasks_lock, get_executor, _run_service_main_in_executor, monitor_response
-from service.conversation_store import create_conversation
+from service.runtime.conversation_store import create_conversation
 
 
 chart_bp = Blueprint("chart", __name__, url_prefix="/api")
@@ -55,13 +55,23 @@ def generate_chart_with_prompt():
             except Exception as e:
                 return jsonify(ErrorResponse(detail=f"db_config JSON 解析失败: {e}").model_dump()), 400
 
+        # --- API 数据源（JSON string）---
+        api_config = None
+        api_config_str = request.form.get("api_config")
+        if api_config_str:
+            try:
+                api_config = json.loads(api_config_str)
+            except Exception as e:
+                return jsonify(ErrorResponse(detail=f"api_config JSON 解析失败: {e}").model_dump()), 400
+
         # 必须至少提供一种数据源
-        if not saved_paths and not db_config:
-            return jsonify(ErrorResponse(detail="必须提供 files 或 db_config 其中之一").model_dump()), 400
+        if not saved_paths and not db_config and not api_config:
+            return jsonify(ErrorResponse(detail="必须提供 files 或 db_config 或 api_config 其中之一").model_dump()), 400
 
         request_model = GenerateChartWithPromptRequest(
             file_paths=saved_paths if saved_paths else None,
             db_config=db_config,
+            api_config=api_config,
             user_prompt=user_prompt,
             config=config,
             model_url=model_url,

@@ -6,6 +6,7 @@ class GenerateChartWithPromptRequest(BaseModel):
     """生成图表请求模型"""
     file_paths: Optional[List[str]] = None  # 文件路径（CSV/Excel/Parquet），可选
     db_config: Optional[Dict[str, Any]] = None  # 数据库连接配置，可选
+    api_config: Optional[Dict[str, Any]] = None  # API 数据源配置（url/method/headers/params/body）
     user_prompt: str  # 用户提示词
     config: Optional[str] = None  # 图表配置（JSON字符串）
     model_url: Optional[str] = None  # 模型URL
@@ -33,6 +34,7 @@ class GenerateChartWithPromptResponse(BaseModel):
     Charts: List[str]  # 图表类型列表
     HtmlFilePaths: List[str]  # HTML文件路径列表
     AgentLogs: List[str]  # 代理日志列表
+    Codes: List[str] = []  # 生成代码列表（与 HtmlFilePaths 一一对应）
 
 
 class GetChartRequest(BaseModel):

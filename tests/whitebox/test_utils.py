@@ -4,7 +4,7 @@
 """
 import pytest
 
-from service.utils import (
+from service.runtime.utils import (
     extract_code_from_response,
     extract_json_from_response,
     _find_balanced_json,

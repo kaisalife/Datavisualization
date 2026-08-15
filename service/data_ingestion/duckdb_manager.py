@@ -21,7 +21,10 @@ import duckdb
 import pandas as pd
 
 from service.data_ingestion.models import DataProfile
+from service.observability import get_logger
 
+
+logger = get_logger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -96,22 +99,32 @@ def cleanup_old_duckdb_files(max_age_hours: float = 24.0) -> int:
                 if not any(session_dir.iterdir()):
                     session_dir.rmdir()
                 t_del = time.perf_counter()
-                print(
-                    f"[cleanup] 删除 {session_dir.name} "
-                    f"age={(now - mtime) / 3600:.1f}h del_time={t_del - t_del_start:.3f}s"
+                logger.info(
+                    "cleanup 删除",
+                    session_dir=session_dir.name,
+                    age_hours=(now - mtime) / 3600,
+                    del_time_s=t_del - t_del_start,
                 )
             except OSError as e:
                 t_del = time.perf_counter()
-                print(f"[cleanup] 删除失败 {session_dir.name}: {e} ({t_del - t_del_start:.3f}s)")
+                logger.warning(
+                    "cleanup 删除失败",
+                    session_dir=session_dir.name,
+                    error=str(e),
+                    del_time_s=t_del - t_del_start,
+                )
 
     t_total = time.perf_counter() - t0
     if cleaned > 0:
-        print(
-            f"[cleanup] 完成: scanned={scanned} cleaned={cleaned} "
-            f"total_time={t_total:.3f}s (>{max_age_hours}h)"
+        logger.info(
+            "cleanup 完成",
+            scanned=scanned,
+            cleaned=cleaned,
+            total_time_s=t_total,
+            max_age_hours=max_age_hours,
         )
     else:
-        print(f"[cleanup] 完成: scanned={scanned} cleaned=0 total_time={t_total:.3f}s")
+        logger.info("cleanup 完成", scanned=scanned, cleaned=0, total_time_s=t_total)
 
     return cleaned
 
@@ -292,7 +305,7 @@ class DuckDBManager:
         try:
             df = self._conn.sql(f'SUMMARIZE "{table_name}"').df()
         except Exception as e:
-            print(f"[warn] SUMMARIZE 失败 (table={table_name}): {e}")
+            logger.warning("SUMMARIZE 失败", table=table_name, error=str(e))
             return {}
 
         stats: dict[str, dict[str, Any]] = {}

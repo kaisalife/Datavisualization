@@ -71,7 +71,7 @@ def charts_dir():
     auth_error = check_api_key()
     if auth_error:
         return auth_error
-    from service.constants import get_charts_dir
+    from service.runtime.constants import get_charts_dir
     return jsonify({"dir": str(get_charts_dir().resolve())}), 200
 
 

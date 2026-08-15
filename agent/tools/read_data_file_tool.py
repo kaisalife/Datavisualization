@@ -1,6 +1,6 @@
 """ReadDataFileTool：带 mtime 缓存的只读数据文件读取工具。
 
-复用 service/cache/file_read_cache.py 的 FileReadCache。
+复用 service/runtime/cache/file_read_cache.py 的 FileReadCache。
 is_read_only=True，is_destructive=False，is_concurrency_safe=True。
 """
 
@@ -44,22 +44,19 @@ class ReadDataFileTool(Tool):
             return ToolOutput(success=False, error=f"输入校验失败: {e}")
 
         try:
-            from service.cache.file_read_cache import read_file
+            from service.runtime.cache.file_read_cache import read_file
         except ImportError:
-            try:
-                from ..service.cache.file_read_cache import read_file
-            except ImportError:
-                import os
-                if not os.path.exists(file_path):
-                    return ToolOutput(success=False, error=f"文件不存在: {file_path}")
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
-                lines = content.split("\n")[:max_lines]
-                return ToolOutput(
-                    success=True,
-                    output="\n".join(lines),
-                    metadata={"source": "direct_read"},
-                )
+            import os
+            if not os.path.exists(file_path):
+                return ToolOutput(success=False, error=f"文件不存在: {file_path}")
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            lines = content.split("\n")[:max_lines]
+            return ToolOutput(
+                success=True,
+                output="\n".join(lines),
+                metadata={"source": "direct_read"},
+            )
 
         content, encoding = read_file(file_path)
         if content is None:

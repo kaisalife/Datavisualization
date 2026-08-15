@@ -19,7 +19,7 @@ import sys
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from service.report_pipeline import generate_report_from_prompt, get_default_llm
+from service.report.report_pipeline import generate_report_from_prompt, get_default_llm
 
 
 # 预置的示例请求

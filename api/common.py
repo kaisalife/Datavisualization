@@ -14,7 +14,7 @@ from pathlib import Path
 
 from flask import request, jsonify, current_app
 from Entity import ErrorResponse
-from service.conversation_store import update_conversation_status, complete_conversation
+from service.runtime.conversation_store import update_conversation_status, complete_conversation
 
 
 # WebSocket 连接池：task_id -> set of ws connections
@@ -201,18 +201,20 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                 import asyncio
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                from service.service_main import service_main
+                from service.pipeline.service_main import service_main
                 from Entity import GenerateChartWithPromptResponse
                 clear_cancel(task_id)
                 result = loop.run_until_complete(service_main(request_model, task_id=task_id))
 
                 charts = [item["chart_path"] for item in result.get("successful_charts", [])]
                 chart_types = [item["plan"].get("chart_type", "unknown") for item in result.get("successful_charts", [])]
+                codes = [item.get("code", "") for item in result.get("successful_charts", [])]
                 agent_logs = result.get("agent_logs", [])
                 response = GenerateChartWithPromptResponse(
                     Charts=chart_types,
                     HtmlFilePaths=charts,
                     AgentLogs=agent_logs,
+                    Codes=codes,
                 )
                 if is_cancelled(task_id):
                     with lock:
@@ -238,6 +240,7 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                         agent_logs=agent_logs,
                         charts=chart_types,
                         html_file_paths=charts,
+                        codes=codes,
                     )
                 logger.info("task_success", task_id=task_id,
                             charts_count=len(charts), failed_count=len(result.get("failed_plans", [])))
@@ -283,5 +286,16 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                     pass
                 try:
                     trace_store.flush(task_id)
+                except Exception:
+                    pass
+                # 阶段耗时汇总推送 + 落盘清理
+                try:
+                    from service.monitoring import stage_timer
+                    stage_summary = stage_timer.flush(task_id)
+                    if stage_summary.get("stages"):
+                        ws_streamer.broadcast(task_id, {
+                            "type": "stage", "event": "summary",
+                            "task_id": task_id, **stage_summary,
+                        })
                 except Exception:
                     pass

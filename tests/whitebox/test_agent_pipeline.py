@@ -122,7 +122,7 @@ def _make_profile():
 
 class TestRunAgentPipeline:
     async def test_collects_new_charts_only(self, tmp_path):
-        from service.agent_pipeline import run_agent_pipeline
+        from service.pipeline.agent_pipeline import run_agent_pipeline
 
         output_folder = tmp_path / "out"
         charts = output_folder / "charts"
@@ -148,7 +148,7 @@ class TestRunAgentPipeline:
         assert len(result["failed_plans"]) == 0
 
     async def test_no_charts_produced(self, tmp_path):
-        from service.agent_pipeline import run_agent_pipeline
+        from service.pipeline.agent_pipeline import run_agent_pipeline
 
         output_folder = tmp_path / "out"
 
@@ -164,7 +164,7 @@ class TestRunAgentPipeline:
         assert "未产出图表" in result["failed_plans"][0]["error"]
 
     async def test_agent_exception_handled(self, tmp_path):
-        from service.agent_pipeline import run_agent_pipeline
+        from service.pipeline.agent_pipeline import run_agent_pipeline
 
         output_folder = tmp_path / "out"
 
@@ -180,7 +180,7 @@ class TestRunAgentPipeline:
         assert "LLM down" in result["failed_plans"][0]["error"]
 
     async def test_plan_stage_produces_blueprint(self, tmp_path):
-        from service.agent_pipeline import run_agent_pipeline
+        from service.pipeline.agent_pipeline import run_agent_pipeline
         output_folder = tmp_path / "out"
         captured_prompt = []
 

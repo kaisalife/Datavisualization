@@ -65,7 +65,28 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// 设置文件路径：定位 front-winui 项目根（含 Cargo.toml 的目录），settings.json 放此处。
+    /// 相对路径、跟随项目；cargo build/clean 只动 target/，不碰项目根，配置不会因编译丢失。
     pub(crate) fn file_path() -> Option<std::path::PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let exe_dir = exe.parent()?;
+        // 从 exe 目录往上找 Cargo.toml，定位项目根
+        let mut dir = exe_dir.to_path_buf();
+        loop {
+            if dir.join("Cargo.toml").exists() {
+                return Some(dir.join("settings.json"));
+            }
+            match dir.parent() {
+                Some(p) => dir = p.to_path_buf(),
+                None => break,
+            }
+        }
+        // 回退：exe 同级目录
+        Some(exe_dir.join("settings.json"))
+    }
+
+    /// 旧路径（exe 同级目录，即 target/.../settings.json），用于一次性迁移到项目根
+    fn legacy_file_path() -> Option<std::path::PathBuf> {
         std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("settings.json")))
@@ -73,9 +94,26 @@ impl AppSettings {
 
     pub(crate) fn load() -> Self {
         if let Some(path) = Self::file_path() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(settings) = serde_json::from_str::<AppSettings>(&content) {
-                    return settings;
+            // 新路径存在则直接读
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(settings) = serde_json::from_str::<AppSettings>(&content) {
+                        return settings;
+                    }
+                }
+            }
+            // 迁移：新路径不存在时，从旧路径（exe 同级）复制过来，避免老用户配置丢失
+            if !path.exists() {
+                if let Some(old) = Self::legacy_file_path() {
+                    if old.exists() && old != path {
+                        if std::fs::copy(&old, &path).is_ok() {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                if let Ok(settings) = serde_json::from_str::<AppSettings>(&content) {
+                                    return settings;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

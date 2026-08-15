@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 # 导入模块 - 直接从具体文件导入，简化流程
 try:
     from Entity.ApiModels import GenerateChartWithPromptRequest
-    from service.service_main import service_main
-    from service.config import load_config
+    from service.pipeline.service_main import service_main
+    from service.runtime.config import load_config
     
     print("✅ 导入成功")
 except Exception as e:

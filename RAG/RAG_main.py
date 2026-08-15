@@ -10,6 +10,8 @@ from pathlib import Path
 # 加载环境变量
 from dotenv import load_dotenv
 load_dotenv()
+# 配置 HF 镜像加速国内下载（必须在 import huggingface_hub/transformers 之前设置）
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 # LangChain 相关
 from langchain_core.embeddings import Embeddings
@@ -28,22 +30,28 @@ except ImportError:
 import torch
 
 
-# 自定义 Qwen3 Embeddings 类
-class Qwen3Embeddings(Embeddings):
+# 通用 SentenceTransformer 嵌入（兼容 bge-small-zh / Qwen3-Embedding 等）
+class SentenceTransformerEmbeddings(Embeddings):
     """
-    自定义 Embeddings 类，用于 Qwen3-Embedding 模型
+    基于 SentenceTransformer 的 Embeddings。CPU 友好模型（如 bge-small-zh-v1.5,
+    24M 参数）构建/检索都快；也兼容 Qwen3-Embedding（需 GPU）。
     """
-    def __init__(self, model_path: str, device: str = None):
+    def __init__(self, model_path: str, device: str = None, max_seq_length: int = 512):
         if not HAS_SENTENCE_TRANSFORMERS:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
-        
+
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         self.model = SentenceTransformer(model_path, device=device)
-    
+        # 限制最大序列长度：pyecharts 示例 avg ~240 token，512 足够且大幅加速 CPU encode
+        self.model.max_seq_length = max_seq_length
+
     def embed_documents(self, texts):
-        embeddings = self.model.encode(texts, normalize_embeddings=True)
+        embeddings = self.model.encode(
+            texts, normalize_embeddings=True,
+            batch_size=32, show_progress_bar=True,
+        )
         return embeddings.tolist()
     
     def embed_query(self, text):
@@ -59,7 +67,7 @@ class Qwen3Embeddings(Embeddings):
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EMBEDDING_MODEL_PATH = os.getenv(
     "QWEN_EMBEDDING_PATH",
-    str(_PROJECT_ROOT / "RAG" / "models" / "QwenEmbedding"),
+    str(_PROJECT_ROOT / "RAG" / "models" / "bge-small-zh-v1.5"),  # 本地 CPU 友好模型，避免在线下载超时
 )
 DATA_ROOT = os.getenv(
     "RAG_DATA_ROOT",
@@ -116,12 +124,12 @@ class RAGRetriever:
         )
 
     def _init_embeddings(self):
-        """初始化嵌入模型：优先本地 Qwen3，路径不存在时用在线 fallback"""
+        """初始化嵌入模型：本地路径优先，否则用在线 HF 模型（自动下载）"""
         if os.path.exists(self.embedding_model_path):
-            return Qwen3Embeddings(model_path=self.embedding_model_path)
-        # fallback: 用 HuggingFace 在线 embedding（自动下载，首次需网络）
-        print(f"⚠️ embedding 模型路径不存在: {self.embedding_model_path}，使用 fallback: BAAI/bge-small-zh-v1.5")
-        return Qwen3Embeddings(model_path="BAAI/bge-small-zh-v1.5")
+            print(f"使用本地嵌入模型: {self.embedding_model_path}")
+        else:
+            print(f"使用在线嵌入模型: {self.embedding_model_path}（首次需下载，已配 hf-mirror 镜像）")
+        return SentenceTransformerEmbeddings(model_path=self.embedding_model_path)
 
     def _load_documents(self):
         """
@@ -184,7 +192,15 @@ class RAGRetriever:
                 persist_directory=self.persist_dir,
                 embedding_function=self.embeddings
             )
-            return vectorstore
+            # 检测空库：count()==0 说明是上次构建失败的残留空壳，需重建
+            try:
+                doc_count = vectorstore._collection.count()
+            except Exception:
+                doc_count = 0
+            if doc_count > 0:
+                print(f"已有 {doc_count} 条向量，直接复用")
+                return vectorstore
+            print(f"⚠️ 检测到空库（0 文档），可能是上次构建失败残留，将重新构建...")
 
         print("开始加载原始文档...")
         docs = self._load_documents()

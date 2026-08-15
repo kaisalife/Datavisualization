@@ -3,7 +3,7 @@
 覆盖纯逻辑：token 计数、上下文窗口解析、预算决策、成本计算与累计、线程安全。
 不依赖 LLM / 网络。
 """
-from service.budget.token_budget import (
+from service.runtime.budget.token_budget import (
     BudgetTracker,
     ContinueDecision,
     StopDecision,
@@ -16,7 +16,7 @@ from service.budget.token_budget import (
     DIMINISHING_CONSECUTIVE_LIMIT,
     COMPLETION_THRESHOLD,
 )
-from service.cost.cost_tracker import (
+from service.runtime.cost.cost_tracker import (
     CostTracker,
     calculate_cost,
     get_model_cost,

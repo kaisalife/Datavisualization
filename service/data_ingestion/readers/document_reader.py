@@ -103,7 +103,7 @@ class DocumentReader:
                 dataframes.append(df)
             except Exception as e:
                 # 单个表格解析失败不影响其他表格
-                print(f"[DocumentReader] 表格 {i} 解析失败: {e}")
+                logger.warning("文档表格解析失败", table_index=i, error=str(e))
                 continue
 
         if not dataframes:

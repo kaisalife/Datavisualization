@@ -22,9 +22,34 @@ from service.data_ingestion.models import DataProfile
 from service.data_ingestion.profiler import build_profile
 
 
-def _fetch_json(url: str, headers: dict | None = None, timeout: int = 30) -> Any:
-    """简单的 HTTP GET 获取 JSON。"""
-    req = Request(url, headers=headers or {"Accept": "application/json"})
+def _check_ssrf(url: str) -> None:
+    """SSRF 防护：禁止访问内网 IP / localhost。"""
+    import ipaddress
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL 缺少 host")
+    if host == "localhost" or host.startswith("127.") or host == "::1":
+        raise ValueError(f"SSRF 防护: 禁止访问 {host}")
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            raise ValueError(f"SSRF 防护: 禁止访问内网 IP {host}")
+    except ValueError:
+        pass  # 域名，允许（第一版不校验解析后的 IP）
+
+
+def _fetch_json(
+    url: str,
+    method: str = "GET",
+    headers: dict | None = None,
+    body: bytes | None = None,
+    timeout: int = 30,
+) -> Any:
+    """HTTP 请求获取 JSON（支持 GET/POST + 自定义 headers + SSRF 防护）。"""
+    _check_ssrf(url)
+    req = Request(url, data=body, method=method, headers=headers or {"Accept": "application/json"})
     with urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -116,6 +141,9 @@ class ApiReader:
         url: str | None = None,
         params: dict[str, Any] | None = None,
         table_name: str | None = None,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        body: str | None = None,
     ) -> DataProfile:
         """从 API 获取数据并注册为 DuckDB 表。
 
@@ -123,8 +151,11 @@ class ApiReader:
             db: DuckDBManager 实例
             api_type: 内置 API 类型 ("worldbank" / "statsgov")
             url: 通用 API URL (api_type 为 None 时使用)
-            params: API 查询参数
+            params: API 查询参数（GET 时拼到 URL，POST 时作 body）
             table_name: 目标表名
+            method: HTTP 方法 (GET/POST)
+            headers: 自定义请求头（认证 Bearer/Basic/API key 等）
+            body: 请求体（POST，JSON 字符串）
 
         Returns:
             DataProfile
@@ -137,8 +168,19 @@ class ApiReader:
             df = fetcher(**params)
             source_path = f"api://{api_type}"
         elif url:
-            # 通用 API
-            data = _fetch_json(url)
+            # 通用 API：GET 时 params 拼到 URL，POST 时 body 作请求体
+            from urllib.parse import urlencode
+            req_url = url
+            body_bytes = None
+            if method.upper() == "POST":
+                body_bytes = body.encode("utf-8") if body else None
+                if not headers:
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+            else:
+                if params:
+                    sep = "&" if "?" in url else "?"
+                    req_url = f"{url}{sep}{urlencode(params)}"
+            data = _fetch_json(req_url, method=method, headers=headers, body=body_bytes)
             # 尝试解析 JSON 为 DataFrame
             if isinstance(data, list):
                 df = pd.DataFrame(data)

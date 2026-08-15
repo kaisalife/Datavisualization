@@ -19,6 +19,7 @@ window.app.subscribeTrace = function(taskId) {
     const wsUrl = base.replace(/^http/, 'ws') + '/ws/trace/' + taskId;
     const ws = new WebSocket(wsUrl);
     window.app._traceWs = ws;
+    window.app.stopStageTimer();
 
     ws.onmessage = function(event) {
       try {
@@ -31,6 +32,8 @@ window.app.subscribeTrace = function(taskId) {
           window.app.onErrorEvent(data);
         } else if (data.type === 'error_summary') {
           window.app.onErrorSummary(data);
+        } else if (data.type === 'stage') {
+          window.app.onStageEvent(data);
         }
       } catch(e) { /* ignore parse errors */ }
     };
@@ -119,5 +122,68 @@ window.app.onErrorSummary = function(event) {
     var cats = Object.keys(event.by_category || {}).join(', ');
     summary.textContent = '⚠ ' + event.total_errors + ' errors (' + cats + ')';
     summary.style.display = 'block';
+  }
+};
+
+// ===== 阶段计时监控：当前阶段 + 实时秒数 + 各阶段耗时 =====
+window.app._stageInterval = null;
+window.app._stageStartedAt = 0;
+
+window.app.stopStageTimer = function() {
+  if (window.app._stageInterval) {
+    clearInterval(window.app._stageInterval);
+    window.app._stageInterval = null;
+  }
+  window.app._stageStartedAt = 0;
+};
+
+window.app.onStageEvent = function(event) {
+  if (!state.activeTaskEl) return;
+  var current = state.activeTaskEl.querySelector('.stage-current');
+  var labelEl = state.activeTaskEl.querySelector('.stage-current-label');
+  var secEl = state.activeTaskEl.querySelector('.stage-current-sec');
+  var list = state.activeTaskEl.querySelector('.stage-list');
+  var total = state.activeTaskEl.querySelector('.stage-total');
+
+  if (event.event === 'start') {
+    window.app.stopStageTimer();
+    window.app._stageStartedAt = Date.now();
+    if (labelEl) labelEl.textContent = event.label || event.stage || '';
+    if (current) {
+      current.style.display = 'flex';
+      current.classList.add('running');
+    }
+    // 同步进度条标签
+    var progLabel = state.activeTaskEl.querySelector('.progress-label');
+    if (progLabel) progLabel.textContent = '当前阶段: ' + (event.label || event.stage);
+    window.app._stageInterval = setInterval(function() {
+      if (!window.app._stageStartedAt || !state.activeTaskEl) return;
+      var el = state.activeTaskEl.querySelector('.stage-current-sec');
+      if (el) el.textContent = ((Date.now() - window.app._stageStartedAt) / 1000).toFixed(1) + 's';
+    }, 200);
+
+  } else if (event.event === 'end') {
+    window.app.stopStageTimer();
+    if (current) current.classList.remove('running');
+    if (secEl) secEl.textContent = '';
+    if (labelEl) labelEl.textContent = '阶段切换中...';
+    if (list && event.duration_s != null) {
+      var row = document.createElement('div');
+      row.className = 'stage-row' + (event.status === 'failed' ? ' stage-failed' : '');
+      row.innerHTML =
+        '<span class="stage-mark">' + (event.status === 'failed' ? '✕' : '✓') + '</span>' +
+        '<span class="stage-name"></span>' +
+        '<span class="stage-dur">' + Number(event.duration_s).toFixed(1) + 's</span>';
+      row.querySelector('.stage-name').textContent = event.label || event.stage;
+      list.appendChild(row);
+    }
+
+  } else if (event.event === 'summary') {
+    window.app.stopStageTimer();
+    if (current) current.style.display = 'none';
+    if (total && event.total_s != null) {
+      total.textContent = '⏱ 全流程总计 ' + Number(event.total_s).toFixed(1) + 's';
+      total.style.display = 'block';
+    }
   }
 };

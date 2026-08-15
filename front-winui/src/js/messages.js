@@ -77,6 +77,11 @@ function buildAiTaskMessage(text) {
     '<div class="typing"><span></span><span></span><span></span></div>' +
     '<div class="msg-progress"><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>' +
       '<div class="progress-text"><span class="progress-label">准备中...</span><span></span></div></div>' +
+    '<div class="stage-panel">' +
+      '<div class="stage-current"><span class="stage-dot"></span><span class="stage-current-label">等待阶段信息...</span><span class="stage-current-sec"></span></div>' +
+      '<div class="stage-list"></div>' +
+      '<div class="stage-total" style="display:none"></div>' +
+    '</div>' +
     '<div class="task-charts"></div>' +
     '<div class="task-summary" style="font-size:13px;color:var(--text-secondary);margin-top:6px"></div>' +
     '<div class="agent-log-toggle" onclick="toggleLog(this)"><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>查看 Agent 执行日志</div>' +

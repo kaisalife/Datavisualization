@@ -19,10 +19,10 @@ from flask_cors import CORS
 from flask_sock import Sock
 
 from Entity import ErrorResponse
-from service.exceptions import ConfigError, ServiceError
+from service.runtime.exceptions import ConfigError, ServiceError
 from service.observability.logger import configure_logging, get_logger
-from service.conversation_store import init_db
-from service.constants import get_charts_dir
+from service.runtime.conversation_store import init_db
+from service.runtime.constants import get_charts_dir
 from api.common import monitor_response
 
 load_dotenv()
@@ -93,11 +93,13 @@ init_db()
 # ========== 注册蓝图 ==========
 from api import chart_bp, task_bp, code_bp, data_bp
 from api.conversation_api import bp as conversation_bp
+from api.cleanup_api import bp as cleanup_bp
 app.register_blueprint(chart_bp)
 app.register_blueprint(task_bp)
 app.register_blueprint(code_bp)
 app.register_blueprint(data_bp)
 app.register_blueprint(conversation_bp)
+app.register_blueprint(cleanup_bp)
 
 # ========== WebSocket 端点 ==========
 from api.common import register_ws_connection, unregister_ws_connection

@@ -257,18 +257,25 @@ def get_agent_db_multi_query_prompt() -> ChatPromptTemplate:
 agent_viz_code_completion_prompt = """
 你是科学 Python 代码助手。用户提供一段 Python 代码 + 可视化需求。
 
-**任务**：在代码末尾追加可视化片段（不修改原代码），优先用与用户风格一致的库。
+**任务**：
+1. 推测原代码的"结果变量"（最终输出的数据变量名，如 DataFrame/数组）
+2. 生成 mock 数据代码（简单模拟结果变量，3-5 行 DataFrame，符合推测的列名/类型/语义）
+3. 生成可视化片段（用结果变量，追加到原代码末尾，不修改原代码），优先用与用户风格一致的库
 
-**限制**：只生成代码不执行；不引入 numpy/matplotlib/plotly/seaborn/pandas/scipy 外的库；不做网络/文件访问。
+**限制**：不引入 numpy/matplotlib/plotly/seaborn/pandas/scipy/pyecharts 外的库；不做网络/文件访问；mock 数据要简单。
 
 **输出严格 JSON**：
 ```json
 {{
-  "snippet": "import matplotlib.pyplot as plt\\nplt.show()",
+  "result_var": "result_df",
+  "mock_data": "import pandas as pd\\nresult_df = pd.DataFrame({{'category':['A','B','C'],'value':[10,20,30]}})",
+  "snippet": "from pyecharts.charts import Bar\\nchart = Bar().add_xaxis(result_df['category'].tolist()).add_yaxis('值', result_df['value'].tolist())\\nchart.render('chart.html')",
   "explanation": "说明",
-  "libs": ["matplotlib"]
+  "libs": ["pyecharts"]
 }}
 ```
+
+注意：snippet 中的变量名必须与 result_var 一致；mock_data 必须定义该变量；系统会用 mock_data 测试 snippet，测试通过才会追加到原代码。
 """
 
 def get_agent_viz_code_completion_prompt() -> ChatPromptTemplate:

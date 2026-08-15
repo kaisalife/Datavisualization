@@ -47,7 +47,7 @@ function sendPrompt() {
   if (state.mode === 'code') {
     sendToRust('completeCode', { prompt: prompt, files: filesToSend });
   } else {
-    sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, dbConfig: state.selectedDb, config: state.config || null });
+    sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, dbConfig: state.selectedDb, apiConfig: state.apiConfig || null, config: state.config || null });
   }
   scrollToBottom();
 }
@@ -57,6 +57,7 @@ function cancelTask() { sendToRust('cancelTask', {}); }
 function newChat() {
   state.files = [];
   state.selectedDb = null;
+  state.apiConfig = null;
   renderFileChips();
   sendToRust('newChat', {});
 }

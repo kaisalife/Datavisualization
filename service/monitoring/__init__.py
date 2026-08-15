@@ -6,12 +6,14 @@
 - error_monitor: 错误监控器
 - ws_streamer: WebSocket 实时推送
 - trace_store: 内存 trace 存储
+- stage_timer: 流程阶段计时监控
 """
 
 from .tracer import trace, TraceContext
 from .error_monitor import error_monitor
 from .ws_streamer import ws_streamer
 from .trace_store import trace_store
+from .stage_timer import stage_timer
 
 __all__ = [
     "trace",
@@ -19,4 +21,5 @@ __all__ = [
     "error_monitor",
     "ws_streamer",
     "trace_store",
+    "stage_timer",
 ]

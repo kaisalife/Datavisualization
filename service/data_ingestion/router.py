@@ -37,8 +37,13 @@ from service.data_ingestion.readers.archive_reader import ArchiveReader
 from service.data_ingestion.readers.document_reader import DocumentReader
 from service.data_ingestion.readers.excel_reader import ExcelReader
 from service.data_ingestion.readers.file_reader import FileReader
+from service.monitoring import trace
+from service.observability import get_logger
+
+logger = get_logger(__name__)
 
 
+@trace(category="ingest")
 async def ingest(source: DataSource) -> DataProfile:
     """统一数据接入入口。
 
@@ -60,19 +65,28 @@ async def ingest(source: DataSource) -> DataProfile:
     try:
         profile = _route(db, source)
         t_route = time.perf_counter()
-        print(
-            f"[ingest] route={t_route - t_conn:.3f}s "
-            f"path_alloc={t_path - t0:.3f}s conn={t_conn - t_path:.3f}s "
-            f"kind={source.kind} table={profile.table_name} rows={profile.row_count}"
+        logger.info(
+            "ingest 完成",
+            route_s=t_route - t_conn,
+            path_alloc_s=t_path - t0,
+            conn_s=t_conn - t_path,
+            kind=source.kind,
+            table=profile.table_name,
+            rows=profile.row_count,
         )
         db.close()
         t_close = time.perf_counter()
-        print(f"[ingest] close={t_close - t_route:.3f}s total={t_close - t0:.3f}s")
+        logger.info("ingest close", close_s=t_close - t_route, total_s=t_close - t0)
         return profile
     except Exception:
         db.close()
         t_err = time.perf_counter()
-        print(f"[ingest] ERROR after {t_err - t0:.3f}s kind={source.kind}")
+        logger.error(
+            "ingest ERROR",
+            after_s=t_err - t0,
+            kind=source.kind,
+            exc_info=True,
+        )
         raise
 
 
@@ -164,6 +178,9 @@ def _route_api(db: DuckDBManager, source: DataSource) -> DataProfile:
         url=url,
         params=api_params,
         table_name=source.name,
+        method=options.get("method", "GET"),
+        headers=options.get("headers"),
+        body=options.get("body"),
     )
 
 
@@ -188,6 +205,7 @@ def _route_document(db: DuckDBManager, source: DataSource) -> DataProfile:
 # 便捷函数
 # ------------------------------------------------------------------
 
+@trace(category="ingest")
 async def ingest_files(paths: list[str], names: list[str] | None = None) -> DataProfile:
     """接入多个文件到同一个 DuckDB 会话。
 
@@ -209,14 +227,14 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
         return await ingest(DataSource(kind="file", path=paths[0], name=name))
 
     t0 = time.perf_counter()
-    print(f"[ingest_files] 开始接入 {len(paths)} 个文件")
+    logger.info("开始接入 N 个文件", count=len(paths))
     session_id, duckdb_path = new_duckdb_path()
     t_path = time.perf_counter()
-    print(f"[ingest_files] path_alloc={t_path - t0:.3f}s duckdb={duckdb_path}")
+    logger.info("ingest_files path_alloc", path_alloc_s=t_path - t0, duckdb=duckdb_path)
 
     db = DuckDBManager(duckdb_path)
     t_conn = time.perf_counter()
-    print(f"[ingest_files] conn_init={t_conn - t_path:.3f}s")
+    logger.info("ingest_files conn_init", conn_init_s=t_conn - t_path)
 
     try:
         profiles = []
@@ -226,10 +244,13 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
             source = DataSource(kind="file", path=path, name=name)
             profile = _route_file(db, source)
             t_file_end = time.perf_counter()
-            print(
-                f"[ingest_files] file[{i + 1}/{len(paths)}] "
-                f"{Path(path).name} -> table={profile.table_name} "
-                f"rows={profile.row_count} time={t_file_end - t_file_start:.3f}s"
+            logger.info(
+                "ingest_files file",
+                index=f"{i + 1}/{len(paths)}",
+                name=Path(path).name,
+                table=profile.table_name,
+                rows=profile.row_count,
+                time_s=t_file_end - t_file_start,
             )
             profiles.append(profile)
 
@@ -238,16 +259,29 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
         if len(profiles) > 1:
             profiles[0].related_tables = profiles[1:]
         t_assemble = time.perf_counter()
-        print(f"[ingest_files] assemble={t_assemble - t_assemble_start:.3f}s related={len(profiles) - 1}")
+        logger.info(
+            "ingest_files assemble",
+            assemble_s=t_assemble - t_assemble_start,
+            related=len(profiles) - 1,
+        )
 
         db.close()
         t_close = time.perf_counter()
-        print(f"[ingest_files] close={t_close - t_assemble:.3f}s total={t_close - t0:.3f}s")
+        logger.info(
+            "ingest_files close",
+            close_s=t_close - t_assemble,
+            total_s=t_close - t0,
+        )
         return profiles[0]
     except Exception:
         db.close()
         t_err = time.perf_counter()
-        print(f"[ingest_files] ERROR after {t_err - t0:.3f}s ({len(paths)} files)")
+        logger.error(
+            "ingest_files ERROR",
+            after_s=t_err - t0,
+            n_files=len(paths),
+            exc_info=True,
+        )
         raise
 
 

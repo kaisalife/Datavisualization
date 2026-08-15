@@ -71,6 +71,7 @@ window.app = {
   completeTask(chartsJsonStr) {
     let parsed;
     try { parsed = JSON.parse(chartsJsonStr); } catch(e) { parsed = { items: [] }; }
+    window.app.stopStageTimer();
     state.lastChartData = parsed;
     if (state.activeTaskEl) {
       const container = state.activeTaskEl.querySelector('.task-charts');
@@ -87,6 +88,7 @@ window.app = {
   },
 
   failTask(err) {
+    window.app.stopStageTimer();
     if (state.activeTaskEl) {
       const typing = state.activeTaskEl.querySelector('.typing');
       if (typing) typing.style.display = 'none';
@@ -120,9 +122,11 @@ window.app = {
     input.style.height = 'auto';
   },
 
-  setConversationList(jsonStr) {
+  setConversationList(jsonStr, total) {
     try { state.conversations = JSON.parse(jsonStr); } catch(e) { state.conversations = []; }
+    state.total = total || 0;
     if (state.sidebarTab === 'conversations') renderConversations();
+    checkCleanupReminder();
   },
 
   setFileList(jsonStr) {

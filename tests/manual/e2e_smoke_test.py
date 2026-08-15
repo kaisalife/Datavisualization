@@ -44,7 +44,7 @@ configure_logging(log_path=os.environ["LOG_PATH"], level=os.environ["LOG_LEVEL"]
 logger = get_logger("e2e_test")
 
 from Entity.ApiModels import GenerateChartWithPromptRequest
-from service.service_main import service_main
+from service.pipeline.service_main import service_main
 
 
 def _get_default_data_file() -> str:

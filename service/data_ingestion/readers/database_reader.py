@@ -14,6 +14,9 @@ from __future__ import annotations
 from service.data_ingestion.duckdb_manager import DuckDBManager
 from service.data_ingestion.models import DataProfile
 from service.data_ingestion.profiler import build_profile, build_profiles_for_multiple_tables
+from service.observability import get_logger
+
+logger = get_logger(__name__)
 
 
 class DatabaseReader:
@@ -122,5 +125,5 @@ class DatabaseReader:
                 result = db.conn.sql(f"SHOW TABLES FROM {alias}").fetchall()
                 return [row[0] for row in result]
             except Exception as e:
-                print(f"[warn] _list_tables 自动发现失败 (alias={alias}): {e}")
+                logger.warning("_list_tables 自动发现失败", alias=alias, error=str(e))
                 return []

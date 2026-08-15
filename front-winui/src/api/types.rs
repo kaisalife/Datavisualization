@@ -30,6 +30,8 @@ pub struct GenerateChartRequest {
     pub viz_mode: VizMode,
     /// 数据库配置（JSON string，可选）
     pub db_config: Option<String>,
+    /// API 数据源配置（JSON string，可选）
+    pub api_config: Option<String>,
     /// 图表配置（JSON string，可选）
     pub config: Option<String>,
     /// 模型 URL（可选，覆盖默认）
@@ -114,6 +116,9 @@ pub struct TaskResult {
     /// Agent 日志列表
     #[serde(rename = "AgentLogs", default)]
     pub agent_logs: Vec<String>,
+    /// 生成代码列表（与 HtmlFilePaths 一一对应）
+    #[serde(rename = "Codes", default)]
+    pub codes: Vec<String>,
 }
 
 // ============================================================
@@ -209,6 +214,7 @@ pub struct ConversationDetail {
     pub agent_logs: Option<Vec<String>>,
     pub charts: Option<Vec<String>>,
     pub html_file_paths: Option<Vec<String>>,
+    pub codes: Option<Vec<String>>,
     pub error: Option<String>,
     pub created_at: String,
     pub updated_at: Option<String>,

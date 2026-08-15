@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from service.introspection.py_ast import analyze_python_source
+from service.runtime.introspection.py_ast import analyze_python_source
 from service.code_completer.completer import (
     CodeCompletionError,
     _validate_path,
