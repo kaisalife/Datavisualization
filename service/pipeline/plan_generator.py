@@ -16,6 +16,16 @@ from service.runtime.memory.project_memory import get_project_memory
 from service.observability import get_logger
 from service.runtime.utils import extract_json_from_response
 
+try:
+    from Entity.plan_models import parse_plans
+except ImportError:
+    from ..plan_models import parse_plans
+
+try:
+    from service.data_ingestion.series.models import SeriesCatalog
+except ImportError:
+    from ..data_ingestion.series.models import SeriesCatalog
+
 logger = get_logger(__name__)
 
 try:
@@ -69,11 +79,21 @@ async def generate_chart_plans(
         except Exception as e:
             logger.warning("DataProfile 序列化失败", error=str(e))
 
+    # 从 session_dir 反读 manifest.json 拿到 series_index(v4 数据契约)
+    series_index_json = "(未提供)"
+    if profile is not None and getattr(profile, "session_dir", None):
+        try:
+            catalog = SeriesCatalog.from_manifest(profile.session_dir)
+            series_index_json = json.dumps(catalog.to_json(), ensure_ascii=False, indent=2)
+            logger.info("series_index 注入成功", n_series=len(catalog.series))
+        except Exception as e:
+            logger.warning("series_index 加载失败", error=str(e))
+
     plan_input = {
         "data_file_path": data_file_path,
         "data_preview": data_preview,
-        "data_interface_info": "",
         "canonical_dataset": canonical_dataset_json,
+        "series_index": series_index_json,
         "user_chart_config": user_chart_config_json,
         "user_prompt": model_.user_prompt,
         "mcp_prompt": model_.mcp_prompt,
@@ -94,16 +114,17 @@ async def generate_chart_plans(
 
     plans_data = extract_json_from_response(plans_content)
 
-    # 兼容 LLM 直接返回 plans 数组的情况
-    if isinstance(plans_data, list):
-        plans_data = {"plans": plans_data}
-
-    if not plans_data or "plans" not in plans_data:
+    if not plans_data:
         snippet = (plans_content or "").strip()[:500]
         raise ConfigError(f"无法解析计划数据，LLM 响应前 500 字符: {snippet}")
 
-    plans = plans_data.get("plans", [])
-    logger.info("共找到 N 个计划", count=len(plans), plans=plans)
+    try:
+        plans = parse_plans(plans_data)
+    except Exception as e:
+        snippet = (plans_content or "").strip()[:500]
+        raise ConfigError(f"计划 schema 不匹配: {e}; LLM 响应前 500 字符: {snippet}") from e
+
+    logger.info("共找到 N 个计划", count=len(plans))
 
     all_plans_file = output_folder / "all_plans.json"
     with open(all_plans_file, "w", encoding="utf-8") as f:

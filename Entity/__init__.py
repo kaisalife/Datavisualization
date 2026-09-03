@@ -16,6 +16,7 @@ try:
         ErrorResponse,
         CompleteVizCodeRequest,
     )
+    from .plan_models import ChartPlan, PlanBundle, parse_plans, plan_get, plan_field
 except ImportError:
     from model import model
     from ApiModels import (
@@ -25,6 +26,7 @@ except ImportError:
         ErrorResponse,
         CompleteVizCodeRequest,
     )
+    from plan_models import ChartPlan, PlanBundle, parse_plans, plan_get, plan_field
 
 __all__ = [
     'model',
@@ -33,4 +35,9 @@ __all__ = [
     'GetChartRequest',
     'ErrorResponse',
     'CompleteVizCodeRequest',
+    'ChartPlan',
+    'PlanBundle',
+    'parse_plans',
+    'plan_get',
+    'plan_field',
 ]

@@ -48,7 +48,7 @@ dependencies = [
     "pandas>=2.0",
     "openpyxl>=3.1",   # .xlsx 读写
     "xlrd>=2.0",       # .xls 读取
-    "duckdb>=1.1",     # 统一数据访问层 (CSV/JSON/Parquet/DB 直接 SQL 查询)
+    "sqlalchemy>=2.0",  # 数据库源读取（postgres/mysql 需另装 psycopg2-binary / pymysql）
     "unstructured[all-docs]>=0.23",  # PDF/DOCX/图片 非结构化文档解析
     # ---- MCP 工具 ----
     "fastmcp>=0.1",
@@ -125,6 +125,7 @@ select = [
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
     "SIM", # flake8-simplify
+    "G",   # flake8-logging-format
 ]
 ignore = [
     "E501",  # line too long（由 formatter 处理）
@@ -134,6 +135,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "RAG/basic_author_knowleage/*" = ["ALL"]
 "test_env/*" = ["F401", "F841"]
+"Entity/__init__.py" = ["I001"]  # 项目约定的特殊导入顺序（model 优先）
 
 # ----------------------------------------------------------------------------
 # pytest 配置

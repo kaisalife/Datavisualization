@@ -1,7 +1,6 @@
 import pandas as pd
 import os
 import asyncio
-import traceback
 from pathlib import Path
 
 try:
@@ -109,18 +108,37 @@ def parse_data_preview_output(output: str):
         return preview_part, code_part
     return output, ""
 
+def _chat_fingerprint(chat) -> str:
+    """从 chat 实例提取模型指纹。
+
+    不同 LLM（不同 model_url / model_type）跑同一文件应得到独立缓存，
+    避免弱模型生成的预览污染强模型的输出。
+    """
+    try:
+        url = getattr(chat, "model_url", "") or ""
+        mt = getattr(chat, "model_type", "") or ""
+        if not mt and not url:
+            return "unknown"
+        return f"{mt or '?'}:{hash(url) % 10000}"
+    except Exception:
+        return "unknown"
+
+
 @trace(category="preview")
 async def get_smart_file_preview(chat, files:list, max_retries: int = 1, output_folder: Path = None):
     res_str = ""
     data_interface_codes = []
     pandas_reference = load_pandas_reference()
-    
+    fingerprint = _chat_fingerprint(chat)
+
     for idx, f in enumerate(files, 1):
         logger.info("智能处理文件 %s/%s: %s", idx, len(files), os.path.basename(f))
 
-        preview, interface_code = await get_smart_single_file_preview(chat, f, max_retries, pandas_reference)
+        preview, interface_code = await get_smart_single_file_preview(
+            chat, f, max_retries, pandas_reference, chat_fingerprint=fingerprint,
+        )
         res_str += f"###{idx}\n{preview}\n"
-        
+
         if interface_code and output_folder:
             file_name = Path(f).stem
             code_folder = output_folder / file_name / "code"
@@ -134,7 +152,7 @@ async def get_smart_file_preview(chat, files:list, max_retries: int = 1, output_
                 "code_file": str(code_file),
                 "code": interface_code
             })
-    
+
     return res_str, data_interface_codes
 
 async def _run_preview_step(
@@ -188,20 +206,22 @@ async def _run_preview_step(
                 logger.warning("[%s] 执行失败\n%s", step_name, last_error)
 
             except Exception:
-                last_error = f"Exception: {traceback.format_exc()}"
-                logger.warning("[%s] 沙箱异常: %s", step_name, last_error)
+                logger.exception("[%s] 沙箱异常", step_name)
+                last_error = f"sandbox exception (see logs for traceback)"
 
-        except Exception as e:
-            last_error = str(e)
-            logger.warning("[%s] LLM 异常: %s", step_name, last_error)
-            traceback.print_exc()
+        except Exception:
+            logger.exception("[%s] LLM 异常", step_name)
+            last_error = "llm exception (see logs for traceback)"
 
     return "", "", last_error
 
 
-async def get_smart_single_file_preview(chat, file_path: str, max_retries: int = 1, pandas_reference: str = ""):
+async def get_smart_single_file_preview(chat, file_path: str, max_retries: int = 1, pandas_reference: str = "", chat_fingerprint: str = ""):
     data_preview_prompt = get_agent_data_preview_prompt(pandas_reference)
     preview_chain = data_preview_prompt | chat
+
+    if chat_fingerprint:
+        logger.info("数据预览 chat_fingerprint=%s", chat_fingerprint)
 
     logger.info("第一步：获取简单数据预览")
 

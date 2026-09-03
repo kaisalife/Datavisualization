@@ -1,7 +1,7 @@
-"""数据接入路由器。
+"""数据接入路由器（v4）。
 
-统一入口: 根据数据源类型路由到对应 reader，
-返回 DataProfile 供 chart_generator 消费。
+统一入口: 根据数据源类型路由到对应 reader，拆分语义 series 并落盘，
+返回 DataProfile（附 series_catalog）。
 
 使用方式:
     from service.data_ingestion import ingest, DataSource
@@ -27,59 +27,101 @@
 
 from __future__ import annotations
 
-import os
+import asyncio
 import time
 from pathlib import Path
 
-from service.data_ingestion.duckdb_manager import DuckDBManager, new_duckdb_path
-from service.data_ingestion.models import DataProfile, DataSource
+from service.data_ingestion.models import DataProfile, DataSource, RawTable
+from service.data_ingestion.profiler import build_profile_from_df
 from service.data_ingestion.readers.archive_reader import ArchiveReader
 from service.data_ingestion.readers.document_reader import DocumentReader
+from service.data_ingestion.readers.llm_tabular_reader import LlmTabularReader
 from service.data_ingestion.readers.excel_reader import ExcelReader
 from service.data_ingestion.readers.file_reader import FileReader
+from service.data_ingestion.series.splitter import build_series_catalog
+from service.data_ingestion.series_manager import allocate_session_dir
 from service.monitoring import trace
 from service.observability import get_logger
 
 logger = get_logger(__name__)
 
 
+def _assemble_profile(
+    raw_tables: list[RawTable],
+    session_dir: Path,
+) -> DataProfile:
+    """把 reader 产出的 RawTable 拆分 series、落盘，组装主 DataProfile。
+
+    Args:
+        raw_tables: reader 产出的原始表列表（>=1）
+        session_dir: 当前会话目录（系列 parquet + manifest.json 落于此）
+
+    Returns:
+        主 DataProfile（series_catalog 含全部 series，related_tables 含其余表）
+    """
+    catalog = build_series_catalog(raw_tables, session_dir)
+
+    # 主 profile 用第一个 raw table 的画像
+    primary = raw_tables[0]
+    profile = build_profile_from_df(
+        primary.df, primary.name, primary.source_kind, primary.source_path
+    )
+    profile.session_dir = str(session_dir)
+    profile.series_catalog = catalog
+    # ★ 透传降级信息（任一 raw_table 降级即标记）
+    for rt in raw_tables:
+        if rt.degraded:
+            profile.degraded = True
+            profile.degraded_reason = rt.degraded_reason or profile.degraded_reason
+            break
+
+    # 其余表作为 related_tables（保持多 sheet / 多文件语义）
+    if len(raw_tables) > 1:
+        related = []
+        for rt in raw_tables[1:]:
+            p = build_profile_from_df(rt.df, rt.name, rt.source_kind, rt.source_path)
+            p.session_dir = str(session_dir)
+            p.series_catalog = catalog
+            related.append(p)
+        profile.related_tables = related
+
+    return profile
+
+
 @trace(category="ingest")
 async def ingest(source: DataSource) -> DataProfile:
-    """统一数据接入入口。
+    """统一数据接入入口（v4，无 DuckDB）。
 
-    创建一个 DuckDBManager，路由到对应 reader，返回 DataProfile。
-    数据物化到 .duckdb 文件后关闭写连接，沙箱通过 read_only 模式连接。
+    分配会话目录 -> 路由 reader（返回 list[RawTable]）-> 拆分 series 落盘 -> 组装 DataProfile。
+    数据以语义 series（.parquet + manifest.json）存储于会话目录。
 
     Args:
         source: 数据源描述
 
     Returns:
-        DataProfile 对象
+        DataProfile 对象（含 series_catalog）
     """
     t0 = time.perf_counter()
-    session_id, duckdb_path = new_duckdb_path()
+    session_id, session_dir = allocate_session_dir()
     t_path = time.perf_counter()
-    db = DuckDBManager(duckdb_path)
-    t_conn = time.perf_counter()
 
     try:
-        profile = _route(db, source)
+        raw_tables = await asyncio.to_thread(_route, session_dir, source)
         t_route = time.perf_counter()
+        profile = await asyncio.to_thread(_assemble_profile, raw_tables, session_dir)
+        t_assemble = time.perf_counter()
         logger.info(
             "ingest 完成",
-            route_s=t_route - t_conn,
-            path_alloc_s=t_path - t0,
-            conn_s=t_conn - t_path,
+            route_s=t_route - t_path,
+            assemble_s=t_assemble - t_route,
             kind=source.kind,
             table=profile.table_name,
             rows=profile.row_count,
+            n_series=len(profile.series_catalog.series) if profile.series_catalog else 0,
+            session_id=session_id,
         )
-        db.close()
-        t_close = time.perf_counter()
-        logger.info("ingest close", close_s=t_close - t_route, total_s=t_close - t0)
         return profile
     except Exception:
-        db.close()
         t_err = time.perf_counter()
         logger.error(
             "ingest ERROR",
@@ -90,25 +132,25 @@ async def ingest(source: DataSource) -> DataProfile:
         raise
 
 
-def _route(db: DuckDBManager, source: DataSource) -> DataProfile:
-    """根据数据源类型路由到对应 reader。"""
+def _route(_session_dir: Path, source: DataSource) -> list[RawTable]:
+    """根据数据源类型路由到对应 reader，返回 list[RawTable]。"""
     kind = source.kind
 
     if kind == "file":
-        return _route_file(db, source)
+        return _route_file(source)
     elif kind == "database":
-        return _route_database(db, source)
+        return _route_database(source)
     elif kind == "api":
-        return _route_api(db, source)
+        return _route_api(source)
     elif kind == "archive":
-        return _route_archive(db, source)
+        return _route_archive(source)
     elif kind == "document":
-        return _route_document(db, source)
+        return _route_document(source)
     else:
         raise ValueError(f"未知的数据源类型: {kind}")
 
 
-def _route_file(db: DuckDBManager, source: DataSource) -> DataProfile:
+def _route_file(source: DataSource) -> list[RawTable]:
     """路由文件类型。根据扩展名选择 reader。"""
     path = source.path
     if not path:
@@ -116,19 +158,32 @@ def _route_file(db: DuckDBManager, source: DataSource) -> DataProfile:
 
     # 优先级: 专用格式 > 文档格式 > 通用格式
     if FileReader.can_handle(path):
-        return FileReader.read(db, path, table_name=source.name)
+        return FileReader.read(path, table_name=source.name)
     elif ExcelReader.can_handle(path):
-        return ExcelReader.read(db, path, table_name=source.name)
+        return ExcelReader.read(path, table_name=source.name)
+    elif LlmTabularReader.can_handle(path):
+        # 文档类文本（HTML/Markdown/TXT/日志）：优先 LLM 表格化，失败回退 DocumentReader
+        try:
+            return LlmTabularReader.read(path, table_name=source.name)
+        except Exception as e:
+            logger.warning("LLM 表格化失败，回退 DocumentReader", path=path, error=str(e))
+            tables = DocumentReader.read(path, table_name=source.name)
+            # ★ 标记降级，让上游 plan_generator / agent_logs 看到
+            reason = f"llm_tabular_failed: {e}"
+            for t in tables:
+                t.degraded = True
+                t.degraded_reason = reason
+            return tables
     elif DocumentReader.can_handle(path):
-        return DocumentReader.read(db, path, table_name=source.name)
+        return DocumentReader.read(path, table_name=source.name)
     elif ArchiveReader.can_handle(path):
-        return ArchiveReader.read(db, path, table_name=source.name)
+        return ArchiveReader.read(path, table_name=source.name)
     else:
         ext = Path(path).suffix.lower()
         raise ValueError(f"不支持的文件格式: {ext}")
 
 
-def _route_database(db: DuckDBManager, source: DataSource) -> DataProfile:
+def _route_database(source: DataSource) -> list[RawTable]:
     """路由数据库类型。"""
     from service.data_ingestion.readers.database_reader import DatabaseReader
 
@@ -138,8 +193,7 @@ def _route_database(db: DuckDBManager, source: DataSource) -> DataProfile:
     db_config = source.db_config or {}
     options = source.options
 
-    result = DatabaseReader.read(
-        db,
+    return DatabaseReader.read(
         db_config=db_config,
         db_type=source.db_type,
         table_name=source.name,
@@ -147,19 +201,14 @@ def _route_database(db: DuckDBManager, source: DataSource) -> DataProfile:
         tables=options.get("tables"),
     )
 
-    if isinstance(result, list):
-        return result[0]
-    return result
 
-
-def _route_api(db: DuckDBManager, source: DataSource) -> DataProfile:
+def _route_api(source: DataSource) -> list[RawTable]:
     """路由 API 类型。"""
     from service.data_ingestion.readers.api_reader import ApiReader
 
     api_params = source.api_params or {}
     options = source.options
 
-    # path 可以是内置 API 类型 (如 "worldbank") 或 URL
     api_type = None
     url = None
     if source.path:
@@ -173,7 +222,6 @@ def _route_api(db: DuckDBManager, source: DataSource) -> DataProfile:
         url = options["url"]
 
     return ApiReader.read(
-        db,
         api_type=api_type,
         url=url,
         params=api_params,
@@ -184,21 +232,19 @@ def _route_api(db: DuckDBManager, source: DataSource) -> DataProfile:
     )
 
 
-def _route_archive(db: DuckDBManager, source: DataSource) -> DataProfile:
+def _route_archive(source: DataSource) -> list[RawTable]:
     """路由压缩包类型。"""
     if not source.path:
         raise ValueError("archive 类型数据源必须提供 path")
-    return ArchiveReader.read(db, source.path, table_name=source.name)
+    return ArchiveReader.read(source.path, table_name=source.name)
 
 
-def _route_document(db: DuckDBManager, source: DataSource) -> DataProfile:
+def _route_document(source: DataSource) -> list[RawTable]:
     """路由文档类型 (PDF/DOCX/图片)。"""
     if not source.path:
         raise ValueError("document 类型数据源必须提供 path")
     strategy = source.options.get("strategy", "auto")
-    return DocumentReader.read(
-        db, source.path, table_name=source.name, strategy=strategy
-    )
+    return DocumentReader.read(source.path, table_name=source.name, strategy=strategy)
 
 
 # ------------------------------------------------------------------
@@ -207,9 +253,9 @@ def _route_document(db: DuckDBManager, source: DataSource) -> DataProfile:
 
 @trace(category="ingest")
 async def ingest_files(paths: list[str], names: list[str] | None = None) -> DataProfile:
-    """接入多个文件到同一个 DuckDB 会话。
+    """接入多个文件到同一个会话目录。
 
-    所有文件注册到同一个 .duckdb 文件中，沙箱可通过同一个路径查询所有表。
+    所有文件的 series 汇总到一个会话（共享 manifest.json / 同一 datasets_dir），
     第一个文件的 DataProfile 作为主 profile，其余放入 related_tables。
 
     Args:
@@ -228,57 +274,38 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
 
     t0 = time.perf_counter()
     logger.info("开始接入 N 个文件", count=len(paths))
-    session_id, duckdb_path = new_duckdb_path()
-    t_path = time.perf_counter()
-    logger.info("ingest_files path_alloc", path_alloc_s=t_path - t0, duckdb=duckdb_path)
-
-    db = DuckDBManager(duckdb_path)
-    t_conn = time.perf_counter()
-    logger.info("ingest_files conn_init", conn_init_s=t_conn - t_path)
+    session_id, session_dir = allocate_session_dir()
+    logger.info("ingest_files session_dir", session_id=session_id, dir=str(session_dir))
 
     try:
-        profiles = []
+        all_raw: list[RawTable] = []
         for i, path in enumerate(paths):
             t_file_start = time.perf_counter()
             name = names[i] if names else None
             source = DataSource(kind="file", path=path, name=name)
-            profile = _route_file(db, source)
+            raws = await asyncio.to_thread(_route_file, source)
             t_file_end = time.perf_counter()
             logger.info(
                 "ingest_files file",
                 index=f"{i + 1}/{len(paths)}",
                 name=Path(path).name,
-                table=profile.table_name,
-                rows=profile.row_count,
+                n_raw=len(raws),
                 time_s=t_file_end - t_file_start,
             )
-            profiles.append(profile)
+            all_raw.extend(raws)
 
-        # 主 profile 设置 related_tables
-        t_assemble_start = time.perf_counter()
-        if len(profiles) > 1:
-            profiles[0].related_tables = profiles[1:]
-        t_assemble = time.perf_counter()
+        profile = await asyncio.to_thread(_assemble_profile, all_raw, session_dir)
         logger.info(
             "ingest_files assemble",
-            assemble_s=t_assemble - t_assemble_start,
-            related=len(profiles) - 1,
+            related=len(profile.related_tables),
+            n_series=len(profile.series_catalog.series) if profile.series_catalog else 0,
+            total_s=time.perf_counter() - t0,
         )
-
-        db.close()
-        t_close = time.perf_counter()
-        logger.info(
-            "ingest_files close",
-            close_s=t_close - t_assemble,
-            total_s=t_close - t0,
-        )
-        return profiles[0]
+        return profile
     except Exception:
-        db.close()
-        t_err = time.perf_counter()
         logger.error(
             "ingest_files ERROR",
-            after_s=t_err - t0,
+            after_s=time.perf_counter() - t0,
             n_files=len(paths),
             exc_info=True,
         )
@@ -287,13 +314,10 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
 
 async def ingest_file(path: str, name: str | None = None) -> DataProfile:
     """便捷入口: 从文件路径自动检测类型并接入。"""
-    # 自动判断 kind
     if ArchiveReader.can_handle(path):
         kind = "archive"
     elif DocumentReader.can_handle(path):
         kind = "document"
-    elif ExcelReader.can_handle(path):
-        kind = "file"  # ExcelReader 通过 file 路由触发
     else:
         kind = "file"
 

@@ -20,9 +20,11 @@ logger = get_logger(__name__)
 try:
     from prompts.agent_prompt import get_agent_debug_chart_prompt, get_agent_generate_chart_prompt
     from RAG.RAG_main import RAGRetriever
+    from Entity.plan_models import plan_get
 except ImportError:
     from prompts.agent_prompt import get_agent_debug_chart_prompt, get_agent_generate_chart_prompt
     from RAG.RAG_main import RAGRetriever
+    from ..plan_models import plan_get
 
 
 def _check_cancelled(task_id):
@@ -117,10 +119,9 @@ async def execute_chart_plans(
         rag_retriever = None
 
     dataset_summary_json = _build_dataset_summary(profile)
-    duckdb_path = profile.duckdb_path
-    table_name = profile.table_name
+    catalog = profile.series_catalog if profile is not None else None
 
-    ordered_plans = sorted(plans, key=lambda x: x.get("execution_order", 0))
+    ordered_plans = sorted(plans, key=lambda x: plan_get(x, "execution_order", 0))
     concurrency, max_retries = _resolve_concurrency(config)
     semaphore = asyncio.Semaphore(concurrency)
     logger.info("plans 并发度", concurrency=concurrency, max_retries=max_retries)
@@ -147,8 +148,7 @@ async def execute_chart_plans(
                 retriever=rag_retriever,
                 max_retries=max_retries,
                 dataset_summary=dataset_summary_json,
-                duckdb_path=duckdb_path,
-                table_name=table_name,
+                catalog=catalog,
                 user_config=user_config_json,
             )
             return plan_item, success, chart_path, code, error
@@ -191,13 +191,13 @@ def log_execution_summary(successful_charts: list, failed_plans: list, agent_log
     if successful_charts:
         logger.info("成功的图表列表", count=len(successful_charts))
         for idx, item in enumerate(successful_charts, 1):
-            logger.info("成功图表", index=idx, plan_name=item["plan"]["plan_name"], chart_path=str(item["chart_path"]))
+            logger.info("成功图表", index=idx, plan_name=plan_get(item["plan"], "plan_name", ""), chart_path=str(item["chart_path"]))
         for idx, item in enumerate(successful_charts, 1):
-            agent_logs.append(f"  📁 图表 {idx}: {item['plan']['plan_name']} -> {item['chart_path']}")
+            agent_logs.append(f"  📁 图表 {idx}: {plan_get(item['plan'], 'plan_name', '?')} -> {item['chart_path']}")
 
     if failed_plans:
         logger.warning("失败的计划列表", count=len(failed_plans))
         for idx, item in enumerate(failed_plans, 1):
-            plan_name = item["plan"].get("plan_name", "unknown") if item["plan"] else "unknown"
+            plan_name = plan_get(item["plan"], "plan_name", "unknown") if item["plan"] else "unknown"
             logger.warning("失败计划", index=idx, plan_name=plan_name, error=str(item["error"])[:100])
             agent_logs.append(f"  ❌ 计划 {idx}: {plan_name} 失败: {item['error'][:100]}")

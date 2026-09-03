@@ -1,69 +1,71 @@
-import asyncio
+"""图表生成编排（v4 series 化，沙箱执行已拆至 chart_sandbox.py，RAG 检索拆至 chart_rag.py）。
+
+流程（每 plan）：
+1. 解析 series（plan.series_id -> 目录），运行时加载得到 df 预览
+2. LLM 只看数据契约（df schema + 样本行），只写变换与绘图代码
+3. 守护层拼接 read_code（从 series .parquet 加载 df）+ LLM 代码 -> 沙箱执行 -> 产物校验
+4. 失败回喂 debug 重试；产物落盘（注入版自包含代码）
+"""
+from __future__ import annotations
+
 import json
-import os
-import sys
-import time
-import traceback
-from datetime import datetime
 from pathlib import Path
 
-from agent_tools.sandbox import run_python_safely
-
+from agent import BaseAgent
+from service.data_ingestion.series import load_series_df, series_snippet
+from service.data_ingestion.series.models import SeriesCatalog
 from service.monitoring import trace
 from service.observability import get_logger
+from service.pipeline.chart_rag import retrieve_reference_docs
+from service.pipeline.chart_sandbox import _RENDER_HEADER, execute_chart_code  # noqa: F401  向后兼容旧 import
+from service.runtime.utils import extract_code_from_response
+
+try:
+    from Entity.plan_models import plan_get
+except ImportError:
+    from ..plan_models import plan_get
 
 logger = get_logger(__name__)
 
-try:
-    from agent import BaseAgent
-    from service.runtime.utils import extract_code_from_response
-except ImportError:
-    from agent import BaseAgent
-    from ..runtime.utils import extract_code_from_response
 
-project_root = Path(__file__).parent.parent.parent
+def _build_series_hint(series_id: str, df_preview: str = "") -> str:
+    """构建注入 prompt 的数据契约（df 已就绪，禁止自己读数据）。"""
+    if not series_id:
+        return "(无)"
+    hint = (
+        f"读取代码已由守护层完成（变量 df=已从 series {series_id} 加载）。\n"
+        "【硬性约束】禁止 import duckdb、禁止 read_parquet 重新加载、禁止重新定义 df，"
+        "直接在 df 上做数据变换与绘图。"
+    )
+    if df_preview:
+        hint += f"\n\ndf 真实预览（前几行，直接用）:\n{df_preview}"
+    return hint
 
-# 通过 header 注入 monkey-patch pyecharts 渲染路径，
-# 避免脆弱的 `./charts` 字符串替换 + 多目录 fallback 扫描。
-# LLM 生成代码中 chart.render(...) 的 path 会被强制重定向到
-# 环境变量 CHART_OUTPUT_DIR / CHART_OUTPUT_NAME 指定的位置。
-_RENDER_HEADER = '''# --- auto-injected by chart_generator (unified render path) ---
-import os as _os
-from pathlib import Path as _Path
 
-_CHART_OUTPUT_DIR = _os.environ.get("CHART_OUTPUT_DIR", ".")
-_CHART_OUTPUT_NAME = _os.environ.get("CHART_OUTPUT_NAME", "render.html")
-_os.makedirs(_CHART_OUTPUT_DIR, exist_ok=True)
+async def _invoke_llm(engine, chat: BaseAgent, prompt, input_data: dict) -> str:
+    """统一 LLM 调用：QueryEngine 优先 -> prompt+chat -> 裸 chat（兜底）。
 
-try:
-    from pyecharts.charts.base import Base as _PyBase
-    _orig_render = _PyBase.render
+    prompt 缺失（测试/兜底路径）时把输入 dict 渲染成可读文本，
+    包成 {"user_prompt": ...}（BaseAgent.ainvoke 只认 ChatPromptValue 或含 user_prompt 的 dict）。
+    """
+    if engine is not None and prompt is not None:
+        return await engine.run_prompt(prompt.invoke(input_data))
+    if prompt is not None:
+        payload: object = prompt.invoke(input_data)
+    else:
+        rendered = "\n".join(f"{k}: {v}" for k, v in input_data.items())
+        payload = {"user_prompt": rendered}
+    response = await chat.ainvoke(payload)
+    return response["content"] if isinstance(response, dict) else str(response)
 
-    def _patched_render(self, *args, **kwargs):
-        target = _Path(_CHART_OUTPUT_DIR) / _CHART_OUTPUT_NAME
-        # 丢弃 path 参数，统一改写为目标路径
-        if args:
-            args = (str(target),) + args[1:]
-        else:
-            kwargs["path"] = str(target)
-        return _orig_render(self, *args, **kwargs)
 
-    _PyBase.render = _patched_render
-except Exception as _e:
-    print(f"[chart_generator header] pyecharts patch skipped: {_e}")
+def _save_code(code_folder: Path, plan_id: str, suffix: str, code: str) -> None:
+    """落盘代码文件（success/failed/rejected 命名契约）。"""
+    code_file = code_folder / f"code_{plan_id}_{suffix}.py"
+    with open(code_file, "w", encoding="utf-8") as f:
+        f.write(code)
+    logger.info("代码已保存", code_file=str(code_file), suffix=suffix)
 
-# --- DuckDB 连接初始化 (通过环境变量 DUCKDB_PATH 传入) ---
-_DUCKDB_PATH = _os.environ.get("DUCKDB_PATH", "")
-if _DUCKDB_PATH:
-    try:
-        import duckdb as _duckdb
-        conn = _duckdb.connect(_DUCKDB_PATH, read_only=True)
-        print(f"[chart_generator header] DuckDB connected: {_DUCKDB_PATH}")
-    except Exception as _e:
-        print(f"[chart_generator header] DuckDB init failed: {_e}")
-# --- end header ---
-
-'''
 
 @trace(category="chart_gen")
 async def generate_single_chart(
@@ -80,258 +82,112 @@ async def generate_single_chart(
     retriever=None,
     max_retries: int = 3,
     dataset_summary: str = "",
-    # DuckDB 集成参数 (新方案)
-    duckdb_path: str = "",
-    table_name: str = "",
     user_config: str = "(未提供)",
+    catalog: "SeriesCatalog | None" = None,
 ) -> tuple[bool, str, str, str]:
-    plan_id = plan.get("plan_id", "unknown")
-    plan_name = plan.get("plan_name", "Unknown Plan")
-    
+    """生成并执行单个图表计划（v4）。
+
+    Args:
+        catalog: 语义 series 目录（plan.series_id 解析为 df 加载）
+
+    Returns:
+        (成功与否, chart_path, 最终代码, 错误信息)
+    """
+    plan_id = plan_get(plan, "plan_id", "unknown")
+    plan_name = plan_get(plan, "plan_name", "Unknown Plan")
     logger.info("开始执行计划", plan_id=plan_id, plan_name=plan_name)
-    
+
     plans_folder = output_folder / "plans"
     code_folder = output_folder / "code"
     charts_folder = output_folder / "charts"
-    plans_folder.mkdir(exist_ok=True)
-    code_folder.mkdir(exist_ok=True)
-    charts_folder.mkdir(exist_ok=True)
-    
-    plan_file = plans_folder / f"plan_{plan_id}.json"
-    with open(plan_file, "w", encoding="utf-8") as f:
+    for folder in (plans_folder, code_folder, charts_folder):
+        folder.mkdir(exist_ok=True)
+    with open(plans_folder / f"plan_{plan_id}.json", "w", encoding="utf-8") as f:
         json.dump(plan, f, ensure_ascii=False, indent=2)
-    logger.info("计划已保存", plan_file=str(plan_file))
-    
+
     plan_details = json.dumps(plan, ensure_ascii=False, indent=2)
-    final_code = ""
-    
-    # 使用 RAG 检索相关文档
-    reference_docs = ""
-    if retriever is not None:
-        chart_type = plan.get("chart_type", "Line")
-        chart_title = plan.get("chart_title", "")
-
-        # 主查询以 chart_type 为核心（RAG 索引按图表类型组织），
-        # 只叠加 chart_title 作为微弱语义提示；避免拼接 plan_description /
-        # data_analysis 稀释 embedding 主语义。
-        search_query = f"pyecharts {chart_type} chart example"
-        if chart_title:
-            search_query += f" {chart_title}"
-        logger.info("正在检索相关文档", search_query=search_query)
+    # 读取代码只从 series 目录物化（单一真相），不取 plan.read_code——plan_details 不进读取代码
+    series_id = plan_get(plan, "series_id", "")
+    series = catalog.by_id(series_id) if catalog is not None and series_id else None
+    read_code = series_snippet(series) if series is not None else ""
+    # 数据契约：真实加载 series 给出 df 预览，LLM 信任 df 直接绘图
+    df_preview = ""
+    if series is not None:
         try:
-            docs = retriever.retrieve(search_query)
-            if docs:
-                doc_parts = []
-                for i, doc in enumerate(docs):
-                    doc_parts.append(doc.page_content)
-
-                reference_docs = "\n\n---\n\n".join(doc_parts)
-                logger.info("找到示例", count=len(docs))
-            else:
-                logger.warning("未找到相关示例")
+            df_preview = load_series_df(series).head(5).to_string(max_colwidth=30)
         except Exception as e:
-            logger.warning("检索失败", error=str(e))
-    
+            logger.warning("series 预览失败", series_id=series_id, error=str(e))
+    series_hint = _build_series_hint(series_id, df_preview)
+    reference_docs = retrieve_reference_docs(retriever, plan)
+
+    final_code = ""
     code = ""
     last_error = ""
+
     for attempt in range(max_retries):
         if engine and engine.aborted:
             logger.warning("QueryEngine 已中止，停止生成")
             break
 
-        logger.info("开始尝试", attempt=attempt + 1, max_retries=max_retries)
-        attempt_start_ts = time.time()
+        if attempt == 0:
+            content = await _invoke_llm(engine, chat, generate_prompt, {
+                "data_file_path": data_file_path,
+                "data_preview": data_preview,
+                "plan_details": plan_details,
+                "reference_docs": reference_docs,
+                "dataset_summary": dataset_summary or "(未提供)",
+                "user_config": user_config,
+                "read_recipe_hint": series_hint,
+            })
+            code = extract_code_from_response(content)
+        else:
+            # debug：agent 工具循环优先（真实报错 + 真实数据），prompt 重试兜底
+            from service.pipeline.chart_debugger import debug_code
+            code = await debug_code(
+                chat,
+                engine=engine,
+                debug_prompt=debug_prompt,
+                plan_details=plan_details,
+                code=code,
+                last_error=last_error,
+                dataset_summary=dataset_summary or "(未提供)",
+                read_recipe_hint=series_hint,
+                output_folder=output_folder,
+                catalog=catalog,
+                read_code=read_code,
+            )
+        final_code = code
 
-        try:
-            if attempt == 0:
-                logger.info("正在生成图表代码")
-                gen_input = {
-                    "data_file_path": data_file_path,
-                    "data_preview": data_preview,
-                    "plan_details": plan_details,
-                    "reference_docs": reference_docs,
-                    "dataset_summary": dataset_summary or "(未提供)",
-                    "table_name": table_name,
-                    "duckdb_path": duckdb_path,
-                    "user_config": user_config,
-                }
-                if engine and generate_prompt:
-                    content = await engine.run_prompt(generate_prompt.invoke(gen_input))
-                elif generate_prompt:
-                    response = await chat.ainvoke(generate_prompt.invoke(gen_input))
-                    content = response["content"] if isinstance(response, dict) else str(response)
-                else:
-                    response = await generate_chain.ainvoke(gen_input)
-                    content = response.get("content", "") if isinstance(response, dict) else str(response)
-                code = extract_code_from_response(content)
-            else:
-                logger.info("使用 Debug Agent 修复代码")
-                debug_input = {
-                    "plan_details": plan_details,
-                    "failed_code": code,
-                    "error_message": last_error,
-                    "data_preview": data_preview,
-                    "dataset_summary": dataset_summary or "(未提供)",
-                    "table_name": table_name,
-                    "duckdb_path": duckdb_path,
-                    "user_config": user_config,
-                }
-                if engine and debug_prompt:
-                    content = await engine.run_prompt(debug_prompt.invoke(debug_input))
-                elif debug_prompt:
-                    response = await chat.ainvoke(debug_prompt.invoke(debug_input))
-                    content = response["content"] if isinstance(response, dict) else str(response)
-                else:
-                    response = await debug_chain.ainvoke(debug_input)
-                    content = response.get("content", "") if isinstance(response, dict) else str(response)
-                code = extract_code_from_response(content)
-            
-            final_code = code
-            logger.debug("生成的代码", code=code)
-
-            if not final_code.strip():
-                last_error = "LLM 未返回有效代码（提取到空代码块）"
-                logger.warning(
-                    "代码为空，跳过执行",
-                    attempt=attempt + 1,
-                    raw_content_len=len(content),
-                    raw_content_preview=content[:200],
-                )
-                if attempt >= max_retries - 1:
-                    code_file = code_folder / f"code_{plan_id}_failed.py"
-                    with open(code_file, "w", encoding="utf-8") as f:
-                        f.write(final_code)
-                    logger.warning("已达到最大重试次数", max_retries=max_retries)
-                continue
-            
-            logger.info("执行代码")
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            chart_filename = f"chart_{plan_id}_{timestamp}.html"
-            # 使用绝对路径，避免 subprocess cwd 与相对 CHART_OUTPUT_DIR 叠加导致文件写到嵌套目录
-            charts_folder_abs = str(Path(charts_folder).resolve())
-
-            # 通过 header 注入 + 环境变量注入统一渲染路径，
-            # 无需再对 LLM 代码做字符串替换 / 事后扫描多个 fallback 目录。
-            modified_code = _RENDER_HEADER + code
-
-            proc_result = None
-            execution_success = False
-            output_result = ""
-
-            try:
-                run_env = dict(os.environ)
-                run_env["CHART_OUTPUT_DIR"] = charts_folder_abs
-                run_env["CHART_OUTPUT_NAME"] = chart_filename
-                if duckdb_path:
-                    run_env["DUCKDB_PATH"] = duckdb_path
-
-                proc_result = run_python_safely(
-                    modified_code,
-                    cwd=str(charts_folder),
-                    timeout=60,
-                    env=run_env,
-                    extra_pythonpath=str(project_root),
-                )
-
-                if proc_result.success:
-                    output_result = proc_result.stdout
-                    logger.info("执行成功", output=output_result)
-                    execution_success = True
-                else:
-                    if proc_result.error:
-                        output_result = f"Error: {proc_result.error}"
-                    else:
-                        output_result = f"Error:\nStderr: {proc_result.stderr}\nStdout: {proc_result.stdout}"
-                    logger.warning("执行失败", output=output_result)
-                    execution_success = False
-
-            except Exception as e:
-                output_result = f"Exception: {traceback.format_exc()}"
-                logger.warning("执行异常", output=output_result)
-                execution_success = False
-
-            logger.debug("执行结果", output=output_result)
-
-            if execution_success:
-                code_file = code_folder / f"code_{plan_id}_success.py"
-                with open(code_file, "w", encoding="utf-8") as f:
-                    f.write(final_code)
-                logger.info("代码已保存", code_file=str(code_file))
-
-                chart_path = str(charts_folder / chart_filename)
-                # header 注入的 monkey-patch 已强制把 pyecharts 输出写到目标路径。
-                # 若极少数场景（LLM 未使用 pyecharts.render 或采用其他后端）导致文件缺失，
-                # 保留最小兜底：在 charts_folder 内取本轮新增的第一个 html。
-                if not Path(chart_path).exists():
-                    new_files = [
-                        p for p in charts_folder.glob("*.html")
-                        if p.stat().st_mtime >= attempt_start_ts and p.name != chart_filename
-                    ]
-                    if new_files:
-                        fallback = sorted(new_files, key=lambda p: p.stat().st_mtime)[-1]
-                        try:
-                            fallback.rename(charts_folder / chart_filename)
-                            logger.info("兜底重命名", fallback=fallback.name, target=chart_filename)
-                        except Exception as move_err:
-                            chart_path = str(fallback)
-                            logger.warning("兜底重命名失败，使用原路径", chart_path=chart_path, error=str(move_err))
-
-                # 最终校验：HTML 必须真实存在且非空，否则视为失败
-                if not Path(chart_path).exists() or Path(chart_path).stat().st_size == 0:
-                    last_error = f"HTML 未生成或为空（{chart_path}，代码可能未调用 render）"
-                    logger.error("图表文件校验失败", plan_id=plan_id, chart_path=chart_path)
-                    # 修正命名：误写的 _success.py 改为 _failed.py，避免误导
-                    success_file = code_folder / f"code_{plan_id}_success.py"
-                    if success_file.exists():
-                        failed_file = code_folder / f"code_{plan_id}_failed.py"
-                        try:
-                            success_file.replace(failed_file)
-                        except Exception:
-                            success_file.unlink(missing_ok=True)
-                    if attempt < max_retries - 1:
-                        logger.info("准备使用 Debug Agent 修复（HTML 未生成）")
-                        continue
-                    logger.warning("已达到最大重试次数", max_retries=max_retries)
-                    break
-
-                logger.info("计划执行成功", plan_id=plan_id)
-                logger.info("图表路径", chart_path=chart_path)
-
-                return True, chart_path, final_code, ""
-            else:
-                last_error = output_result
-                logger.error("执行失败", error=last_error, exc_info=True)
-
-                # 沙箱静态拒绝（AST 安全检查）不适合走 debug，debug 也改不了规则
-                if "安全检查失败" in last_error:
-                    logger.warning("静态安全检查失败，跳过 debug（debug 无法修复被拒规则）")
-                    code_file = code_folder / f"code_{plan_id}_rejected.py"
-                    with open(code_file, "w", encoding="utf-8") as f:
-                        f.write(final_code)
-                    logger.info("被拒代码已保存", code_file=str(code_file))
-                    break
-
-                if attempt < max_retries - 1:
-                    logger.info("准备使用 Debug Agent 修复")
-                else:
-                    code_file = code_folder / f"code_{plan_id}_failed.py"
-                    with open(code_file, "w", encoding="utf-8") as f:
-                        f.write(final_code)
-                    logger.info("失败代码已保存", code_file=str(code_file))
-                    logger.warning("已达到最大重试次数", max_retries=max_retries)
-                    
-        except Exception as e:
-            last_error = str(e)
-            logger.error("异常", error=last_error, exc_info=True)
-            traceback.print_exc()
-            
+        if not final_code.strip():
+            last_error = "LLM 未返回有效代码（提取到空代码块）"
+            logger.warning("代码为空，跳过执行", attempt=attempt + 1)
             if attempt >= max_retries - 1:
-                if final_code:
-                    code_file = code_folder / f"code_{plan_id}_failed.py"
-                    with open(code_file, "w", encoding="utf-8") as f:
-                        f.write(final_code)
-                    logger.info("失败代码已保存", code_file=str(code_file))
-                logger.warning("已达到最大重试次数", max_retries=max_retries)
-    
+                _save_code(code_folder, plan_id, "failed", final_code)
+            continue
+
+        # 守护层拼接：read_code（真实 series 加载代码）+ LLM 代码（变换+绘图）
+        body = (read_code + "\n" + code) if read_code else code
+
+        result = execute_chart_code(
+            body,
+            charts_folder=charts_folder,
+            plan_id=plan_id,
+        )
+
+        if result.success:
+            # 产物落盘：注入版自包含代码（拷走 py + 对应 series .parquet 即可独立运行）
+            _save_code(code_folder, plan_id, "success", body)
+            logger.info("计划执行成功", plan_id=plan_id, chart_path=result.chart_path)
+            return True, result.chart_path, body, ""
+
+        last_error = result.output
+        logger.error("执行失败", error=last_error)
+
+        # 沙箱静态拒绝（AST 安全检查）不适合走 debug，debug 也改不了规则
+        if "安全检查失败" in last_error:
+            _save_code(code_folder, plan_id, "rejected", final_code)
+            break
+        if attempt >= max_retries - 1:
+            _save_code(code_folder, plan_id, "failed", final_code)
+
     return False, "", final_code, last_error
