@@ -14,6 +14,16 @@ DataVisualServer 是一个基于 LangChain + pyecharts 的数据可视化服务�
 - **中文支持**：图表标题、轴标签必须支持中文，全局配置 `InitOpts(width="900px", height="500px")`
 - **配色**：使用 pyecharts 内置主题（如 ThemeType.LIGHT），避免默认刺眼配色
 
+## series 读取契约（v4）
+
+每个 plan 必须从 `series_index` 中选定 `series_id`（plan 只存 id，读取代码本体留在 series 目录，单一真相），并遵守数据契约协议：
+
+- **数据契约**：读取代码由框架执行并自动拼在生成代码开头，提供全局变量 `df`（从该 series 的 parquet 加载的 DataFrame）；series 文件路径不进入 LLM 上下文（防止转抄失真）
+- **禁止自写数据读取**：`import duckdb` / `read_parquet` 重新加载 / 建连接 / 写 SELECT 一律禁止，用注入的 `df`
+- **变换**：按 `transform_hint` 在 `df` 上用 pandas 完成（如增长率 = (本年-上年)/上年*100）
+- **自包含契约**：成功产物 `code_<id>_success.py` 是注入后的完整代码，拷走 + 对应 series `.parquet` 即可独立运行
+- series_id 缺失时（如 agent 自主规划）走自备读取模式：直接从输入的 `data_interface` 取数
+
 ## 命名约定
 
 - **图表文件**：`charts/<数据文件名>/chart_<时间戳>_<序号>.html`，例如 `charts/季度数据/chart_20260709_1.html`

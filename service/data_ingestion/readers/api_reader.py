@@ -17,9 +17,7 @@ from urllib.request import Request, urlopen
 
 import pandas as pd
 
-from service.data_ingestion.duckdb_manager import DuckDBManager
-from service.data_ingestion.models import DataProfile
-from service.data_ingestion.profiler import build_profile
+from service.data_ingestion.models import RawTable, safe_table_name
 
 
 def _check_ssrf(url: str) -> None:
@@ -136,7 +134,6 @@ class ApiReader:
 
     @staticmethod
     def read(
-        db: DuckDBManager,
         api_type: str | None = None,
         url: str | None = None,
         params: dict[str, Any] | None = None,
@@ -144,11 +141,10 @@ class ApiReader:
         method: str = "GET",
         headers: dict[str, str] | None = None,
         body: str | None = None,
-    ) -> DataProfile:
-        """从 API 获取数据并注册为 DuckDB 表。
+    ) -> list[RawTable]:
+        """从 API 获取数据为 DataFrame。
 
         Args:
-            db: DuckDBManager 实例
             api_type: 内置 API 类型 ("worldbank" / "statsgov")
             url: 通用 API URL (api_type 为 None 时使用)
             params: API 查询参数（GET 时拼到 URL，POST 时作 body）
@@ -158,7 +154,7 @@ class ApiReader:
             body: 请求体（POST，JSON 字符串）
 
         Returns:
-            DataProfile
+            list[RawTable]（含单个 RawTable）
         """
         params = params or {}
 
@@ -198,8 +194,7 @@ class ApiReader:
         else:
             raise ValueError("必须提供 api_type 或 url")
 
-        name = table_name or DuckDBManager.safe_table_name(
-            api_type or params.get("indicator") or "api_data"
+        name = safe_table_name(
+            table_name or api_type or params.get("indicator") or "api_data"
         )
-        db.register_dataframe(name, df)
-        return build_profile(db, name, source_kind="api", source_path=source_path)
+        return [RawTable(name=name, df=df, source_kind="api", source_path=source_path)]

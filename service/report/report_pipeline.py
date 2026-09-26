@@ -57,7 +57,6 @@ def _df_to_profile(
         row_count=len(df),
         preview=preview,
         stats={},
-        duckdb_path="",
     )
 
 

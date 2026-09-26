@@ -92,7 +92,8 @@ def extract_code_from_response(response_text: str) -> str:
         if code_match:
             return code_match.group(1)
 
-        return response_text
+        # 提取不到代码块：返回空串（非代码文本不得当代码执行）
+        return ""
     except Exception as e:
         logger.warning("Failed to extract code", error=str(e))
-        return response_text
+        return ""

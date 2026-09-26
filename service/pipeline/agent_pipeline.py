@@ -56,91 +56,31 @@ async def run_agent_pipeline(
     charts_folder = output_folder / "charts"
     charts_folder.mkdir(parents=True, exist_ok=True)
 
-    # 记录执行前已有 HTML（用于识别新增）
-    before_files = {p.name for p in charts_folder.glob("*.html")}
-
-    # 构建本地工具池（延迟 import 避免循环）
-    from agent.tools.read_data_file_tool import ReadDataFileTool
-    from agent.tools.run_code_tool import RunCodeTool
-    from agent.tools.base import ToolContext
-    from agent.tool_adapter import wrap_local_tools
-    from service.pipeline.chart_generator import _RENDER_HEADER
-
     file_paths = model_.file_paths or []
-    duckdb_path = profile.duckdb_path if profile else ""
-    table_name = profile.table_name if profile else ""
+    catalog = profile.series_catalog if profile is not None else None
 
-    ctx = ToolContext(auto_confirm=True, working_dir=str(output_folder))
-    local_tools = [
-        ReadDataFileTool(auto_confirm=True),
-        RunCodeTool(
-            auto_confirm=True,
-            output_dir=str(charts_folder),
-            duckdb_path=duckdb_path,
-            prelude=_RENDER_HEADER,
-        ),
-    ]
-    tools = wrap_local_tools(local_tools, ctx)
+    # 语义 series 目录：由预处理阶段确定性拆分并落盘（v4，无 SQL recipe）。
+    # 已在 ingest 阶段生成 manifest.json；此处仅从 profile 取出 catalog。
+    if catalog is not None:
+        n = len(catalog.series)
+        agent_logs.append(f"🧾 语义 series 目录: {n} 条数据系列已就绪")
+
+    # 构建本地工具池（P0.4 debug agent 环节使用）
+    from service.pipeline.agent_toolpool import build_agent_tool_pool
+    tools = build_agent_tool_pool(output_folder, charts_folder)
     agent_logs.append(f"🔧 已装载工具: {[t.name for t in tools]}")
 
-    # 构造 DataProfile 语义特征
-    canonical_dataset = "(未提供)"
-    if profile is not None:
-        try:
-            canonical_dataset = json.dumps(profile.to_prompt_dict(), ensure_ascii=False, indent=2)
-        except Exception as e:
-            agent_logs.append(f"⚠️ DataProfile 序列化失败: {e}")
-
-    # ==== 阶段 1: 图表规划（plan 层 - 布局与图例优化）====
-    # plan 层基于数据语义特征规划图表类型/字段映射/布局/图例风格/多图组合，
-    # 作为 agent 自主执行的蓝图。agent loop 参考其规划，自主调用工具生成并迭代优化。
-    planned_charts = "(未提供)"
-    try:
-        from prompts.agent_prompt import get_agent_chart_designer_prompt
-        from service.runtime.utils import extract_json_from_response
-
-        plan_input = {
-            "data_file_path": ", ".join(file_paths) if file_paths else "",
-            "data_preview": profile.to_prompt_str() if profile else "",
-            "data_interface_info": "",
-            "canonical_dataset": canonical_dataset,
-            "user_chart_config": (model_.config or "(未提供)") if model_.config else "(未提供)",
-            "user_prompt": model_.user_prompt,
-            "mcp_prompt": getattr(model_, "mcp_prompt", "") or "",
-            "skill_prompt": getattr(model_, "skill_prompt", "") or "",
-        }
-        with stage_timer.stage(task_id, "plan", "图表规划"):
-            plan_result = await chat.ainvoke(get_agent_chart_designer_prompt().invoke(plan_input))
-        plan_content = plan_result["content"] if isinstance(plan_result, dict) else str(plan_result)
-        # 调试:记录 plan 响应,排查"未产出有效规划"
-        agent_logs.append(f"📋 [调试] plan 响应前 400 字: {plan_content[:400]}")
-        try:
-            (output_folder / "plan_response_debug.txt").write_text(plan_content, encoding="utf-8")
-        except Exception:
-            pass
-        plans_data = extract_json_from_response(plan_content)
-        if not plans_data:
-            # 兜底:extract 未命中(纯 JSON 无围栏),直接 json.loads
-            try:
-                plans_data = json.loads(plan_content)
-            except Exception:
-                plans_data = None
-        if isinstance(plans_data, list):
-            plans_data = {"plans": plans_data}
-        plans = plans_data.get("plans", []) if isinstance(plans_data, dict) else []
-        if plans:
-            planned_charts = json.dumps(plans, ensure_ascii=False, indent=2)
-            agent_logs.append(f"📋 plan 层规划 {len(plans)} 个图表（布局/图例优化）")
-            try:
-                (output_folder / "all_plans.json").write_text(
-                    json.dumps({"plans": plans}, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-            except Exception:
-                pass
-        else:
-            agent_logs.append("⚠️ plan 层未产出有效规划，agent 将自主规划")
-    except Exception as e:
-        agent_logs.append(f"⚠️ plan 阶段失败({e})，agent 将自主规划")
+    # ==== 阶段 1: 图表规划（已拆至 agent_plan_stage.py：prompt 注入 series 索引 + 确定性校验）====
+    from service.pipeline.agent_plan_stage import run_plan_stage
+    plans = await run_plan_stage(
+        chat,
+        model_=model_,
+        profile=profile,
+        output_folder=output_folder,
+        task_id=task_id,
+        catalog=catalog,
+        agent_logs=agent_logs,
+    )
 
     # ==== 阶段 2: 逐个 plan 执行（每个图表单独 task，只注入该 plan 规范）====
     from service.pipeline.chart_generator import generate_single_chart
@@ -171,13 +111,11 @@ async def run_agent_pipeline(
             pass
 
     user_chart_config_json = (model_.config or "(未提供)") if model_.config else "(未提供)"
-    agent_logs.append(f"📋 [调试] engine={type(engine).__name__}, generate_prompt={type(generate_prompt).__name__}, chat={type(chat).__name__}, chat.chat={type(getattr(chat, 'chat', None)).__name__ if getattr(chat, 'chat', None) else 'None'}")
 
     # 若 plan 未产出，构造默认 plan（agent 自主）
     if not plans:
-        plans = [{"plan_id": "1", "plan_name": "自主图表", "chart_type": "auto",
-                  "chart_title": model_.user_prompt[:30], "use_column_names": True,
-                  "data_interface": {"available": False}}]
+        from service.pipeline.agent_plan_stage import build_default_plan
+        plans = build_default_plan(model_)
         agent_logs.append("⚠️ 无 plan，使用自主规划")
 
     successful_charts = []
@@ -207,8 +145,7 @@ async def run_agent_pipeline(
                     retriever=rag_retriever,
                     max_retries=3,
                     dataset_summary=dataset_summary_json,
-                    duckdb_path=duckdb_path,
-                    table_name=table_name,
+                    catalog=catalog,
                     user_config=user_chart_config_json,
                 )
         except Exception as e:

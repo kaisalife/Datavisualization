@@ -109,7 +109,6 @@ def _test_snippet_with_mock(snippet: str, mock_data: str) -> tuple[bool, str]:
         env = dict(os.environ)
         env["CHART_OUTPUT_DIR"] = tmpdir
         env["CHART_OUTPUT_NAME"] = "test_render.html"
-        env.pop("DUCKDB_PATH", None)  # 测试不需要 DuckDB
         try:
             result = run_python_safely(
                 test_code,

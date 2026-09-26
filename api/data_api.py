@@ -61,7 +61,7 @@ def data_profile():
     except Exception as e:
         return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
     finally:
-        _cleanup_duckdb(profile)
+        _cleanup_session_dir(profile)
 
 
 @data_bp.route("/charts-dir", methods=["GET"])
@@ -75,21 +75,17 @@ def charts_dir():
     return jsonify({"dir": str(get_charts_dir().resolve())}), 200
 
 
-def _cleanup_duckdb(profile) -> None:
-    """删除预览产生的临时 .duckdb 文件及其空目录（预览无需保留）。"""
+def _cleanup_session_dir(profile) -> None:
+    """删除预览产生的临时 series 会话目录（预览无需保留）。"""
     if profile is None:
         return
     try:
-        duckdb_path = getattr(profile, "duckdb_path", None)
-        if not duckdb_path:
+        import shutil
+        session_dir = getattr(profile, "session_dir", None)
+        if not session_dir:
             return
-        p = Path(duckdb_path)
-        if p.exists():
-            p.unlink(missing_ok=True)
-        wal = p.with_suffix(".duckdb.wal")
-        if wal.exists():
-            wal.unlink(missing_ok=True)
-        if p.parent.exists() and not any(p.parent.iterdir()):
-            p.parent.rmdir()
+        p = Path(session_dir)
+        if p.exists() and p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
     except Exception:
         pass

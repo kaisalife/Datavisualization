@@ -25,8 +25,7 @@ class RunCodeTool(Tool):
     """
 
     def __init__(self, auto_confirm: bool = False, default_cwd: Optional[str] = None,
-                 output_dir: Optional[str] = None, duckdb_path: Optional[str] = None,
-                 prelude: str = ""):
+                 output_dir: Optional[str] = None, prelude: str = ""):
         super().__init__(
             name="run_code",
             description="在沙箱中执行 Python 代码，返回 stdout/stderr。"
@@ -40,7 +39,6 @@ class RunCodeTool(Tool):
         )
         self._default_cwd = default_cwd
         self._output_dir = output_dir
-        self._duckdb_path = duckdb_path
         self._prelude = prelude
 
     def check_permissions(self, ctx: ToolContext) -> Decision:
@@ -80,9 +78,6 @@ class RunCodeTool(Tool):
             run_env["CHART_OUTPUT_DIR"] = str(self._output_dir)
             run_env["CHART_OUTPUT_NAME"] = chart_filename
             chart_path = str(Path(self._output_dir) / chart_filename)
-        if self._duckdb_path:
-            run_env["DUCKDB_PATH"] = self._duckdb_path
-
         result = run_python_safely(
             full_code,
             cwd=cwd,
