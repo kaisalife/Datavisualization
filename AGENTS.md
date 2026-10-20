@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 122 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 127 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -169,6 +169,9 @@ $env:BACKEND_URL="http://localhost:5000"
   `runtime/chroma`**，代码会检查维度并给出明确报错。建库是边算边写，**中途中断会留下部分向量**
   （代码只识别 0 条的空库），中断后务必删掉 `runtime/chroma` 重来。
 - 已验证检索质量：`柱状图 标题设置`、`Grid 多图组合` 等查询能命中对应示例文档。
+- 图表生成检索走 `service/pipeline/chart_rag.py`：query 用「中文功能词 + 英文类型名」
+  （如 `柱状图 Bar 基础 多系列 示例`、`Grid 网格布局 GridOpts 多图组合 垂直布局 水平布局`），
+  **不拼业务标题**（会稀释 embedding）；未知类型回退到 `<类型> 图表示例`。回归 `tests/test_chart_rag.py`。
 - 检索器用 `get_default_retriever()` 进程内复用（模型约 2.4 GB、加载约 8 秒）；`agent_pipeline` 与
   `chart_executor` 都走它，不要再直接 `RAGRetriever()`，并发任务会把内存吃满。
 
