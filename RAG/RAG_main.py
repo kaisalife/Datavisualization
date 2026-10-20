@@ -100,6 +100,44 @@ CHROMA_PERSIST_DIR = _chroma_env if _chroma_env else str(_PROJECT_ROOT / "runtim
 DEFAULT_K = int(os.getenv("RAG_RETRIEVE_K", "3"))                 # 默认检索返回文档数
 # ===================================================================
 
+# 切分分隔符优先级按语义强度排列（与历史建库保持一致，增量同步必须复用）：
+# 1. 三个反引号（```）：保证代码围栏首尾不被切开
+# 2. markdown 标题 (## / ### / ####)：按小节切
+# 3. 空行 / 换行：段落级
+# 4. 中文标点与空格：细粒度回退
+SPLIT_SEPARATORS = [
+    "\n```",
+    "\n## ",
+    "\n### ",
+    "\n#### ",
+    "\n\n",
+    "\n",
+    "。",
+    "；",
+    " ",
+    "",
+]
+DEFAULT_CHUNK_SIZE = 1500
+DEFAULT_CHUNK_OVERLAP = 200
+
+
+def make_text_splitter(
+    chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+) -> RecursiveCharacterTextSplitter:
+    """构造与建库时一致的文档切分器。"""
+    return RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=SPLIT_SEPARATORS,
+    )
+
+
+def split_documents(
+    docs, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+):
+    """把 langchain Document 列表切分为 chunk（建库与增量同步共用）。"""
+    return make_text_splitter(chunk_size, chunk_overlap).split_documents(docs)
+
 
 class RAGRetriever:
     """
@@ -174,32 +212,8 @@ class RAGRetriever:
         return docs
 
     def _split_documents(self, docs):
-        """将文档切分成更小的块。
-
-        RAG 知识库主要是 pyecharts 示例（markdown 中嵌 python 代码围栏），
-        分隔符优先级按语义强度排列：
-        1. 三个反引号（```）：保证代码围栏首尾不被切开
-        2. markdown 标题 (## / ### / ####)：按小节切
-        3. 空行 / 换行：段落级
-        4. 中文标点与空格：细粒度回退
-        """
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            separators=[
-                "\n```",
-                "\n## ",
-                "\n### ",
-                "\n#### ",
-                "\n\n",
-                "\n",
-                "。",
-                "；",
-                " ",
-                ""
-            ]
-        )
-        chunks = text_splitter.split_documents(docs)
+        """将文档切分成更小的块（复用模块级切分器，保证与增量同步一致）。"""
+        chunks = split_documents(docs, self.chunk_size, self.chunk_overlap)
         print(f"切分后得到 {len(chunks)} 个文本块")
         return chunks
 
@@ -278,6 +292,34 @@ class RAGRetriever:
     def get_retriever(self):
         """返回检索器，便于自定义使用"""
         return self.retriever
+
+    def _ids_by_source(self, source: str) -> list[str]:
+        """返回向量库里 ``source`` 元数据等于给定路径的所有 chunk id。"""
+        try:
+            got = self.vectorstore.get(where={"source": source})
+        except Exception:
+            return []
+        return list(got.get("ids") or [])
+
+    def sync_markdown(self, path) -> dict:
+        """把单个 Markdown 增量写入向量库（同 source 先删后写，避免重复）。
+
+        Args:
+            path: Markdown 文件路径
+
+        Returns:
+            {"path": str, "added": int, "replaced": int}
+        """
+        src = str(Path(path).resolve())
+        if not os.path.exists(src):
+            raise FileNotFoundError(f"文件不存在: {src}")
+        replaced_ids = self._ids_by_source(src)
+        if replaced_ids:
+            self.vectorstore.delete(ids=replaced_ids)
+        docs = TextLoader(src, encoding="utf-8").load()
+        chunks = split_documents(docs, self.chunk_size, self.chunk_overlap)
+        self.vectorstore.add_documents(chunks)
+        return {"path": src, "added": len(chunks), "replaced": len(replaced_ids)}
 
 
 # 进程内复用：Qwen3-Embedding-0.6B 每次加载约 8 秒、占约 2.4 GB，

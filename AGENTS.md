@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 238 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 242 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -177,6 +177,11 @@ $env:BACKEND_URL="http://localhost:5000"
   建好后持久化到 `runtime/chroma`，之后只做 query（短查询约 0.8 秒）。**换 embedding 模型必须删/改名
   `runtime/chroma`**，代码会检查维度并给出明确报错。建库是边算边写，**中途中断会留下部分向量**
   （代码只识别 0 条的空库），中断后务必删掉 `runtime/chroma` 重来。
+- **新增/改动文档不必全量重建**：`RAG/sync_index.py` 按 `source` 元数据增量 upsert
+  （`.venv\Scripts\python.exe -m RAG.sync_index --missing` 只补缺失文件；显式给文件/目录则覆盖，
+  `--prune` 清理源文件已删除的条目）。切分器抽成 `RAG_main.split_documents` / `SPLIT_SEPARATORS`，
+  增量同步与建库必须共用，否则 chunk 边界不一致。已补 `RAG/RAG_Data/Scatter/scatter_base.md`
+  （原先 `Scatter` 只能命中 `effectscatter_base.md`），当前 400 条向量。
 - 已验证检索质量：`柱状图 标题设置`、`Grid 多图组合` 等查询能命中对应示例文档。
 - 图表生成检索走 `service/pipeline/chart_rag.py`：query 用「中文功能词 + 英文类型名」
   （如 `柱状图 Bar 基础 多系列 示例`、`Grid 网格布局 GridOpts 多图组合 垂直布局 水平布局`），
