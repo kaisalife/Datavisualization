@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 142 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 149 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -220,6 +220,17 @@ $env:BACKEND_URL="http://localhost:5000"
 `_is_id_label()` 按英文整词匹配，`width` 不会因为含 `id` 被当成编号。
 
 回归：`tests/test_numeric_coercion.py`、`tests/test_series_split.py`。
+
+## Series 拆分：长表透视
+
+`城市 / 月份 / 销售额` 这类「时间 + 维度 + 指标」长表，不再把不同城市混成一条时间线：
+
+- 维度类别 ≤12：透视成 `时间 × 类别` 宽表，一条 series 多列（多折线）；
+- 类别 >12：按维度聚合排行（率/均价取平均，其余求和），最多 20 行；
+- 多个指标每个一条 series；多个维度选基数最小且 ≥2 的维度；
+- 只有一个类别时回退到普通「时间 + 指标」序列。
+
+回归：`tests/test_series_split.py`（透视、自然时间序、多指标、多维度、高基数排行、重复单元格聚合）。
 
 ## CSV 编码
 

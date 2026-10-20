@@ -33,6 +33,107 @@ _WIDE_TIME_HINT_MAX_ROWS = 60     # 宽表-时间列 判定：行数上限
 _WIDE_TIME_MIN_TIME_HEADS = 3     # 宽表-时间列 判定：最少时间列头数
 _WIDE_TIME_TIME_FRACTION = 0.5    # 时间列头占比下限
 
+# 长表「时间 + 维度 + 指标」透视：类别太多时不画多条折线，改为聚合排行
+_PIVOT_MAX_CATEGORIES = 12
+_CATEGORY_AGG_LIMIT = 20
+
+# 这些指标做跨时间聚合时取平均，其余求和
+_AVERAGE_HINTS = ("率", "占比", "比例", "平均", "均值", "单价", "价格", "温度", "评分", "得分", "时长")
+
+
+def _measure_agg(measure: str) -> str:
+    """按指标名猜测跨时间聚合方式（率/均价取平均，其余求和）。"""
+    name = str(measure)
+    return "mean" if any(hint in name for hint in _AVERAGE_HINTS) else "sum"
+
+
+def _natural_key(value) -> str:
+    """自然排序键：1月 < 2月 < 10月，Q1 < Q2 < Q10。"""
+    return re.sub(r"\d+", lambda m: m.group(0).zfill(10), str(value))
+
+
+def _split_long_with_dimension(
+    df: pd.DataFrame, column_semantics: dict[str, str]
+) -> list[tuple]:
+    """启发式2：长表含 时间 + 维度 + 指标。
+
+    典型形态 ``城市 / 月份 / 销售额``：
+
+    - 类别数 ≤12：透视成「时间 × 类别」宽表，一条 series 画多条折线
+      （row_label=月份，column_labels=城市）；
+    - 类别数 >12：按维度聚合为排行，避免几十条折线糊在一起。
+
+    多个指标时每个指标一条 series；多个维度时选基数最小（且 ≥2）的那一维。
+    """
+    time_cols = [c for c, r in column_semantics.items() if r == "time"]
+    measure_cols = [c for c, r in column_semantics.items() if r == "measure"]
+    dim_cols = [c for c, r in column_semantics.items() if r == "dimension"]
+    if len(time_cols) != 1 or not measure_cols or not dim_cols:
+        return []
+
+    time_col = time_cols[0]
+    cardinalities = {c: int(df[c].nunique(dropna=True)) for c in dim_cols}
+    candidates = [c for c, n in cardinalities.items() if 2 <= n <= _PIVOT_MAX_CATEGORIES]
+    if candidates:
+        dim_col = min(candidates, key=lambda c: cardinalities[c])
+    else:
+        # 所有维度都只有 1 个值，或都超过阈值
+        dim_col = min(cardinalities, key=lambda c: cardinalities[c])
+    n_categories = cardinalities[dim_col]
+    if n_categories < 2:
+        return []  # 交给「单时间 + 指标」启发式
+
+    if n_categories > _PIVOT_MAX_CATEGORIES:
+        # 高基数维度：聚合为类别排行（每个指标取合适的聚合方式）
+        agg_map = {m: _measure_agg(m) for m in measure_cols}
+        ranked = (
+            df.groupby(dim_col, as_index=False, dropna=False)[measure_cols]
+            .agg(agg_map)
+            .sort_values(measure_cols[0], ascending=False)
+            .head(_CATEGORY_AGG_LIMIT)
+        )
+        return [(
+            "categorical_comparison", dim_col, list(measure_cols), ranked,
+            _sanitize_series_name(dim_col),
+            f"{dim_col} 维度的指标汇总（{', '.join(measure_cols)}）",
+        )]
+
+    out: list[tuple] = []
+    time_values: list = []
+    seen_times: set[str] = set()
+    for value in df[time_col].dropna():
+        label = str(value)
+        if label not in seen_times:
+            seen_times.add(label)
+            time_values.append(value)
+    time_order = sorted(time_values, key=_natural_key)
+    category_order = list(dict.fromkeys(str(v) for v in df[dim_col].dropna()))
+
+    for measure in measure_cols:
+        pivot = df.pivot_table(
+            index=time_col,
+            columns=dim_col,
+            values=measure,
+            aggfunc=_measure_agg(measure),
+            dropna=False,
+        )
+        pivot = pivot.reindex(time_order)
+        pivot.columns = [
+            f"{col}_" if str(col) == str(time_col) else str(col)
+            for col in pivot.columns
+        ]
+        renamed_order = [
+            f"{c}_" if c == str(time_col) else c for c in category_order
+        ]
+        pivot = pivot.reindex(columns=[c for c in renamed_order if c in pivot.columns])
+        pivot = pivot.reset_index()
+        out.append((
+            "time_series", time_col, list(pivot.columns[1:]), pivot,
+            _sanitize_series_name(f"{measure} 按{dim_col}"),
+            f"不同{dim_col}的{measure}随{time_col}的变化",
+        ))
+    return out
+
 
 def _time_header_cols(df: pd.DataFrame) -> list[str]:
     """列名是「时间标签」的列（用于判定 指标×时间 宽表）。
@@ -165,6 +266,7 @@ def split_raw_table(
 
     for split in (
         _split_wide_with_time,
+        _split_long_with_dimension,
         lambda d, s: _split_wide_with_metrics(d, s),
         lambda d, s: _split_long_or_categorical(d, s),
         lambda d, s: _split_generic(d, table_name),
