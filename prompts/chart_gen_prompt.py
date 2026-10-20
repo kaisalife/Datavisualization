@@ -34,19 +34,29 @@ agent_generate_chart_prompt = """
 - 只调 `chart.render()`，不传 path、不拼目录、不 os.makedirs（框架自动注入路径）
 
 ## 用户配置（user_config）
-- width/height -> InitOpts(width=..., height=...)
-- theme -> InitOpts(theme=ThemeType.DARK)
+- width/height -> opts.InitOpts(width=..., height=...)
+- theme -> opts.InitOpts(theme=ThemeType.DARK)
 - color/palette -> set_series_opts/itemstyle
-- 默认：InitOpts(width="900px", height="500px") + ThemeType.LIGHT
+- 默认：opts.InitOpts(width="900px", height="500px") + ThemeType.LIGHT
+
+## 导入与命名（必须）
+- 固定导入：`from pyecharts import options as opts` 和 `from pyecharts.charts import ...`
+- 主题要单独导入：`from pyecharts.globals import ThemeType`；
+  **`opts.ThemeType` 不存在**，写 `theme=ThemeType.LIGHT`（不是 `opts.ThemeType.LIGHT`）
+- 所有选项类**一律带 `opts.` 前缀**：`opts.InitOpts` / `opts.TitleOpts` / `opts.LegendOpts` /
+  `opts.GridOpts` / `opts.LabelOpts` / `opts.AxisOpts`
+- **禁止省略 `opts.` 前缀**（省略后就是未定义的名字，必然 NameError）
 
 ## 布局（防标题/图例重叠，必须遵守）
-- 标题：TitleOpts(pos_top="2%", pos_left="center")
+- 标题：opts.TitleOpts(pos_top="2%", pos_left="center")
 - 图例（plan_details.layout.legend_pos）：
-  - "top"/series≤4：LegendOpts(pos_top="2%", pos_right="3%", orient="horizontal")
-  - "bottom"/series>4：LegendOpts(pos_bottom="2%", pos_left="center", orient="horizontal")
-- Grid：GridOpts(pos_top=layout.grid_top 或 "12%", pos_bottom=layout.grid_bottom 或 "8%", pos_left="8%", pos_right="5%")
+  - "top"/series≤4：opts.LegendOpts(pos_top="2%", pos_right="3%", orient="horizontal")
+  - "bottom"/series>4：opts.LegendOpts(pos_bottom="2%", pos_left="center", orient="horizontal")
+- **Grid 边距只能通过 Grid 容器设置**：
+  `Grid(init_opts=opts.InitOpts(...)).add(chart, grid_opts=opts.GridOpts(pos_top=..., pos_bottom=..., pos_left="8%", pos_right="5%"))`
+  `chart.set_global_opts()` **不接受 grid_opts**（传了会 TypeError）
 - Pie：center=["50%","55%"], radius=["30%","60%"]
-- 多 series：set_series_opts(label_opts=LabelOpts(is_show=False))
+- 多 series：set_series_opts(label_opts=opts.LabelOpts(is_show=False))
 
 ## 输出
 仅返回 Python 代码，完整可执行，含所有 import。
@@ -75,6 +85,9 @@ series 模式（read_recipe_hint 非空时）：
 - KeyError: 列名与 dataset_summary 不匹配，用原始列名
 - TypeError/ValueError: NaN 未清洗，加 df.fillna(0) 或 pd.to_numeric(errors='coerce')
 - pyecharts add_yaxis: 至少传 (series_name, y_data)
+- NameError: InitOpts/TitleOpts/LabelOpts 没加 `opts.` 前缀；选项类一律写 `opts.XxxOpts(...)`
+- TypeError: set_global_opts() 不接受 grid_opts -> 改用 `Grid(...).add(chart, grid_opts=opts.GridOpts(...))`
+- AttributeError: opts.ThemeType 不存在 -> `from pyecharts.globals import ThemeType`
 """
 
 

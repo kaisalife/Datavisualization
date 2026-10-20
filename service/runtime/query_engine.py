@@ -120,29 +120,21 @@ class QueryEngine:
             content = str(response)
 
         self.messages.append(AIMessage(content=content))
-        self._track_usage(response)
-        self.usage["calls"] += 1
 
-        input_tokens = self.usage["input_tokens"]
-        output_tokens = self.usage["output_tokens"]
-        # 兜底：LangChain 未回传 usage_metadata 时用 tiktoken 估算
+        # 本次调用的 token 增量（usage 缺失时用 tiktoken 估算）
+        input_tokens, output_tokens = self._track_usage(response)
         if input_tokens == 0:
             input_tokens = count_messages_tokens(self.messages[:-1], self._model_name or "gpt-4o")
-            self.usage["input_tokens"] = input_tokens
         if output_tokens == 0:
             output_tokens = count_tokens(content, self._model_name or "gpt-4o")
-            self.usage["output_tokens"] = output_tokens
 
-        self.budget_tracker.record_turn(
-            input_tokens - self.budget_tracker.total_input_tokens,
-            output_tokens - self.budget_tracker.total_output_tokens,
-        )
+        self.usage["input_tokens"] += input_tokens
+        self.usage["output_tokens"] += output_tokens
+        self.usage["calls"] += 1
 
-        self.cost_tracker.accumulate(
-            self._model_name or "default",
-            input_tokens - self.cost_tracker.get_total_tokens()["input_tokens"],
-            output_tokens - self.cost_tracker.get_total_tokens()["output_tokens"],
-        )
+        # record_turn / accumulate 收的是"本次增量"，不能传累计值相减后的差
+        self.budget_tracker.record_turn(input_tokens, output_tokens)
+        self.cost_tracker.accumulate(self._model_name or "default", input_tokens, output_tokens)
 
         used = self.budget_tracker.get_total_used()
         decision = check_budget(self.budget_tracker, used, self.context_window)
@@ -151,8 +143,8 @@ class QueryEngine:
         self._logger.info(EVENT_LLM_CALL_END,
                           model=self._model_name,
                           call_index=self.usage["calls"] - 1,
-                          input_tokens=input_tokens - self.budget_tracker.total_input_tokens,
-                          output_tokens=output_tokens - self.budget_tracker.total_output_tokens,
+                          input_tokens=input_tokens,
+                          output_tokens=output_tokens,
                           total_tokens=used,
                           cost_rmb=cost,
                           messages_count=len(self.messages))
@@ -164,12 +156,10 @@ class QueryEngine:
             from datetime import datetime, timezone
             task_id = _task_id.get("")
             if task_id:
-                delta_in = input_tokens - self.budget_tracker.total_input_tokens
-                delta_out = output_tokens - self.budget_tracker.total_output_tokens
                 _ts.add_tokens(task_id, {
-                    "prompt_tokens": delta_in,
-                    "completion_tokens": delta_out,
-                    "total_tokens": delta_in + delta_out,
+                    "prompt_tokens": input_tokens,
+                    "completion_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
                     "model_name": self._model_name or "",
                     "func_name": "run_prompt",
                 })
@@ -178,9 +168,9 @@ class QueryEngine:
                     "task_id": task_id,
                     "model_name": self._model_name or "",
                     "func_name": "run_prompt",
-                    "prompt_tokens": delta_in,
-                    "completion_tokens": delta_out,
-                    "total_tokens": delta_in + delta_out,
+                    "prompt_tokens": input_tokens,
+                    "completion_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
                     "cumulative_total": used,
                     "call_index": self.usage["calls"] - 1,
                     "cost_rmb": cost,
@@ -332,12 +322,30 @@ class QueryEngine:
                 pass
         self.messages.append(HumanMessage(content=str(prompt)))
 
-    def _track_usage(self, response):
-        """从 response.response_metadata 提取 token 用量。"""
-        meta = getattr(response, "response_metadata", None) or {}
-        token_usage = meta.get("token_usage") or meta.get("usage") or {}
-        self.usage["input_tokens"] += int(token_usage.get("prompt_tokens", 0))
-        self.usage["output_tokens"] += int(token_usage.get("completion_tokens", 0))
+    def _track_usage(self, response) -> tuple[int, int]:
+        """提取**本次调用**的 token 用量，返回 (input_tokens, output_tokens)。
+
+        兼容三种来源：
+        - LangChain AIMessage：``usage_metadata`` 或 ``response_metadata.token_usage``
+        - BaseAgent 返回的 dict：``usage_metadata`` / ``usage``
+        - 都没有：返回 (0, 0)，由调用方用 tiktoken 估算
+        """
+        if isinstance(response, dict):
+            usage = response.get("usage_metadata") or response.get("usage") or {}
+            return self._usage_pair(usage)
+
+        meta = getattr(response, "usage_metadata", None) or {}
+        if not meta:
+            meta = getattr(response, "response_metadata", None) or {}
+            meta = meta.get("token_usage") or meta.get("usage") or {}
+        return self._usage_pair(meta)
+
+    @staticmethod
+    def _usage_pair(usage: dict) -> tuple[int, int]:
+        """把 input/output 或 prompt/completion 命名的用量统一成二元组。"""
+        prompt = usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0
+        completion = usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0
+        return int(prompt), int(completion)
 
     def __len__(self):
         return len(self.messages)

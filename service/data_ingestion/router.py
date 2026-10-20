@@ -36,6 +36,7 @@ from service.data_ingestion.profiler import build_profile_from_df
 from service.data_ingestion.readers.archive_reader import ArchiveReader
 from service.data_ingestion.readers.document_reader import DocumentReader
 from service.data_ingestion.readers.llm_tabular_reader import LlmTabularReader
+from service.data_ingestion.readers.multimodal_reader import MultimodalReader
 from service.data_ingestion.readers.excel_reader import ExcelReader
 from service.data_ingestion.readers.file_reader import FileReader
 from service.data_ingestion.series.splitter import build_series_catalog
@@ -150,17 +151,62 @@ def _route(_session_dir: Path, source: DataSource) -> list[RawTable]:
         raise ValueError(f"未知的数据源类型: {kind}")
 
 
+def _mark_degraded(tables: list[RawTable], reason: str) -> list[RawTable]:
+    """给回退产出的表打降级标记，让上游 agent_logs 能看到。"""
+    for table in tables:
+        table.degraded = True
+        table.degraded_reason = reason
+    return tables
+
+
+def _is_degenerate(tables: list[RawTable]) -> bool:
+    """判断解析结果是否退化成纯文本（无真实表格结构）。
+
+    DocumentReader 对无表格的 PDF/图片会返回单列 content 表，
+    这种情况应交给多模态视觉模型重试。
+    """
+    if not tables:
+        return True
+    return all(
+        getattr(t.df, "shape", (0, 0))[1] <= 1 for t in tables if getattr(t, "df", None) is not None
+    )
+
+
 def _route_file(source: DataSource) -> list[RawTable]:
     """路由文件类型。根据扩展名选择 reader。"""
     path = source.path
     if not path:
         raise ValueError("file 类型数据源必须提供 path")
 
-    # 优先级: 专用格式 > 文档格式 > 通用格式
+    hint = str(source.options.get("vision_hint", "") or "")
+    vision_cfg = source.options.get("vision") or None
+
+    # 优先级: 专用格式 > 多模态 > 文档格式 > 通用格式
     if FileReader.can_handle(path):
         return FileReader.read(path, table_name=source.name)
     elif ExcelReader.can_handle(path):
         return ExcelReader.read(path, table_name=source.name)
+    elif MultimodalReader.is_image(path):
+        # 图片：视觉模型优先，失败回退 Unstructured OCR
+        try:
+            return MultimodalReader.read(
+                path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+            )
+        except Exception as e:
+            logger.warning("多模态识别失败，回退 OCR", path=path, error=str(e))
+            try:
+                tables = DocumentReader.read(path, table_name=source.name)
+            except Exception as ocr_error:
+                raise ValueError(
+                    f"图片解析失败：多模态识别不可用({type(e).__name__}: {e})，"
+                    f"OCR 回退同样失败({type(ocr_error).__name__}: {ocr_error})"
+                ) from ocr_error
+            if _is_degenerate(tables):
+                raise ValueError(
+                    f"图片解析失败：多模态识别未提取到表格({type(e).__name__}: {e})，"
+                    "OCR 回退也只得到纯文本"
+                ) from e
+            return _mark_degraded(tables, f"multimodal_failed: {e}")
     elif LlmTabularReader.can_handle(path):
         # 文档类文本（HTML/Markdown/TXT/日志）：优先 LLM 表格化，失败回退 DocumentReader
         try:
@@ -170,12 +216,19 @@ def _route_file(source: DataSource) -> list[RawTable]:
             tables = DocumentReader.read(path, table_name=source.name)
             # ★ 标记降级，让上游 plan_generator / agent_logs 看到
             reason = f"llm_tabular_failed: {e}"
-            for t in tables:
-                t.degraded = True
-                t.degraded_reason = reason
-            return tables
+            return _mark_degraded(tables, reason)
     elif DocumentReader.can_handle(path):
-        return DocumentReader.read(path, table_name=source.name)
+        tables = DocumentReader.read(path, table_name=source.name)
+        # PDF 文字层解析退化（只剩单列文本）时，用视觉模型兜底
+        if MultimodalReader.is_pdf(path) and _is_degenerate(tables):
+            try:
+                return MultimodalReader.read(
+                    path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                )
+            except Exception as e:
+                logger.warning("PDF 视觉兜底失败，保留文本解析结果", path=path, error=str(e))
+                return _mark_degraded(tables, f"multimodal_failed: {e}")
+        return tables
     elif ArchiveReader.can_handle(path):
         return ArchiveReader.read(path, table_name=source.name)
     else:
@@ -243,6 +296,9 @@ def _route_document(source: DataSource) -> list[RawTable]:
     """路由文档类型 (PDF/DOCX/图片)。"""
     if not source.path:
         raise ValueError("document 类型数据源必须提供 path")
+    # 图片走多模态（显式 document 入口同样受益）
+    if MultimodalReader.is_image(source.path):
+        return _route_file(source)
     strategy = source.options.get("strategy", "auto")
     return DocumentReader.read(source.path, table_name=source.name, strategy=strategy)
 
@@ -252,7 +308,22 @@ def _route_document(source: DataSource) -> list[RawTable]:
 # ------------------------------------------------------------------
 
 @trace(category="ingest")
-async def ingest_files(paths: list[str], names: list[str] | None = None) -> DataProfile:
+def build_file_options(hint: str = "", vision_cfg: dict | None = None) -> dict:
+    """构造 file 类型 DataSource 的 options（多模态提示 + 模型凭证）。"""
+    options: dict = {}
+    if hint:
+        options["vision_hint"] = hint
+    if vision_cfg:
+        options["vision"] = vision_cfg
+    return options
+
+
+async def ingest_files(
+    paths: list[str],
+    names: list[str] | None = None,
+    hint: str = "",
+    vision_cfg: dict | None = None,
+) -> DataProfile:
     """接入多个文件到同一个会话目录。
 
     所有文件的 series 汇总到一个会话（共享 manifest.json / 同一 datasets_dir），
@@ -261,6 +332,8 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
     Args:
         paths: 文件路径列表
         names: 对应的表名列表 (可选，默认从文件名推导)
+        hint: 用户分析意图（透传给多模态 reader，帮助选主表）
+        vision_cfg: 视觉模型凭证 {"base_url","api_key"}（透传给多模态 reader）
 
     Returns:
         主 DataProfile (related_tables 包含其余文件)
@@ -270,7 +343,11 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
 
     if len(paths) == 1:
         name = names[0] if names else None
-        return await ingest(DataSource(kind="file", path=paths[0], name=name))
+        return await ingest(
+            DataSource(
+                kind="file", path=paths[0], name=name, options=build_file_options(hint, vision_cfg)
+            )
+        )
 
     t0 = time.perf_counter()
     logger.info("开始接入 N 个文件", count=len(paths))
@@ -282,7 +359,9 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
         for i, path in enumerate(paths):
             t_file_start = time.perf_counter()
             name = names[i] if names else None
-            source = DataSource(kind="file", path=path, name=name)
+            source = DataSource(
+                kind="file", path=path, name=name, options=build_file_options(hint, vision_cfg)
+            )
             raws = await asyncio.to_thread(_route_file, source)
             t_file_end = time.perf_counter()
             logger.info(
@@ -313,14 +392,12 @@ async def ingest_files(paths: list[str], names: list[str] | None = None) -> Data
 
 
 async def ingest_file(path: str, name: str | None = None) -> DataProfile:
-    """便捷入口: 从文件路径自动检测类型并接入。"""
-    if ArchiveReader.can_handle(path):
-        kind = "archive"
-    elif DocumentReader.can_handle(path):
-        kind = "document"
-    else:
-        kind = "file"
+    """便捷入口: 从文件路径自动检测类型并接入。
 
+    统一走 kind="file"（``_route_file`` 已覆盖图片/PDF/文档/压缩包），
+    保证图片与 PDF 也能走到多模态 reader。
+    """
+    kind = "archive" if ArchiveReader.can_handle(path) else "file"
     return await ingest(DataSource(kind=kind, path=path, name=name))
 
 

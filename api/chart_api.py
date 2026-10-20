@@ -11,9 +11,12 @@ from pathlib import Path
 
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from Entity import GenerateChartWithPromptRequest, ErrorResponse
-from api.common import check_api_key, get_upload_dir, get_tasks, get_tasks_lock, get_executor, _run_service_main_in_executor, monitor_response
+from api.common import check_api_key, get_upload_dir, get_tasks, get_tasks_lock, get_executor, prune_tasks, _run_service_main_in_executor, monitor_response
+from service.observability import get_logger
 from service.runtime.conversation_store import create_conversation
 
+
+logger = get_logger(__name__)
 
 chart_bp = Blueprint("chart", __name__, url_prefix="/api")
 
@@ -24,6 +27,12 @@ def generate_chart_with_prompt():
     auth_error = check_api_key()
     if auth_error:
         return auth_error
+
+    # 顺手回收过期的终态任务（防任务表无限增长）
+    try:
+        prune_tasks()
+    except Exception as e:
+        logger.warning("task_prune_failed", error=str(e), error_type=type(e).__name__)
 
     try:
         # --- 文件上传 ---

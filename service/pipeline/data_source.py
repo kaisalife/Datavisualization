@@ -14,10 +14,12 @@ logger = get_logger(__name__)
 
 try:
     from service.data_ingestion import DataSource
+    from service.data_ingestion import build_file_options
     from service.data_ingestion import ingest
     from service.data_ingestion import ingest_files
 except ImportError:
     DataSource = None
+    build_file_options = None
     ingest = None
     ingest_files = None
 
@@ -41,10 +43,26 @@ async def ingest_data_source(model_, first_file_stem: str, agent_logs: list):
 
     try:
         if model_.file_paths:
+            # user_prompt 透传给多模态 reader：图片/PDF 抽取表格时据此选主表
+            vision_hint = (model_.user_prompt or "").strip()
+            # 模型凭证来自请求（前端 settings.json 下发），.env 仅作兜底
+            vision_cfg = {
+                "base_url": getattr(model_, "model_url", None) or "",
+                "api_key": getattr(model_, "model_api_key", None) or "",
+            }
+            if not any(vision_cfg.values()):
+                vision_cfg = None
             if len(model_.file_paths) > 1:
-                profile = await ingest_files(model_.file_paths)
+                profile = await ingest_files(
+                    model_.file_paths, hint=vision_hint, vision_cfg=vision_cfg
+                )
             else:
-                source = DataSource(kind="file", path=model_.file_paths[0], name=first_file_stem)
+                source = DataSource(
+                    kind="file",
+                    path=model_.file_paths[0],
+                    name=first_file_stem,
+                    options=build_file_options(vision_hint, vision_cfg),
+                )
                 profile = await ingest(source)
         elif model_.db_config:
             db_type = model_.db_config.get("type", "postgresql")

@@ -1,3 +1,4 @@
+import os
 import re
 import json
 
@@ -9,6 +10,44 @@ JSON_PATTERN = re.compile(r'```json\s*(.*?)\s*```', re.DOTALL)
 CODE_PATTERN = re.compile(r'```python\s*(.*?)\s*```', re.DOTALL)
 CODE_FALLBACK_PATTERN = re.compile(r'```\s*(.*?)\s*```', re.DOTALL)
 CHART_PATH_PATTERN = re.compile(r'chart_.*?\.html')
+
+
+def get_env_int(name: str, default: int) -> int:
+    """读取正整数环境变量，非法值回退默认。"""
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def get_llm_extra_headers() -> dict[str, str]:
+    """读取 ``LLM_EXTRA_HEADERS``（JSON 对象）并返回 OpenAI 请求头。
+
+    有些 OpenAI 兼容网关需要自定义请求头才能路由，例如 opencode zen 的
+    ``x-opencode-session``、OpenRouter 的 ``HTTP-Referer``。配置示例：
+
+        LLM_EXTRA_HEADERS={"x-opencode-session": "550e8400-e29b-41d4-a716-446655440000"}
+
+    Returns:
+        dict[str, str]: 请求头；未配置或格式非法时返回空字典（不阻断主流程）。
+    """
+    raw = (os.getenv("LLM_EXTRA_HEADERS") or "").strip()
+    if not raw:
+        return {}
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.warning("LLM_EXTRA_HEADERS 不是合法 JSON，已忽略", error=str(e))
+        return {}
+
+    if not isinstance(data, dict):
+        logger.warning("LLM_EXTRA_HEADERS 必须是 JSON 对象，已忽略")
+        return {}
+
+    return {str(k): str(v) for k, v in data.items() if str(k).strip()}
+
 
 
 def _find_balanced_json(text: str) -> str | None:

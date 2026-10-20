@@ -39,7 +39,17 @@ def _load_env_llm():
         raise RuntimeError(".env 未配置 BASE_URL/API_KEY/MODEL_NAME，无法 LLM 表格化")
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0)
+    from service.runtime.utils import get_env_int, get_llm_extra_headers
+
+    return ChatOpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        temperature=0,
+        max_tokens=get_env_int("LLM_TABULAR_MAX_TOKENS", 8192),
+        timeout=get_env_int("LLM_TABULAR_TIMEOUT", 90),
+        default_headers=get_llm_extra_headers() or None,
+    )
 
 
 def parse_tabular_json(content: str) -> dict | None:

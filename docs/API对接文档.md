@@ -416,10 +416,10 @@ class GenerateChartWithPromptResponse(BaseModel):
 | 图表查看 | ✅ 已对接 | `chart_url()` + `open_url()` |
 | 代码补全 | ✅ 已对接 | `complete_viz_code()` |
 | `config` 参数 | ✅ 已对接 | 图表配置 JSON（width/height/theme/color），后端已接线（修复02） |
-| 数据预览/特征 | ❌ 未对接 | `POST /api/data-profile`，返回 schema/语义角色/推荐模式（修复05/07） |
-| 历史对话 CRUD | ❌ 未对接 | `/api/conversations` 列表/详情/删除/改提示词 |
-| 取消任务 | ❌ 未对接 | `POST /api/task/<id>/cancel` |
-| WebSocket trace | ⚠️ 部分对接 | `/ws/task/<id>` 已用，`/ws/trace/<id>` 待对接 |
-| `db_config` 参数 | ⚠️ 部分对接 | 类型已定义，UI 未提供输入 |
-| WebView2 嵌入 | ⏳ 预留接口 | 当前用 `open_url()` 浏览器替代 |
-| 任务轮询 UI 更新 | ⏳ 待实现 | `on_generate` 中需添加轮询回调更新状态文本 |
+| 数据预览/特征 | ⚠️ 后端已支持 | `POST /api/data-profile`（支持表格/图片/PDF 抽表）；前端尚未接入口 |
+| 历史对话 CRUD | ✅ 已对接 | `/api/conversations` 列表/详情/删除/改提示词 |
+| 取消任务 | ✅ 已对接 | `POST /api/task/<id>/cancel`（`handlers.rs` 已接） |
+| WebSocket trace | ✅ 已对接 | `trace.js` 订阅 `/ws/trace/<id>`；`/ws/task/<id>` 用于任务通知 |
+| `db_config` 参数 | ✅ 已对接 | 数据库配置新增/修改/删除已持久化到 settings.json |
+| WebView2 嵌入 | ✅ 已实现 | 应用内 `cvIframe` 查看器；"新窗口打开"仍走系统浏览器 |
+| 任务轮询 UI 更新 | ✅ 已实现 | WebSocket 通知 + 轮询回退更新状态文本 |

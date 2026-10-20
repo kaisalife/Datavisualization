@@ -1,13 +1,18 @@
 """
 Flask 应用入口
 
-⚠️ 所有接口路由已按模块拆分到 `api/` 目录：
-- api/chart_api.py      POST /api/generate-chart-with-prompt  GET /api/chart/<chart_id>
-- api/task_api.py       GET /api/task/<task_id>
-- api/code_api.py       POST /api/complete-viz-code
-- api/common.py         共享依赖（_executor/_tasks 等）、API Key 校验
+所有接口路由按模块拆分到 `api/` 目录（蓝图注册见下方），
+常用端点：
+- POST /api/generate-chart-with-prompt   提交图表任务
+- GET  /api/task/<task_id>               查询任务状态（POST .../cancel 取消）
+- GET  /api/conversations                历史对话
+- POST /api/data-profile                 数据预览 / 多模态抽表
+- GET  /api/health  ·  GET /api/ready    部署探针（不鉴权）
+- api/common.py                          共享依赖注入（executor/tasks/dirs）与 API Key 校验
 """
+import atexit
 import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +30,22 @@ from service.runtime.conversation_store import init_db
 from service.runtime.constants import get_charts_dir
 from api.common import monitor_response
 
+
+def _force_utf8_stdio() -> None:
+    """把 stdout/stderr 切到 UTF-8。
+
+    Windows 下把服务输出重定向到文件/管道时，Python 默认按 GBK 编码；日志或
+    异常信息里一旦出现 emoji、生僻字就抛 UnicodeEncodeError，会把任务带崩
+    （例如 BaseAgent 里的 print("🚀 ...")）。必须在 configure_logging 之前调用。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+_force_utf8_stdio()
 load_dotenv()
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -51,6 +72,9 @@ _SERVICE_API_KEY = os.getenv("SERVICE_API_KEY", "")
 _executor = ThreadPoolExecutor(max_workers=int(os.getenv("TASK_MAX_WORKERS", "2")))
 _tasks = {}
 _tasks_lock = threading.Lock()
+
+# 进程退出时不再等待排队任务，避免服务停止被长任务拖住
+atexit.register(lambda: _executor.shutdown(wait=False, cancel_futures=True))
 
 
 # ========== 全局错误处理器 ==========
@@ -91,7 +115,7 @@ init_api_deps(
 init_db()
 
 # ========== 注册蓝图 ==========
-from api import chart_bp, task_bp, code_bp, data_bp
+from api import chart_bp, task_bp, code_bp, data_bp, health_bp
 from api.conversation_api import bp as conversation_bp
 from api.cleanup_api import bp as cleanup_bp
 app.register_blueprint(chart_bp)
@@ -100,6 +124,7 @@ app.register_blueprint(code_bp)
 app.register_blueprint(data_bp)
 app.register_blueprint(conversation_bp)
 app.register_blueprint(cleanup_bp)
+app.register_blueprint(health_bp)
 
 # ========== WebSocket 端点 ==========
 from api.common import register_ws_connection, unregister_ws_connection

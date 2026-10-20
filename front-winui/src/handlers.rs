@@ -269,7 +269,10 @@ impl MainModel {
             .await?
         {
             let mut found = Vec::new();
-            let exts = ["xlsx", "xls", "csv", "json", "pdf", "txt", "py"];
+            let exts = [
+                "xlsx", "xls", "csv", "json", "parquet", "pdf", "docx", "pptx", "txt", "md",
+                "html", "py", "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff",
+            ];
             if let Ok(entries) = std::fs::read_dir(&p) {
                 for entry in entries.flatten() {
                     if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
@@ -312,6 +315,8 @@ impl MainModel {
                 .title("选择数据文件")
                 .add_filter(("Excel 文件", "*.xlsx"))
                 .add_filter(("CSV 文件", "*.csv"))
+                .add_filter(("图片（表格识别）", "*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.tif;*.tiff"))
+                .add_filter(("PDF / 文档", "*.pdf;*.docx;*.doc;*.pptx;*.html;*.md;*.txt"))
                 .add_filter(("所有文件", "*.*")),
             AppMode::CodeCompletion => FileBox::new()
                 .title("选择 Python 文件")

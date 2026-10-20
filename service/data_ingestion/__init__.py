@@ -11,7 +11,7 @@
 """
 
 from service.data_ingestion.models import DataProfile, DataSource, RawTable
-from service.data_ingestion.router import ingest, ingest_files
+from service.data_ingestion.router import build_file_options, ingest, ingest_files
 from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "RawTable",
     "SemanticSeries",
     "SeriesCatalog",
+    "build_file_options",
     "ingest",
     "ingest_files",
 ]

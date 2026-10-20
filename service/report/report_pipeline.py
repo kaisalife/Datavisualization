@@ -684,17 +684,19 @@ def get_default_llm():
         # 尝试加载项目的 LLM 配置
         from agent.config import load_agent_config
         from langchain_openai import ChatOpenAI
-        
+        from service.runtime.utils import get_llm_extra_headers
+
         config = load_agent_config()
         base_url = config.get("base_url", "http://localhost:11434/v1")
         api_key = config.get("api_key", "ollama")
         model = config.get("model", "qwen2.5:7b")
-        
+
         return ChatOpenAI(
             base_url=base_url,
             api_key=api_key,
             model=model,
             temperature=0,
+            default_headers=get_llm_extra_headers() or None,
         )
     except Exception as e:
         # 如果配置加载失败，返回 None（会用降级文案）

@@ -5,6 +5,10 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.prompts import ChatPromptTemplate
 
 from service.monitoring import trace
+from service.observability import get_logger
+from service.runtime.utils import get_env_int, get_llm_extra_headers
+
+logger = get_logger(__name__)
 
 class BaseAgent(Runnable):
     def __init__(self,
@@ -28,7 +32,7 @@ class BaseAgent(Runnable):
     @trace(category="init")
     async def initialize(self) -> None:
         """Initialize MCP client and AI model"""
-        print(f"🚀 Initializing agent: {self.signature}")
+        logger.info("agent_init_start", signature=self.signature)
 
         # Validate OpenAI configuration
         if not self.model_key:
@@ -36,7 +40,7 @@ class BaseAgent(Runnable):
                 "❌ Model API key not provided. Please provide your model key."
             )
         if not self.model_url:
-            print("⚠️  model URL not set")
+            logger.warning("agent_model_url_missing", model=self.model_name)
 
         try:
             # Create MCP client
@@ -45,17 +49,16 @@ class BaseAgent(Runnable):
             # Get tools
             self.tools = await self.client.get_tools()
             if not self.tools:
-                print("⚠️  Warning: No MCP tools loaded. MCP services may not be running.")
-                print(f"   MCP configuration: {self.mcp_config}")
+                logger.warning("mcp_tools_empty", mcp_config=self.mcp_config)
             else:
-                print(f"✅ Loaded {len(self.tools)} MCP tools")
+                logger.info("mcp_tools_loaded", count=len(self.tools))
                 if self.verbose:
                     try:
                         tool_names = []
                         for t in self.tools:
                             name = getattr(t, "name", None) or getattr(t, "__name__", "<unknown>")
                             tool_names.append(name)
-                        print(f"🔧 Tools: {', '.join(tool_names)}")
+                        logger.info("mcp_tool_names", tools=tool_names)
                     except Exception:
                         pass
         except Exception as e:
@@ -66,15 +69,18 @@ class BaseAgent(Runnable):
             )
 
         try:
-            self.chat= ChatOpenAI(model_name=self.model_name,
-                                         base_url=self.model_url,
-                                        api_key=self.model_key,
-                                        timeout=120,
-                                        max_retries=3,
-                                        max_tokens=8192)
+            self.chat = ChatOpenAI(
+                model_name=self.model_name,
+                base_url=self.model_url,
+                api_key=self.model_key,
+                timeout=get_env_int("AGENT_TIMEOUT", 120),
+                max_retries=3,
+                max_tokens=get_env_int("AGENT_MAX_TOKENS", 8192),
+                default_headers=get_llm_extra_headers() or None,
+            )
         except Exception as e:
             raise RuntimeError(f"❌ Failed to initialize AI model: {e}")
-        print(f"✅ Agent {self.model_name} initialization completed")
+        logger.info("agent_init_done", model=self.model_name, signature=self.signature)
 
     def _track_usage(self, response) -> None:
         """提取 LLM 响应的 usage_metadata，累加并推送 token 事件到前端。"""

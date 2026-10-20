@@ -33,6 +33,10 @@ try:
 except ImportError:
     _OPENAI_AVAILABLE = False
 
+from service.observability import get_logger
+
+logger = get_logger(__name__)
+
 
 class LLMError(Exception):
     """LLM 调用基础异常。"""
@@ -158,10 +162,14 @@ def _get_max_attempts(query_source: str, default: int = 5) -> int:
 
 
 def _log_retry(retry_state: RetryCallState):
-    """重试时打印日志。"""
+    """重试时记录日志（不要 print：服务端 stdout 可能被重定向成 GBK）。"""
     exc = retry_state.outcome.exception() if retry_state.outcome else None
     attempt = retry_state.attempt_number
-    print(f"⚠️ LLM 调用重试 {attempt}: {type(exc).__name__ if exc else 'unknown'}")
+    logger.warning(
+        "llm_call_retry",
+        attempt=attempt,
+        error_type=type(exc).__name__ if exc else "unknown",
+    )
 
 
 def with_retry(func: Optional[Callable] = None, *,

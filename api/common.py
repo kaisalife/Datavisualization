@@ -14,7 +14,11 @@ from pathlib import Path
 
 from flask import request, jsonify, current_app
 from Entity import ErrorResponse
+from service.observability import get_logger as _get_struct_logger
 from service.runtime.conversation_store import update_conversation_status, complete_conversation
+
+
+_logger = _get_struct_logger("api.common")
 
 
 # WebSocket 连接池：task_id -> set of ws connections
@@ -167,6 +171,86 @@ def clear_cancel(task_id: str):
     """清除取消标志"""
     with _cancel_lock:
         _cancelled_tasks.discard(task_id)
+
+
+# 终态：不再变化的任务状态
+_TERMINAL_STATUSES = {"success", "failed", "cancelled"}
+
+
+def _env_int(name: str, default: int) -> int:
+    """读取非负整数环境变量，非法值回退默认。"""
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _task_timestamp(task: dict) -> float | None:
+    """解析 created_at（ISO 字符串）为 epoch 秒；解析失败返回 None。"""
+    raw = task.get("created_at")
+    if not raw:
+        return None
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(str(raw)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def prune_tasks(tasks=None, lock=None, retention_seconds=None, max_entries=None) -> int:
+    """清理已完成任务，防止服务长期运行时任务表无限增长。
+
+    只淘汰终态任务（success/failed/cancelled）：
+    1. created_at 早于 TASK_RETENTION_SECONDS（默认 3600 秒）
+    2. 总数超过 TASK_MAX_ENTRIES（默认 500）时，按 created_at 从旧到新淘汰
+
+    进行中的任务永不清理。清理同时会清掉对应的取消标志。
+
+    Args:
+        tasks: 任务字典，默认取 current_app 注入的
+        lock: 任务锁，默认取 current_app 注入的
+        retention_seconds: 保留秒数，None 时读 TASK_RETENTION_SECONDS
+        max_entries: 任务数上限，None 时读 TASK_MAX_ENTRIES
+
+    Returns:
+        被清理的任务数
+    """
+    tasks = get_tasks() if tasks is None else tasks
+    lock = get_tasks_lock() if lock is None else lock
+    retention = _env_int("TASK_RETENTION_SECONDS", 3600) if retention_seconds is None else retention_seconds
+    limit = _env_int("TASK_MAX_ENTRIES", 500) if max_entries is None else max_entries
+
+    now = time.time()
+    removed: list[str] = []
+
+    with lock:
+        for tid, task in tasks.items():
+            if task.get("status") not in _TERMINAL_STATUSES:
+                continue
+            ts = _task_timestamp(task)
+            if ts is not None and now - ts >= retention:
+                removed.append(tid)
+
+        overflow = (len(tasks) - len(removed)) - limit
+        if overflow > 0:
+            candidates = sorted(
+                (_task_timestamp(t) or 0.0, tid)
+                for tid, t in tasks.items()
+                if t.get("status") in _TERMINAL_STATUSES and tid not in removed
+            )
+            removed.extend(tid for _, tid in candidates[:overflow])
+
+        for tid in removed:
+            tasks.pop(tid, None)
+
+    for tid in removed:
+        clear_cancel(tid)
+
+    if removed:
+        _logger.info("tasks_pruned", count=len(removed))
+    return len(removed)
 
 
 def _run_service_main_in_executor(app, task_id, request_model, conversation_id=None):
