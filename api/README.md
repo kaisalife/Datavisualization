@@ -56,7 +56,7 @@ api/
 
 | 字段 | 必填 | 类型 | 说明 |
 |------|------|------|------|
-| `files` | 条件 | File[] | 上传的数据文件。CSV / Excel / JSON / Parquet / 文档 / **图片 / PDF** 都支持 |
+| `files` | 条件 | File[] | 上传的数据文件。CSV / Excel / JSON / Parquet / 文档 / **图片 / PDF** 都支持；docx/pptx/xlsx 的内嵌图片也会抽表 |
 | `db_config` | 条件 | JSON string | 数据库连接配置 |
 | `api_config` | 条件 | JSON string | 外部 API 数据源配置 |
 | `user_prompt` | 可选 | string | 可视化需求描述 |
@@ -69,6 +69,7 @@ api/
 | `viz_mode` | 可选 | string | `agent` / `auto`（默认，自主流水线）、`legacy` / `chart` / `scientific`（固定 plan 流水线） |
 
 > 图片 / PDF 会先经视觉模型抽成表格，再进入后续 series 拆分与图表生成。
+> Word / PPT / Excel 里的表格截图（内嵌图片）在文字层解析失败或退化时也会走视觉模型。
 > 视觉模型凭证优先用请求里的 `model_url` / `model_api_key`，其次
 > `VISION_BASE_URL` / `VISION_API_KEY`，最后 `BASE_URL` / `API_KEY`。
 
@@ -189,8 +190,8 @@ X-API-Key: <your_key>
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `files` | 是 | 一个或多个文件（表格 / 文档 / 图片 / PDF） |
-| `hint` | 否 | 用户分析意图；图片/PDF 抽表时用于选择主表 |
+| `files` | 是 | 一个或多个文件（表格 / 文档 / 图片 / PDF；docx/pptx/xlsx 的内嵌图片也会抽表） |
+| `hint` | 否 | 用户分析意图；图片/PDF/Office 内嵌图片抽表时用于选择主表 |
 | `model_url` / `model_api_key` | 否 | 视觉模型凭证（仅多模态抽表需要） |
 
 #### 响应
@@ -209,7 +210,8 @@ X-API-Key: <your_key>
 }
 ```
 
-图片 / PDF 走视觉模型时**会调用 LLM**；纯表格文件不调用。
+图片 / PDF / Office 内嵌图片走视觉模型时**会调用 LLM**；纯表格文件不调用。
+Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列文本时才把内嵌图片交给视觉模型。
 
 ---
 
@@ -316,6 +318,8 @@ X-API-Key: <your_key>
 | `VISION_MIN_IMAGE_BYTES` | `4096` | Office 内嵌图片体积下限（字节） |
 | `VISION_MIN_IMAGE_SIDE` | `160` | Office 内嵌图片最短边下限（像素） |
 | `VISION_MAX_OFFICE_IMAGES` | `8` | docx/pptx/xlsx 单文件最多抽几张图 |
+| `VISION_MULTI_TABLE` | `0` | `1` = 一图多表（每张表一条 series） |
+| `VISION_MAX_TABLES` | `5` | 一图多表模式下每图最多保留张数 |
 | `FLASK_HOST` | `0.0.0.0` | 监听地址 |
 | `FLASK_PORT` | `5000` | 监听端口 |
 | `FLASK_DEBUG` | `false` | 是否开启 debug |

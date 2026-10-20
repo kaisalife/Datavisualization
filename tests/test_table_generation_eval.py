@@ -228,6 +228,47 @@ def _render_multitable(path: Path) -> None:
     img.save(path)
 
 
+def _render_two_independent_tables(path: Path) -> None:
+    """左右两张列结构完全不同的表（销售 / 库存），检验一图多表。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = ImageFont.truetype(_FONT, 20)
+    title_font = ImageFont.truetype(_FONT, 22)
+    col_w, row_h, pad = 170, 50, 12
+
+    def draw_table(draw, x0, y0, headers, rows):
+        for i in range(len(rows) + 2):
+            draw.line(
+                [(x0, y0 + i * row_h), (x0 + col_w * len(headers), y0 + i * row_h)],
+                fill=(50, 50, 50),
+                width=2,
+            )
+        for j in range(len(headers) + 1):
+            draw.line(
+                [(x0 + j * col_w, y0), (x0 + j * col_w, y0 + row_h * (len(rows) + 1))],
+                fill=(50, 50, 50),
+                width=2,
+            )
+        for j, head in enumerate(headers):
+            draw.text((x0 + j * col_w + 12, y0 + 13), head, fill="black", font=font)
+        for i, row in enumerate(rows, start=1):
+            for j, cell in enumerate(row):
+                draw.text((x0 + j * col_w + 12, y0 + i * row_h + 13), cell, fill="black", font=font)
+
+    width = col_w * 2 * 2 + pad * 3
+    height = row_h * 4 + 90
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+
+    left_x, right_x, top = pad, col_w * 2 + pad * 2, 52
+    draw.text((left_x + 20, 14), "表 1：2024 年区域销售", fill="black", font=title_font)
+    draw.text((right_x + 50, 14), "表 2：库存", fill="black", font=title_font)
+    draw_table(draw, left_x, top, ["城市", "2024 年"], [["北京", "1500"], ["上海", "1400"], ["广州", "1250"]])
+    draw_table(draw, right_x, top, ["产品", "库存"], [["A", "30"], ["B", "45"], ["C", "12"]])
+
+    img.save(path)
+
+
 # ---------------------------------------------------------------- 用例
 
 
@@ -439,3 +480,40 @@ def test_docx_embedded_table_image(test_llm, tmp_path: Path):
     }
     assert _report("DOCX-内嵌表格截图", checks) == 1.0
 
+
+def test_image_multi_table_extraction(test_llm, tmp_path: Path):
+    """一图两表：multi_table=True 时两张都应抽出，且不互相污染。"""
+    from service.data_ingestion.readers.multimodal_reader import MultimodalReader
+
+    png = tmp_path / "two_independent_tables.png"
+    _render_two_independent_tables(png)
+
+    tables = MultimodalReader.read(str(png), llm=test_llm, multi_table=True)
+    for t in tables:
+        print(f"\n[{t.name}] columns={list(t.df.columns)} rows={len(t.df)}")
+        print(t.df.to_string(index=False))
+
+    sales = next(
+        (t.df for t in tables if any("城市" in _norm(c) for c in t.df.columns)), None
+    )
+    stock = next(
+        (t.df for t in tables if any("产品" in _norm(c) for c in t.df.columns)), None
+    )
+
+    beijing = _row_values(sales, "北京", "城市") if sales is not None else {}
+    values_2024 = [_cell_number(v) for k, v in beijing.items() if "2024" in _norm(k)]
+    a_row = _row_values(stock, "A", "产品") if stock is not None else {}
+    a_stock = (
+        _cell_number(a_row.get("库存", a_row.get(_key_column(stock, "库存"))))
+        if a_row
+        else None
+    )
+
+    checks = {
+        "至少2张表": len(tables) >= 2,
+        "销售表3行": sales is not None and len(sales) == 3,
+        "北京2024=1500": any(v == 1500 for v in values_2024 if v is not None),
+        "库存表3行": stock is not None and len(stock) == 3,
+        "库存A=30": a_stock == 30,
+    }
+    assert _report("图片-一图多表", checks) == 1.0

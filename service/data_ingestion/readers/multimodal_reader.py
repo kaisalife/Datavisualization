@@ -37,6 +37,7 @@ _MIME_FALLBACK = {
 }
 
 _MAX_ROWS = 200
+_DEFAULT_MAX_TABLES = 5
 _DEFAULT_MAX_SIDE = 2000
 _DEFAULT_MAX_PDF_PAGES = 5
 _PNG_EXTS = {".png", ".bmp", ".gif", ".tif", ".tiff"}
@@ -229,12 +230,53 @@ def _pdf_page_data_urls(path: Path, max_pages: int) -> list[str]:
     return urls
 
 
-def extract_table_from_image(llm, image_url: str, hint: str = "") -> pd.DataFrame | None:
-    """调用视觉模型抽取单张图片中的表格，返回 DataFrame 或 None。"""
-    from prompts.multimodal_tabularize_prompt import build_multimodal_tabularize_messages
-    from service.data_ingestion.readers.llm_tabular_reader import parse_tabular_json
+def _parse_tables_payload(text: str) -> list[dict]:
+    """解析视觉模型输出：兼容单表 ``{columns,rows}`` 与多表 ``{tables:[...]}``。"""
+    from service.data_ingestion.readers.llm_tabular_reader import extract_json_from_response
 
-    messages = build_multimodal_tabularize_messages(image_url, hint=hint)
+    data = extract_json_from_response(text)
+    if not isinstance(data, dict):
+        return []
+
+    nested = data.get("tables")
+    if isinstance(nested, list):
+        items = [
+            item
+            for item in nested
+            if isinstance(item, dict) and item.get("columns") and item.get("rows")
+        ]
+        if items:
+            return items
+
+    if data.get("columns") and data.get("rows"):
+        return [data]
+    return []
+
+
+def extract_tables_from_image(
+    llm,
+    image_url: str,
+    hint: str = "",
+    multi_table: bool = False,
+    max_tables: int | None = None,
+) -> list[pd.DataFrame]:
+    """调用视觉模型抽取单张图片中的表格。
+
+    Args:
+        llm: 视觉模型（须有 ``invoke(messages)``）
+        image_url: data URL
+        hint: 用户分析意图
+        multi_table: True 时要求逐张输出所有表；False 只取一张主表
+        max_tables: 最多保留几张（默认 ``VISION_MAX_TABLES`` 或 5）
+
+    Returns:
+        DataFrame 列表（无表时为空列表）
+    """
+    from prompts.multimodal_tabularize_prompt import build_multimodal_tabularize_messages
+
+    messages = build_multimodal_tabularize_messages(
+        image_url, hint=hint, multi_table=multi_table
+    )
     resp = llm.invoke(messages)
     content = resp["content"] if isinstance(resp, dict) else getattr(resp, "content", resp)
     text = _content_to_text(content).strip()
@@ -252,8 +294,22 @@ def extract_table_from_image(llm, image_url: str, hint: str = "") -> pd.DataFram
             )
         raise RuntimeError("视觉模型返回空内容")
 
-    data = parse_tabular_json(text)
-    return _to_dataframe(data) if data else None
+    limit = max_tables or get_env_int("VISION_MAX_TABLES", _DEFAULT_MAX_TABLES)
+    if not multi_table:
+        # 单表模式即使模型返回了 tables 数组，也只保留第一张
+        limit = 1
+    dataframes: list[pd.DataFrame] = []
+    for item in _parse_tables_payload(text)[:limit]:
+        df = _to_dataframe(item)
+        if df is not None and not df.empty:
+            dataframes.append(df)
+    return dataframes
+
+
+def extract_table_from_image(llm, image_url: str, hint: str = "") -> pd.DataFrame | None:
+    """单表模式：返回图片中的第一张表（兼容只取主表的调用方）。"""
+    dataframes = extract_tables_from_image(llm, image_url, hint, multi_table=False)
+    return dataframes[0] if dataframes else None
 
 
 class MultimodalReader:
@@ -279,6 +335,7 @@ class MultimodalReader:
         hint: str = "",
         max_pages: int | None = None,
         vision_cfg: dict | None = None,
+        multi_table: bool | None = None,
     ) -> list[RawTable]:
         """把图片 / PDF 转成结构化表格。
 
@@ -289,9 +346,11 @@ class MultimodalReader:
             hint: 用户分析意图，帮助模型从多张表中选主表
             max_pages: PDF 最多解析页数（默认 VISION_MAX_PDF_PAGES 或 5）
             vision_cfg: 请求带来的模型配置 {"base_url","api_key"}
+            multi_table: True 时抽出图中所有表（一图多条 RawTable）；
+                None 时读 ``VISION_MULTI_TABLE``（默认 0，只取主表）
 
         Returns:
-            list[RawTable]（图片 1 条；PDF 每页有表格则各 1 条）
+            list[RawTable]（图片 1 条；PDF 每页有表格则各 1 条；多表模式一图可多条）
 
         Raises:
             FileNotFoundError: 文件不存在
@@ -303,6 +362,8 @@ class MultimodalReader:
             raise FileNotFoundError(f"文件不存在: {path}")
 
         llm = llm or _load_env_llm(vision_cfg)
+        if multi_table is None:
+            multi_table = bool(get_env_int("VISION_MULTI_TABLE", 0))
 
         if MultimodalReader.is_pdf(p):
             pages = _pdf_page_data_urls(p, max_pages or get_env_int("VISION_MAX_PDF_PAGES", _DEFAULT_MAX_PDF_PAGES))
@@ -312,28 +373,45 @@ class MultimodalReader:
         base_name = safe_table_name(table_name or p.name)
         tables: list[RawTable] = []
         errors: list[str] = []
+        multi_page = len(pages) > 1
+        is_pdf = MultimodalReader.is_pdf(p)
 
         for index, image_url in enumerate(pages, start=1):
             try:
-                df = extract_table_from_image(llm, image_url, hint)
+                dataframes = extract_tables_from_image(
+                    llm, image_url, hint, multi_table=multi_table
+                )
             except Exception as e:  # 单页失败不拖垮整个文件
                 errors.append(f"page {index}: {type(e).__name__}: {e}")
                 logger.warning("多模态单页解析失败", path=str(p), page=index, error=str(e), error_type=type(e).__name__)
                 continue
 
-            if df is None or df.empty:
+            if not dataframes:
                 logger.info("多模态未在该页提取到表格", path=str(p), page=index)
                 continue
 
-            if len(df) > _MAX_ROWS:
-                df = df.head(_MAX_ROWS)
+            for table_index, df in enumerate(dataframes, start=1):
+                if len(df) > _MAX_ROWS:
+                    df = df.head(_MAX_ROWS)
 
-            multi = len(pages) > 1
-            name = f"{base_name}_p{index}" if multi else base_name
-            source_path = f"{path}#page{index}" if MultimodalReader.is_pdf(p) else path
-            tables.append(
-                RawTable(name=name, df=df, source_kind="document", source_path=source_path)
-            )
+                suffix = ""
+                if multi_page:
+                    suffix += f"_p{index}"
+                if len(dataframes) > 1:
+                    suffix += f"_t{table_index}"
+
+                source_path = f"{path}#page{index}" if is_pdf else path
+                if len(dataframes) > 1:
+                    source_path += f"/table{table_index}"
+
+                tables.append(
+                    RawTable(
+                        name=f"{base_name}{suffix}",
+                        df=df,
+                        source_kind="document",
+                        source_path=source_path,
+                    )
+                )
 
         if not tables:
             detail = f"；失败页: {'; '.join(errors[:3])}" if errors else ""

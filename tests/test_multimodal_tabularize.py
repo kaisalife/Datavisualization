@@ -113,6 +113,85 @@ class TestMultimodalReader:
         assert not MultimodalReader.can_handle("a.csv")
 
 
+class TestMultimodalMultiTable:
+    """一图多表：VISION_MULTI_TABLE / multi_table=True 时逐张输出。"""
+
+    @staticmethod
+    def _two_tables() -> str:
+        return json.dumps(
+            {
+                "tables": [
+                    {
+                        "title": "区域销售",
+                        "columns": ["城市", "2024 年"],
+                        "rows": [{"城市": "北京", "2024 年": 1500}],
+                    },
+                    {
+                        "title": "库存",
+                        "columns": ["产品", "库存"],
+                        "rows": [{"产品": "A", "库存": 30}],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    def test_multi_table_payload_returns_all_tables(self, png: Path):
+        tables = MultimodalReader.read(
+            str(png), llm=_FakeLLM(self._two_tables()), multi_table=True
+        )
+
+        assert [t.name for t in tables] == ["table_t1", "table_t2"]
+        assert list(tables[0].df.columns) == ["城市", "2024 年"]
+        assert list(tables[1].df.columns) == ["产品", "库存"]
+        assert tables[0].source_path.endswith("/table1")
+
+    def test_default_mode_keeps_only_first_table(self, png: Path):
+        tables = MultimodalReader.read(str(png), llm=_FakeLLM(self._two_tables()))
+
+        assert len(tables) == 1
+        assert tables[0].name == "table"
+        assert list(tables[0].df.columns) == ["城市", "2024 年"]
+
+    def test_env_flag_enables_multi_table(self, png: Path, monkeypatch):
+        monkeypatch.setenv("VISION_MULTI_TABLE", "1")
+
+        tables = MultimodalReader.read(str(png), llm=_FakeLLM(self._two_tables()))
+
+        assert [t.name for t in tables] == ["table_t1", "table_t2"]
+
+    def test_multi_mode_prompt_requests_tables_array(self, png: Path):
+        llm = _FakeLLM(self._two_tables())
+
+        MultimodalReader.read(str(png), llm=llm, multi_table=True)
+
+        system_prompt = llm.last_messages[0].content
+        assert '"tables"' in system_prompt
+        assert "最多输出 5 张表" in system_prompt
+
+    def test_multi_mode_tolerates_single_table_schema(self, png: Path):
+        content = _payload(["城市"], [{"城市": "北京"}])
+
+        tables = MultimodalReader.read(str(png), llm=_FakeLLM(content), multi_table=True)
+
+        assert len(tables) == 1
+        assert tables[0].name == "table"
+
+    def test_table_count_is_capped(self, png: Path, monkeypatch):
+        monkeypatch.setenv("VISION_MAX_TABLES", "2")
+        content = json.dumps(
+            {
+                "tables": [
+                    {"columns": ["c"], "rows": [{"c": i}]} for i in range(3)
+                ]
+            }
+        )
+
+        tables = MultimodalReader.read(str(png), llm=_FakeLLM(content), multi_table=True)
+
+        assert len(tables) == 2
+
+
 class TestRouterMultimodal:
     def test_image_routes_to_multimodal(self, png: Path, monkeypatch):
         calls = {}
