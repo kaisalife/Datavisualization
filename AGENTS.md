@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 250 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 253 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -247,8 +247,8 @@ $env:BACKEND_URL="http://localhost:5000"
 连接串用 SQLAlchemy `URL.create` 转义账号密码里的 `@/:?#`；未显式指定表名时自动列举的表也用**真实表名**
 （不会退化成 `data`）。回归见 `tests/test_database_reader.py`。
 
-前端设置里的数据库连接可填「表名」（逗号/分号分隔，Rust 侧序列化成 JSON 数组）或「自定义 SQL」
-（优先于表名），留空则读取全部表；这两个字段同时作用于预览和图表任务。
+前端设置里的数据库连接可填「表名」（逗号/分号分隔，Rust 侧序列化成 JSON 数组，后端也兼容字符串
+并统一归一化）或「自定义 SQL」（优先于表名），留空则读取全部表；这两个字段同时作用于预览和图表任务。
 
 ## 表头清洗
 

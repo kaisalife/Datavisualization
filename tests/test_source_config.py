@@ -10,6 +10,7 @@ import json
 import pytest
 
 from api.source_config import (
+    normalize_db_tables,
     normalize_db_type,
     parse_json_object,
     validate_source_configs,
@@ -35,6 +36,37 @@ def test_normalize_db_type_trims_and_aliases():
     assert normalize_db_type({"type": "SQLite"}) == "sqlite"
     assert normalize_db_type({}) == "postgresql"
     assert normalize_db_type(None) is None
+
+
+def test_normalize_db_tables_accepts_string_and_list():
+    cfg = {"tables": " sales, users；orders\nlogs "}
+    normalize_db_tables(cfg)
+    assert cfg["tables"] == ["sales", "users", "orders", "logs"]
+
+    cfg = {"tables": [" sales ", "", "users", 3]}
+    normalize_db_tables(cfg)
+    assert cfg["tables"] == ["sales", "users", "3"]
+
+
+def test_normalize_db_tables_drops_empty_or_invalid():
+    cfg = {"tables": " , ; "}
+    normalize_db_tables(cfg)
+    assert "tables" not in cfg
+
+    cfg = {"tables": {"a": 1}}
+    normalize_db_tables(cfg)
+    assert "tables" not in cfg
+
+    cfg = {}
+    normalize_db_tables(cfg)
+    assert "tables" not in cfg
+    normalize_db_tables(None)
+
+
+def test_validate_source_configs_normalizes_tables_in_place():
+    cfg = {"type": "sqlite", "database": "x.db", "tables": "a, b"}
+    assert validate_source_configs(cfg, None) == "sqlite"
+    assert cfg["tables"] == ["a", "b"]
 
 
 def test_validate_source_configs_accepts_valid():
