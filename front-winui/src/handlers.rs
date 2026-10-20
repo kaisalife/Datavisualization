@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use winio::prelude::*;
 use crate::api;
 use crate::bridge::BridgeMessage;
@@ -43,6 +44,7 @@ impl MainModel {
             "exportChart" => self.handle_export_chart(msg.data, sender).await,
             "previewData" => self.handle_preview_data(msg.data, sender),
             "downloadDataExport" => self.handle_download_data_export(msg.data, sender),
+            "saveClipboardImage" => self.handle_save_clipboard_image(msg.data, sender),
             _ => {
                 println!("[Bridge] 未知 action: {}", msg.action);
                 Ok(false)
@@ -309,6 +311,16 @@ impl MainModel {
         Ok(true)
     }
 
+    /// 剪贴板图片落盘后加入 JS 文件列表
+    pub(crate) fn handle_clipboard_image_saved(
+        &mut self,
+        path: String,
+    ) -> std::result::Result<bool, Error> {
+        self.js_add_clipboard_file(&path);
+        self.js_show_toast("已从剪贴板添加图片", "success");
+        Ok(true)
+    }
+
     /// 面板收到数据预览后转发给 JS 渲染
     pub(crate) fn handle_data_profile_loaded(
         &mut self,
@@ -426,6 +438,90 @@ impl MainModel {
                 }
             });
         });
+        Ok(true)
+    }
+
+    /// 把剪贴板里的图片（data URL）落到临时目录，再交给 JS 加入文件列表
+    fn handle_save_clipboard_image(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let data_url = data
+            .get("dataUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !data_url.starts_with("data:image/") {
+            self.js_show_toast("剪贴板内容不是图片", "error");
+            return Ok(true);
+        }
+        let (meta, encoded) = match data_url.split_once(',') {
+            Some(parts) => parts,
+            None => {
+                self.js_show_toast("剪贴板图片格式无效", "error");
+                return Ok(true);
+            }
+        };
+        let mime = meta.trim_start_matches("data:").split(';').next().unwrap_or("");
+        let ext = match mime {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            "image/bmp" => "bmp",
+            "image/gif" => "gif",
+            "image/tiff" => "tiff",
+            "image/avif" => "avif",
+            "image/heic" => "heic",
+            "image/heif" => "heif",
+            _ => {
+                self.js_show_toast("不支持的剪贴板图片格式", "error");
+                return Ok(true);
+            }
+        };
+        let encoded: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
+        // base64 编码后约 4/3 倍；限制解码前长度，避免桥接 16MB 上限被打满
+        if encoded.len() > 12 * 1024 * 1024 {
+            self.js_show_toast("剪贴板图片过大（上限 8MB）", "error");
+            return Ok(true);
+        }
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&encoded) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.js_show_toast("剪贴板图片解码失败", "error");
+                return Ok(true);
+            }
+        };
+        if bytes.is_empty() {
+            self.js_show_toast("剪贴板图片为空", "error");
+            return Ok(true);
+        }
+        if bytes.len() > 8 * 1024 * 1024 {
+            self.js_show_toast("剪贴板图片过大（上限 8MB）", "error");
+            return Ok(true);
+        }
+
+        let dir = std::env::temp_dir().join("datavisual_clipboard");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.js_show_toast(&format!("创建临时目录失败: {}", e), "error");
+            return Ok(true);
+        }
+        let name = format!(
+            "clip_{}.{}",
+            chrono::Local::now().format("%Y%m%d_%H%M%S%9f"),
+            ext
+        );
+        let path = dir.join(name);
+        match std::fs::write(&path, bytes) {
+            Ok(_) => sender.post(MainMessage::ClipboardImageSaved(
+                path.to_string_lossy().to_string(),
+            )),
+            Err(e) => {
+                sender.post(MainMessage::ShowToast {
+                    message: format!("保存剪贴板图片失败: {}", e),
+                    toast_type: "error".to_string(),
+                });
+            }
+        }
         Ok(true)
     }
 

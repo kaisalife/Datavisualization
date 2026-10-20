@@ -130,6 +130,7 @@ impl Component for MainModel {
             MainMessage::ConversationDeleted => self.handle_conversation_deleted(sender),
             MainMessage::CodeCompleted(code) => self.handle_code_completed(code),
             MainMessage::DataProfileLoaded(profile) => self.handle_data_profile_loaded(profile),
+            MainMessage::ClipboardImageSaved(path) => self.handle_clipboard_image_saved(path),
         }
     }
 

@@ -22,4 +22,5 @@ pub enum MainMessage {
     ConversationDeleted,
     CodeCompleted(String),
     DataProfileLoaded(serde_json::Value),
+    ClipboardImageSaved(String),
 }

@@ -180,6 +180,14 @@ impl MainModel {
         ));
     }
 
+    /// 把剪贴板图片加入前端文件列表
+    pub(crate) fn js_add_clipboard_file(&mut self, path: &str) {
+        self.js(&format!(
+            "window.app.addClipboardFile('{}')",
+            Self::js_escape(path)
+        ));
+    }
+
     /// 设置状态栏文本
     pub(crate) fn js_set_status(&mut self, text: &str) {
         self.js(&format!(

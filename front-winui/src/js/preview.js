@@ -147,3 +147,43 @@ function showDataPreview(payload) {
 }
 
 window.app.showDataPreview = showDataPreview;
+
+window.app.addClipboardFile = function (path) {
+  if (!path) return;
+  if (state.files.indexOf(path) < 0) state.files.push(path);
+  renderFileChips();
+};
+
+// Ctrl+V 粘贴截图：有文字时优先走正常文本粘贴（Excel/网页复制单元格）
+document.addEventListener('paste', function (e) {
+  const clipboard = e.clipboardData;
+  if (!clipboard || !clipboard.items) return;
+  const items = Array.from(clipboard.items);
+  const imageItem = items.find(it => it.kind === 'file' && it.type && it.type.indexOf('image/') === 0);
+  if (!imageItem) return;
+
+  const hasText = items.some(it => it.kind === 'string' && (it.type === 'text/plain' || it.type === 'text/html'));
+  const active = document.activeElement;
+  const typing = active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT');
+  if (typing && hasText) return;
+
+  const file = imageItem.getAsFile();
+  if (!file) return;
+  e.preventDefault();
+  if (state.isGenerating) {
+    window.app.showToast('正在生成图表，请完成后再添加图片', 'info');
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    window.app.showToast('图片超过 8MB，请压缩后再粘贴', 'error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function () {
+    sendToRust('saveClipboardImage', { dataUrl: String(reader.result || '') });
+  };
+  reader.onerror = function () {
+    window.app.showToast('读取剪贴板图片失败', 'error');
+  };
+  reader.readAsDataURL(file);
+});
