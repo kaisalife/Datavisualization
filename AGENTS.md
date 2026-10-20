@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 132 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 142 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -220,6 +220,12 @@ $env:BACKEND_URL="http://localhost:5000"
 `_is_id_label()` 按英文整词匹配，`width` 不会因为含 `id` 被当成编号。
 
 回归：`tests/test_numeric_coercion.py`、`tests/test_series_split.py`。
+
+## CSV 编码
+
+`FileReader` 读 CSV/TSV 前先探测编码（`_detect_encoding`）：UTF-8 BOM / UTF-16 BOM（含无 BOM
+按奇偶字节判断端序）> UTF-8 > GB18030（兼容 GBK/GB2312）。Windows 上 Excel 默认导出的 GBK CSV
+不再报 `UnicodeDecodeError`；分隔符嗅探复用同一编码。回归 `tests/test_csv_encoding.py`。
 
 ## 预览数据导出
 
