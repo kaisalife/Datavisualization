@@ -21,6 +21,7 @@ import pandas as pd
 from flask import Blueprint, Response, jsonify, request
 from Entity import ErrorResponse
 from api.common import check_api_key, get_upload_dir, monitor_response
+from api.source_config import parse_json_object, validate_source_configs
 
 from service.data_ingestion.series.models import SeriesCatalog
 from service.data_ingestion.series_manager import get_datasets_root
@@ -29,20 +30,6 @@ data_bp = Blueprint("data", __name__, url_prefix="/api")
 
 _SESSION_ID_RE = re.compile(r"^ds_[0-9a-f]{12}$")
 _UNSAFE_NAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
-
-
-def _form_json(name: str) -> dict | None:
-    """读取表单里的 JSON 对象字段；空值返回 None，格式错误抛 ValueError。"""
-    raw = (request.form.get(name) or "").strip()
-    if not raw:
-        return None
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"{name} 不是合法 JSON: {e.msg}") from e
-    if not isinstance(value, dict):
-        raise ValueError(f"{name} 必须是 JSON 对象")
-    return value
 
 
 @data_bp.route("/data-profile", methods=["POST"])
@@ -66,32 +53,11 @@ def data_profile():
         return auth_error
 
     try:
-        db_config = _form_json("db_config")
-        api_config = _form_json("api_config")
+        db_config = parse_json_object(request.form.get("db_config"), "db_config")
+        api_config = parse_json_object(request.form.get("api_config"), "api_config")
+        db_type = validate_source_configs(db_config, api_config)
     except ValueError as e:
         return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
-
-    db_type = None
-    if db_config is not None:
-        db_type = str(db_config.get("type") or "postgresql").strip().lower()
-        if db_type == "postgres":
-            db_type = "postgresql"
-        if db_type not in {"postgresql", "mysql", "sqlite"}:
-            return jsonify(
-                ErrorResponse(detail=f"不支持的数据库类型: {db_type}").model_dump()
-            ), 400
-        if db_type == "sqlite" and not (
-            db_config.get("database") or db_config.get("path")
-        ):
-            return jsonify(
-                ErrorResponse(detail="sqlite 必须提供 database/path").model_dump()
-            ), 400
-    if api_config is not None and not (
-        str(api_config.get("url") or "").strip() or api_config.get("api_type")
-    ):
-        return jsonify(
-            ErrorResponse(detail="api_config 必须提供 url 或 api_type").model_dump()
-        ), 400
 
     hint = (request.form.get("hint") or "").strip()
     multi_table = (request.form.get("multi_table") or "").strip().lower() in {

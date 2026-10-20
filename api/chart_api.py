@@ -12,6 +12,7 @@ from pathlib import Path
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from Entity import GenerateChartWithPromptRequest, ErrorResponse
 from api.common import check_api_key, get_upload_dir, get_tasks, get_tasks_lock, get_executor, prune_tasks, _run_service_main_in_executor, monitor_response
+from api.source_config import parse_json_object, validate_source_configs
 from service.observability import get_logger
 from service.runtime.conversation_store import create_conversation
 
@@ -65,23 +66,13 @@ def generate_chart_with_prompt():
             "on",
         }
 
-        # --- 数据库源（JSON string）---
-        db_config = None
-        db_config_str = request.form.get("db_config")
-        if db_config_str:
-            try:
-                db_config = json.loads(db_config_str)
-            except Exception as e:
-                return jsonify(ErrorResponse(detail=f"db_config JSON 解析失败: {e}").model_dump()), 400
-
-        # --- API 数据源（JSON string）---
-        api_config = None
-        api_config_str = request.form.get("api_config")
-        if api_config_str:
-            try:
-                api_config = json.loads(api_config_str)
-            except Exception as e:
-                return jsonify(ErrorResponse(detail=f"api_config JSON 解析失败: {e}").model_dump()), 400
+        # --- 数据库源 / API 源（JSON string，共用早失败校验）---
+        try:
+            db_config = parse_json_object(request.form.get("db_config"), "db_config")
+            api_config = parse_json_object(request.form.get("api_config"), "api_config")
+            validate_source_configs(db_config, api_config)
+        except ValueError as e:
+            return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
 
         # 必须至少提供一种数据源
         if not saved_paths and not db_config and not api_config:

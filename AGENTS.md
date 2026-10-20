@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 232 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 238 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -147,7 +147,7 @@ $env:BACKEND_URL="http://localhost:5000"
 | 路径 | 职责 |
 |---|---|
 | `app.py` | Flask 入口：全局错误处理、蓝图注册、WebSocket `/ws/task/<id>`、`/ws/trace/<id>` |
-| `api/*_api.py` | 各领域接口；共享依赖经 `api/common.py:init_app()` 注入，用 `current_app.config[...]` 取，不要跨模块 import 全局 |
+| `api/*_api.py` | 各领域接口；共享依赖经 `api/common.py:init_app()` 注入，用 `current_app.config[...]` 取，不要跨模块 import 全局。`db_config`/`api_config` 表单解析与校验统一走 `api/source_config.py` |
 | `service/pipeline/` | 编排：`service_main`、`agent_pipeline`、`plan_*`、`chart_generator/debugger/executor/sandbox` |
 | `service/data_ingestion/` | `router` → `readers/`（Excel/CSV/DB/文档/LLM 表格化/**多模态**）→ `profiler` → `series/`（切分 + parquet） |
 | `service/runtime/` | 配置、异常、常量、会话存储、`runtime_cleanup` |

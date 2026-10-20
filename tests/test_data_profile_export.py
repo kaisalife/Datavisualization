@@ -8,28 +8,10 @@ import zipfile
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
 from service.data_ingestion.series.splitter import write_manifest
 from service.data_ingestion.series_manager import allocate_session_dir
-
-
-@pytest.fixture
-def client(monkeypatch, tmp_path: Path):
-    """真实 app + 隔离的 uploads/datasets 目录。"""
-    import app as app_module
-
-    uploads = tmp_path / "uploads"
-    uploads.mkdir()
-    monkeypatch.setenv("TEMP_UPLOAD_DIR", str(uploads))
-    monkeypatch.setenv("TEMP_DATASETS_DIR", str(tmp_path / "datasets"))
-    old_upload = app_module.app.config["_UPLOAD_DIR"]
-    app_module.app.config["_UPLOAD_DIR"] = uploads
-    try:
-        yield app_module.app.test_client()
-    finally:
-        app_module.app.config["_UPLOAD_DIR"] = old_upload
 
 
 def _make_session() -> tuple[str, Path]:

@@ -58,8 +58,8 @@ api/
 | 字段 | 必填 | 类型 | 说明 |
 |------|------|------|------|
 | `files` | 条件 | File[] | 上传的数据文件。CSV / Excel / JSON / Parquet / 文档 / **图片 / PDF** 都支持；docx/pptx/xlsx 的内嵌图片也会抽表 |
-| `db_config` | 条件 | JSON string | 数据库连接配置 |
-| `api_config` | 条件 | JSON string | 外部 API 数据源配置 |
+| `db_config` | 条件 | JSON string | 数据库连接配置（非法 JSON / 不支持的 `type` / sqlite 缺 `database` 直接 `400`） |
+| `api_config` | 条件 | JSON string | 外部 API 数据源配置（缺 `url` 且无 `api_type` 直接 `400`） |
 | `user_prompt` | 可选 | string | 可视化需求描述 |
 | `config` | 可选 | string | 图表配置 JSON（宽高 / 主题 / 配色） |
 | `model_url` | 可选 | string | LLM 端点地址（默认走 `.env`） |
@@ -185,17 +185,22 @@ X-API-Key: <your_key>
 
 ### POST /api/data-profile
 
-独立于图表生成的数据预览接口：上传文件后直接返回 schema、前 10 行预览、
-列语义角色与推荐图表模式。
+独立于图表生成的数据预览接口：上传文件（或给数据库 / API 配置）后直接返回 schema、
+前 10 行预览、列语义角色与推荐图表模式。
 
 #### 表单字段
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `files` | 是 | 一个或多个文件（表格 / 文档 / 图片 / PDF；docx/pptx/xlsx 的内嵌图片也会抽表） |
+| `files` | 条件 | 一个或多个文件（表格 / 文档 / 图片 / PDF；docx/pptx/xlsx 的内嵌图片也会抽表） |
+| `db_config` | 条件 | 数据库连接配置 JSON（`type` / `host` / `port` / `user` / `password` / `database`，可带 `tables` / `query`） |
+| `api_config` | 条件 | 外部 API 配置 JSON（`url` 或 `api_type`，可带 `method` / `headers` / `params` / `body`） |
 | `hint` | 否 | 用户分析意图；图片/PDF/Office 内嵌图片抽表时用于选择主表 |
 | `model_url` / `model_api_key` | 否 | 视觉模型凭证（仅多模态抽表需要） |
 | `multi_table` | 否 | `1` / `true` 时抽出图片、PDF 页面、Office 内嵌图片中的所有表 |
+
+> `files` / `db_config` / `api_config` 至少提供一种，同时存在时优先 `files`。
+> 非法 JSON、未知数据库类型、缺 `database`（sqlite）/ `url`（API）会直接返回 `400`。
 
 #### 响应
 
@@ -234,6 +239,7 @@ X-API-Key: <your_key>
 图片 / PDF / Office 内嵌图片走视觉模型时**会调用 LLM**；纯表格文件不调用。
 Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列文本时才把内嵌图片交给视觉模型。
 图片格式：png / jpg / jpeg / webp / gif / bmp / tif / tiff / avif / heic / heif（HEIC 需 `pillow-heif`）。
+`file_count` 是上传文件数；数据库 / API 源为 `0`。
 
 预览产生的 series 会话目录会保留（超过 24 小时后由下一次 `allocate_session_dir` 清理），
 便于前端下载：

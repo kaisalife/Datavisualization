@@ -70,3 +70,20 @@ def test_llm(test_llm_config):
         max_retries=1,
         default_headers=headers or None,
     )
+
+
+@pytest.fixture
+def client(monkeypatch, tmp_path: Path):
+    """真实 Flask app + 隔离的 uploads/datasets 目录，供接口层测试使用。"""
+    import app as app_module
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    monkeypatch.setenv("TEMP_UPLOAD_DIR", str(uploads))
+    monkeypatch.setenv("TEMP_DATASETS_DIR", str(tmp_path / "datasets"))
+    old_upload = app_module.app.config["_UPLOAD_DIR"]
+    app_module.app.config["_UPLOAD_DIR"] = uploads
+    try:
+        yield app_module.app.test_client()
+    finally:
+        app_module.app.config["_UPLOAD_DIR"] = old_upload
