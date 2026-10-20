@@ -120,7 +120,7 @@ def load_tables(
         return tables or None
     except Exception as e:
         logger.warning(
-            "视觉缓存读取失败，按未命中处理",
+            "抽表缓存读取失败，按未命中处理",
             key=key,
             error=str(e),
             error_type=type(e).__name__,
@@ -164,7 +164,7 @@ def save_tables(
         return True
     except Exception as e:
         logger.warning(
-            "视觉缓存写入失败",
+            "抽表缓存写入失败",
             key=key,
             error=str(e),
             error_type=type(e).__name__,
