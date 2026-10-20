@@ -43,6 +43,14 @@ def test_sqlite_accepts_uppercase_type_from_frontend(tmp_path):
     assert tables[0].df["销售额"].tolist() == [1200, 1500]
 
 
+def test_sqlite_auto_discovery_keeps_real_table_name(tmp_path):
+    db_path = _make_sqlite(tmp_path, "sales")
+
+    tables = DatabaseReader.read({"database": str(db_path)}, "SQLite")
+
+    assert [table.name for table in tables] == ["sales"]
+
+
 def test_sqlite_table_name_with_double_quote(tmp_path):
     db_path = _make_sqlite(tmp_path, 'sales"2024')
 

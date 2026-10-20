@@ -161,6 +161,8 @@ impl ApiClient {
         file_paths: &[String],
         hint: &str,
         multi_table: bool,
+        db_config: Option<&str>,
+        api_config: Option<&str>,
         model_url: Option<&str>,
         model_api_key: Option<&str>,
     ) -> Result<serde_json::Value> {
@@ -172,6 +174,12 @@ impl ApiClient {
         }
         if multi_table {
             form = form.text("multi_table", "1");
+        }
+        if let Some(db_config) = db_config {
+            form = form.text("db_config", db_config.to_string());
+        }
+        if let Some(api_config) = api_config {
+            form = form.text("api_config", api_config.to_string());
         }
         if let Some(model_url) = model_url {
             form = form.text("model_url", model_url.to_string());

@@ -1,20 +1,28 @@
 // ===== 数据预览与导出 =====
 
-// 输入框旁的「预览数据」入口：只对本地文件生效（数据库/API 需要走图表任务）
+// 输入框旁的「预览数据」入口：支持本地文件、数据库与 API 数据源
 function requestDataPreview() {
   if (state.isGenerating) {
     window.app.showToast('正在生成图表，请完成后再预览数据', 'info');
     return;
   }
   const files = state.files.filter(f => typeof f === 'string');
-  if (!files.length) {
-    window.app.showToast('请先选择要预览的数据文件', 'info');
+  const dbConfig = state.selectedDb || null;
+  const apiConfig = state.apiConfig || null;
+  if (!files.length && !dbConfig && !apiConfig) {
+    window.app.showToast('请先选择数据文件、数据库或 API 数据源', 'info');
     return;
   }
   const hintInput = document.getElementById('prompt-input');
   const hint = hintInput ? hintInput.value.trim() : '';
   window.app.showToast('正在解析数据，图片/PDF 可能需要几十秒...', 'info');
-  sendToRust('previewData', { files: files, hint: hint, multiTable: !!state.multiTable });
+  sendToRust('previewData', {
+    files: files,
+    hint: hint,
+    multiTable: !!state.multiTable,
+    dbConfig: dbConfig,
+    apiConfig: apiConfig,
+  });
 }
 
 function closeDataPreview() {

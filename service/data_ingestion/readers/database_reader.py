@@ -143,7 +143,8 @@ class DatabaseReader:
 
             raw_tables = []
             for i, tbl in enumerate(target_tables):
-                name = safe_table_name(table_name if i == 0 else tbl)
+                # 未显式指定表名时，第一张表也应使用真实表名，而不是兜底的 "data"
+                name = safe_table_name(table_name if i == 0 and table_name else tbl)
                 quoted = _quote_identifier(tbl, db_type)
                 df = pd.read_sql(f"SELECT * FROM {quoted}", conn)
                 raw_tables.append(RawTable(

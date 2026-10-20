@@ -259,8 +259,22 @@ impl MainModel {
                     .collect()
             })
             .unwrap_or_default();
-        if files.is_empty() {
-            self.js_show_toast("请先选择要预览的数据文件", "info");
+        let db_config = match data.get("dbConfig").and_then(|v| v.as_str()) {
+            Some(name) => match self.settings.db_configs.iter().find(|db| db.name == name) {
+                Some(db) => Some(db.to_json_string()),
+                None => {
+                    self.js_show_toast("未找到该数据库配置", "error");
+                    return Ok(true);
+                }
+            },
+            None => None,
+        };
+        let api_config = data
+            .get("apiConfig")
+            .filter(|v| !v.is_null())
+            .map(|v| v.to_string());
+        if files.is_empty() && db_config.is_none() && api_config.is_none() {
+            self.js_show_toast("请先选择数据文件、数据库或 API 数据源", "info");
             return Ok(true);
         }
 
@@ -290,6 +304,8 @@ impl MainModel {
                         &files,
                         &hint,
                         multi_table,
+                        db_config.as_deref(),
+                        api_config.as_deref(),
                         model_url.as_deref(),
                         model_api_key.as_deref(),
                     )

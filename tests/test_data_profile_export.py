@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import json
+import sqlite3
 import zipfile
 from pathlib import Path
 
@@ -276,3 +278,144 @@ def test_multiple_files_export_second_raw_table(client, tmp_path: Path):
     assert export.status_code == 200
     text = export.data.decode("utf-8-sig")
     assert "上海,200" in text
+
+
+def test_data_profile_from_sqlite_config(client, tmp_path: Path):
+    db_path = tmp_path / "profile.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute('CREATE TABLE "sales" (城市 TEXT, 销售额 INTEGER)')
+    conn.executemany(
+        'INSERT INTO "sales" VALUES (?, ?)', [("北京", 1200), ("上海", 1500)]
+    )
+    conn.commit()
+    conn.close()
+
+    # 前端 DbConfig 发的是大写 "SQLite"，这里顺带覆盖类型归一化
+    resp = client.post(
+        "/api/data-profile",
+        data={
+            "db_config": json.dumps(
+                {"type": "SQLite", "database": str(db_path)}, ensure_ascii=False
+            )
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    profile = body["profile"]
+    assert body["file_count"] == 0
+    assert profile["source_kind"] == "database"
+    assert profile["row_count"] == 2
+    assert profile["session_id"].startswith("ds_")
+    assert profile["exports"]
+    assert [table["name"] for table in profile["raw_tables"]] == ["sales"]
+
+
+def test_data_profile_rejects_invalid_source_json(client):
+    resp = client.post("/api/data-profile", data={"db_config": "{not-json"})
+
+    assert resp.status_code == 400
+    assert "db_config 不是合法 JSON" in resp.get_json()["detail"]
+
+
+def test_data_profile_requires_any_source(client):
+    resp = client.post("/api/data-profile", data={})
+
+    assert resp.status_code == 400
+    assert "files、db_config 或 api_config" in resp.get_json()["detail"]
+
+
+def test_data_profile_rejects_unsupported_db_type(client):
+    resp = client.post(
+        "/api/data-profile",
+        data={"db_config": json.dumps({"type": "Oracle", "database": "x"})},
+    )
+
+    assert resp.status_code == 400
+    assert "不支持的数据库类型: oracle" in resp.get_json()["detail"]
+
+
+def test_data_profile_rejects_sqlite_without_path(client):
+    resp = client.post(
+        "/api/data-profile",
+        data={"db_config": json.dumps({"type": "SQLite"})},
+    )
+
+    assert resp.status_code == 400
+    assert "database/path" in resp.get_json()["detail"]
+
+
+def test_data_profile_rejects_api_config_without_target(client):
+    resp = client.post(
+        "/api/data-profile",
+        data={"api_config": json.dumps({"method": "GET"})},
+    )
+
+    assert resp.status_code == 400
+    assert "url 或 api_type" in resp.get_json()["detail"]
+
+
+def test_data_profile_from_api_config(client, monkeypatch):
+    """API 数据源预览：不打网络，只验证表单解析与 DataSource 组装。"""
+    from service.data_ingestion.models import RawTable
+    from service.data_ingestion.readers import api_reader
+
+    captured = {}
+
+    def fake_read(
+        api_type=None,
+        url=None,
+        params=None,
+        table_name=None,
+        method="GET",
+        headers=None,
+        body=None,
+    ):
+        captured.update(
+            {
+                "api_type": api_type,
+                "url": url,
+                "params": params,
+                "table_name": table_name,
+                "method": method,
+                "headers": headers,
+                "body": body,
+            }
+        )
+        return [
+            RawTable(
+                name="api_data",
+                df=pd.DataFrame({"城市": ["北京"], "销售额": [100]}),
+                source_kind="api",
+                source_path=url or "",
+            )
+        ]
+
+    monkeypatch.setattr(api_reader.ApiReader, "read", staticmethod(fake_read))
+
+    resp = client.post(
+        "/api/data-profile",
+        data={
+            "api_config": json.dumps(
+                {
+                    "url": "https://example.com/data.json",
+                    "method": "GET",
+                    "headers": {"X-Test": "1"},
+                    "params": {"page": 1},
+                }
+            )
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    profile = body["profile"]
+    assert body["file_count"] == 0
+    assert profile["source_kind"] == "api"
+    assert profile["row_count"] == 1
+    assert profile["session_id"].startswith("ds_")
+    assert profile["exports"]
+    assert captured["url"] == "https://example.com/data.json"
+    assert captured["params"] == {"page": 1}
+    assert captured["headers"] == {"X-Test": "1"}
+    assert captured["method"] == "GET"

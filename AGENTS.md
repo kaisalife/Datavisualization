@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 224 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 232 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -112,9 +112,10 @@ $env:BACKEND_URL="http://localhost:5000"
    （必要时加 `api/types.rs`）。
 6. **配置优先级**：`AppSettings::load()` 先读 `front-winui/settings.json`（已 gitignore），不存在才用
    `BACKEND_URL` / `API_KEY` / `MODEL_*` 环境变量。改环境变量前先删或改 settings.json，否则不生效。
-7. **数据预览面板**：输入框旁「预览」按钮把当前文件经 `previewData` 交给 Rust，Rust 同步调
-   `POST /api/data-profile`（图片/PDF 会走视觉模型，可能耗时几十秒），再把返回 JSON 交给
-   `js/preview.js` 的 `window.app.showDataPreview` 渲染。下载按钮走 `downloadDataExport`，Rust 只接受
+7. **数据预览面板**：输入框旁「预览」按钮把当前文件/数据库/API 配置经 `previewData` 交给 Rust，Rust 同步调
+   `POST /api/data-profile`（图片/PDF 会走视觉模型，可能耗时几十秒；数据库/API 用 `db_config` /
+   `api_config` JSON 表单字段），再把返回 JSON 交给 `js/preview.js` 的 `window.app.showDataPreview` 渲染。
+   下载按钮走 `downloadDataExport`，Rust 只接受
    `/api/data-profile/export` 开头的相对地址，落盘到 `%USERPROFILE%\Downloads`（同名自动加序号）。
    预览面板的原始表依赖 `/api/data-profile` 的 `save_raw=True`；图表任务本身仍不保存原始表。
 8. **剪贴板截图**：`js/preview.js` 监听 `paste`，把图片读成 data URL 经 `saveClipboardImage` 交给 Rust；
@@ -238,7 +239,8 @@ $env:BACKEND_URL="http://localhost:5000"
 
 `DatabaseReader` 入口统一把 `db_type` 去空格、转小写，并把 `postgres` 归一到 `postgresql`：前端设置里
 默认发的是 `MySQL` / `PostgreSQL`，不能直接拿原值去比较。表名按方言引用（MySQL 反引号，其余双引号），
-连接串用 SQLAlchemy `URL.create` 转义账号密码里的 `@/:?#`。回归见 `tests/test_database_reader.py`。
+连接串用 SQLAlchemy `URL.create` 转义账号密码里的 `@/:?#`；未显式指定表名时自动列举的表也用**真实表名**
+（不会退化成 `data`）。回归见 `tests/test_database_reader.py`。
 
 ## 表头清洗
 

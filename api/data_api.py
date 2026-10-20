@@ -31,6 +31,20 @@ _SESSION_ID_RE = re.compile(r"^ds_[0-9a-f]{12}$")
 _UNSAFE_NAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 
 
+def _form_json(name: str) -> dict | None:
+    """读取表单里的 JSON 对象字段；空值返回 None，格式错误抛 ValueError。"""
+    raw = (request.form.get(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{name} 不是合法 JSON: {e.msg}") from e
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} 必须是 JSON 对象")
+    return value
+
+
 @data_bp.route("/data-profile", methods=["POST"])
 @monitor_response("data_api:profile")
 def data_profile():
@@ -41,6 +55,7 @@ def data_profile():
     图片 / PDF 会经视觉模型抽表（这一步会调用 LLM）。
 
     请求: multipart files（一个或多个数据文件，CSV/Excel/JSON/Parquet/图片/PDF）
+          或 db_config / api_config（JSON 字符串，二选一；与 files 同时存在时优先 files）
           hint（可选）：用户分析意图，帮助多模态抽表选主表
           multi_table（可选）：1/true 时抽出图片、PDF 页面、Office 内嵌图片里的所有表
           model_url / model_api_key（可选）：多模态抽表用的模型凭证
@@ -49,6 +64,34 @@ def data_profile():
     auth_error = check_api_key()
     if auth_error:
         return auth_error
+
+    try:
+        db_config = _form_json("db_config")
+        api_config = _form_json("api_config")
+    except ValueError as e:
+        return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
+
+    db_type = None
+    if db_config is not None:
+        db_type = str(db_config.get("type") or "postgresql").strip().lower()
+        if db_type == "postgres":
+            db_type = "postgresql"
+        if db_type not in {"postgresql", "mysql", "sqlite"}:
+            return jsonify(
+                ErrorResponse(detail=f"不支持的数据库类型: {db_type}").model_dump()
+            ), 400
+        if db_type == "sqlite" and not (
+            db_config.get("database") or db_config.get("path")
+        ):
+            return jsonify(
+                ErrorResponse(detail="sqlite 必须提供 database/path").model_dump()
+            ), 400
+    if api_config is not None and not (
+        str(api_config.get("url") or "").strip() or api_config.get("api_type")
+    ):
+        return jsonify(
+            ErrorResponse(detail="api_config 必须提供 url 或 api_type").model_dump()
+        ), 400
 
     hint = (request.form.get("hint") or "").strip()
     multi_table = (request.form.get("multi_table") or "").strip().lower() in {
@@ -78,31 +121,65 @@ def data_profile():
         saved_paths.append(str(save_path))
         saved_names.append(Path(original_name).stem)
 
-    if not saved_paths:
-        return jsonify(ErrorResponse(detail="必须提供 files").model_dump()), 400
+    if not saved_paths and db_config is None and api_config is None:
+        return jsonify(
+            ErrorResponse(detail="必须提供 files、db_config 或 api_config").model_dump()
+        ), 400
 
     profile = None
     try:
         from service.data_ingestion import DataSource, build_file_options, ingest, ingest_files
 
         async def _run():
-            if len(saved_paths) > 1:
-                return await ingest_files(
-                    saved_paths,
-                    names=saved_names,
-                    hint=hint,
-                    vision_cfg=vision_cfg,
-                    multi_table=multi_table,
-                    save_raw=True,
+            if saved_paths:
+                if len(saved_paths) > 1:
+                    return await ingest_files(
+                        saved_paths,
+                        names=saved_names,
+                        hint=hint,
+                        vision_cfg=vision_cfg,
+                        multi_table=multi_table,
+                        save_raw=True,
+                    )
+                options = build_file_options(hint, vision_cfg, multi_table)
+                options["save_raw"] = True
+                return await ingest(
+                    DataSource(
+                        kind="file",
+                        path=saved_paths[0],
+                        name=saved_names[0],
+                        options=options,
+                    )
                 )
-            options = build_file_options(hint, vision_cfg, multi_table)
-            options["save_raw"] = True
+
+            if db_config is not None:
+                return await ingest(
+                    DataSource(
+                        kind="database",
+                        db_type=db_type,
+                        db_config=db_config,
+                        name=db_config.get("name") or None,
+                        options={
+                            "tables": db_config.get("tables"),
+                            "query": db_config.get("query"),
+                            "save_raw": True,
+                        },
+                    )
+                )
+
             return await ingest(
                 DataSource(
-                    kind="file",
-                    path=saved_paths[0],
-                    name=saved_names[0],
-                    options=options,
+                    kind="api",
+                    path=api_config.get("url") or api_config.get("api_type"),
+                    name=api_config.get("name"),
+                    api_params=api_config.get("params"),
+                    options={
+                        "method": api_config.get("method", "GET"),
+                        "headers": api_config.get("headers"),
+                        "body": api_config.get("body"),
+                        "api_type": api_config.get("api_type"),
+                        "save_raw": True,
+                    },
                 )
             )
 
