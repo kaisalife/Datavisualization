@@ -531,6 +531,8 @@ class MultimodalReader:
                 hint=hint,
                 multi_table=multi_table,
                 max_pages=effective_max_pages,
+                max_tables=get_env_int("VISION_MAX_TABLES", _DEFAULT_MAX_TABLES),
+                max_side=get_env_int("VISION_MAX_IMAGE_SIDE", _DEFAULT_MAX_SIDE),
                 signature=vision_cache.model_signature(llm),
             )
             cached = vision_cache.load_tables(cache_key_value, p)

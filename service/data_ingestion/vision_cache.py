@@ -28,7 +28,7 @@ from service.runtime.constants import get_vision_cache_dir
 
 logger = get_logger(__name__)
 
-_CACHE_VERSION = "v1"
+_CACHE_VERSION = "v2"
 _META_NAME = "meta.json"
 _DEFAULT_TTL_DAYS = 14
 
@@ -66,6 +66,8 @@ def cache_key(
     hint: str = "",
     multi_table: bool = False,
     max_pages: int = 5,
+    max_tables: int = 5,
+    max_side: int = 2000,
     signature: str = "",
 ) -> str:
     """构造内容寻址缓存键。"""
@@ -78,6 +80,8 @@ def cache_key(
         (hint or "").strip(),
         "1" if multi_table else "0",
         str(int(max_pages)),
+        str(int(max_tables)),
+        str(int(max_side)),
         str(signature or ""),
     ]
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]

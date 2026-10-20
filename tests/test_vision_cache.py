@@ -40,6 +40,8 @@ def test_cache_key_depends_on_content_and_options(tmp_path: Path):
     assert base != cache_key(source, base_name="other", hint="画柱状图", multi_table=False)
     assert base != cache_key(source, base_name="sales", hint="画柱状图", multi_table=True)
     assert base != cache_key(other, base_name="sales", hint="画柱状图", multi_table=False)
+    assert base != cache_key(source, base_name="sales", hint="画柱状图", multi_table=False, max_tables=1)
+    assert base != cache_key(source, base_name="sales", hint="画柱状图", multi_table=False, max_side=1000)
 
 
 def _tables(source: Path) -> list[RawTable]:
