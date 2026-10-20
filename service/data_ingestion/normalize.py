@@ -65,6 +65,33 @@ def _looks_like_identifier(column) -> bool:
     return any(t in _IDENTIFIER_EN for t in tokens)
 
 
+def _normalize_separators(text: str) -> str | None:
+    """统一千分位 / 欧式小数逗号。
+
+    - ``1,200`` / ``1,234,567`` -> 千分位
+    - ``1,5`` / ``12,50`` -> 小数逗号
+    - ``1.234,56`` -> 1234.56
+    - 无法确定时返回 None（整列保持原样，避免误转）
+    """
+    if "," not in text:
+        return text
+    if "." in text:
+        if text.rfind(",") > text.rfind("."):
+            return text.replace(".", "").replace(",", ".")
+        return text.replace(",", "")
+
+    sign = ""
+    if text[:1] in "+-":
+        sign, text = text[0], text[1:]
+    parts = text.split(",")
+    if len(parts) >= 2 and all(part.isdigit() for part in parts):
+        if all(len(part) == 3 for part in parts[1:]):
+            return sign + "".join(parts)
+        if len(parts) == 2 and 1 <= len(parts[1]) <= 2:
+            return f"{sign}{parts[0]}.{parts[1]}"
+    return None
+
+
 def _parse_number(value):
     """尝试把一个单元格解析成 int / float / NaN。
 
@@ -99,17 +126,17 @@ def _parse_number(value):
     if text.endswith("%"):
         text = text[:-1].strip()
 
-    # 千分位；同时兼容 "1.234,56" 这种欧式写法
-    if "," in text and "." in text and text.rfind(",") > text.rfind("."):
-        text = text.replace(".", "").replace(",", ".")
-    else:
-        text = text.replace(",", "")
+    # 先去掉空白（含 NBSP/窄空格），再处理千分位/小数逗号
     text = (
         text.replace(" ", "")
         .replace("\u00a0", "")
         .replace("\u2009", "")
         .replace("\u202f", "")
     )
+    normalized = _normalize_separators(text)
+    if normalized is None:
+        return _FAIL
+    text = normalized
 
     if not _NUMBER_RE.fullmatch(text):
         return _FAIL

@@ -50,6 +50,16 @@ def test_delimiter_detection_uses_detected_encoding(tmp_path: Path):
     assert _detect_delimiter(str(path), ",") == ";"
 
 
+def test_delimiter_ignores_commas_inside_quotes(tmp_path: Path):
+    path = tmp_path / "quoted.csv"
+    path.write_text(
+        '城市;"说明,含逗号";销售额\n北京;"a,b";1200\n',
+        encoding="utf-8",
+    )
+
+    assert _detect_delimiter(str(path), ",") == ";"
+
+
 def test_file_reader_reads_gbk_csv(tmp_path: Path):
     path = tmp_path / "sales.csv"
     path.write_bytes(_SAMPLE.encode("gbk"))
@@ -86,3 +96,18 @@ async def test_ingest_gbk_csv(tmp_path: Path, monkeypatch):
     assert [col["name"] for col in profile.schema] == ["城市", "销售额"]
     assert profile.preview[0]["城市"] == "北京"
     assert profile.preview[0]["销售额"] == 1200
+
+
+async def test_ingest_semicolon_csv_with_decimal_comma(tmp_path: Path, monkeypatch):
+    """分号分隔 + 引号内小数逗号：不能把 "12,5" 当千分位或拆错列。"""
+    from service.data_ingestion import DataSource, ingest
+
+    monkeypatch.setenv("TEMP_DATASETS_DIR", str(tmp_path / "datasets"))
+    path = tmp_path / "growth.csv"
+    path.write_text('城市;增长率\n北京;"12,5"\n上海;"13,0"\n', encoding="utf-8")
+
+    profile = await ingest(DataSource(kind="file", path=str(path), name="growth"))
+
+    assert [col["name"] for col in profile.schema] == ["城市", "增长率"]
+    assert profile.preview[0]["增长率"] == 12.5
+

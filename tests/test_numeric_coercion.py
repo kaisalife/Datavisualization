@@ -91,6 +91,28 @@ def test_fullwidth_currency_spaces_and_european_format():
     assert out["d"].tolist() == [1234.56, 2345.67]
 
 
+def test_decimal_comma_vs_thousands_separator():
+    df = pd.DataFrame(
+        {
+            "一位小数": ["1,5", "2,5"],
+            "两位小数": ["12,50", "13,75"],
+            "千分位": ["1,200", "2,300"],
+            "多级千分位": ["1,200,000", "2,300,000"],
+            "歧义": ["1,2,3", "4,5,6"],
+        }
+    )
+
+    out = coerce_numeric_columns(df)
+
+    assert out["一位小数"].tolist() == [1.5, 2.5]
+    assert out["两位小数"].tolist() == [12.5, 13.75]
+    assert out["千分位"].tolist() == [1200, 2300]
+    assert out["多级千分位"].tolist() == [1200000, 2300000]
+    # 无法判断是千分位还是小数，整列保持原样
+    assert out["歧义"].tolist() == ["1,2,3", "4,5,6"]
+
+
+
 def test_long_digits_without_separator_stay_text():
     df = pd.DataFrame({"序号": ["123456789012", "123456789013"]})
 

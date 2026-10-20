@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 150 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 153 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -211,6 +211,8 @@ $env:BACKEND_URL="http://localhost:5000"
 
 - 整列都是 `1,200` / `12.5%` / `(1,200)` / `¥1,200` / `1.234,56` / 全角数字时转成数值；
   **任何一个值解析失败就整列保留原样**，不做部分转换；
+- 逗号按「3 位分组 = 千分位、1–2 位 = 欧式小数逗号」判断：`1,200` → 1200，`1,5` → 1.5，
+  `1,2,3` 这种无法判断的整列保持原样；
 - 列名像编号（`编号`/`order_id`/`phone`…）不转；`00123`、无分隔符的 12 位以上长数字保留字符串；
 - 带单位（`1,200 万元`）不转，避免丢失量纲；
 - 空值占位符（`—`/`暂无`/`N/A`）在其余值都是数字时变成 NaN。
@@ -236,7 +238,8 @@ $env:BACKEND_URL="http://localhost:5000"
 
 `FileReader` 读 CSV/TSV 前先探测编码（`_detect_encoding`）：UTF-8 BOM / UTF-16 BOM（含无 BOM
 按奇偶字节判断端序）> UTF-8 > GB18030（兼容 GBK/GB2312）。Windows 上 Excel 默认导出的 GBK CSV
-不再报 `UnicodeDecodeError`；分隔符嗅探复用同一编码。回归 `tests/test_csv_encoding.py`。
+不再报 `UnicodeDecodeError`；分隔符嗅探复用同一编码，并只统计**引号外**的分隔符
+（`"说明,含逗号"` 不会把逗号误判成列分隔符）。回归 `tests/test_csv_encoding.py`。
 
 ## 预览数据导出
 

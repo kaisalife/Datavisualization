@@ -60,6 +60,24 @@ def _detect_encoding(path: str) -> str:
     return "utf-8"
 
 
+def _count_unquoted(line: str, delimiter: str) -> int:
+    """统计一行中不在双引号内的分隔符数量（支持 "" 转义）。"""
+    count = 0
+    in_quotes = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == '"':
+            if in_quotes and index + 1 < len(line) and line[index + 1] == '"':
+                index += 2
+                continue
+            in_quotes = not in_quotes
+        elif char == delimiter and not in_quotes:
+            count += 1
+        index += 1
+    return count
+
+
 def _detect_delimiter(path: str, default: str, encoding: str | None = None) -> str:
     """按扩展名/首行内容嗅探分隔符（兼容无规范分隔符的未清洗 CSV）。"""
     try:
@@ -75,15 +93,23 @@ def _detect_delimiter(path: str, default: str, encoding: str | None = None) -> s
         return default
     if not lines:
         return default
-    # 若扩展名给了明确分隔符且首行能切分出多列，直接用
-    if default in _DELIMITER_CANDIDATES and default in lines[0]:
+
+    # 按「引号外出现次数」判断，避免把 "说明,含逗号" 里的逗号当成列分隔符
+    stats: dict[str, tuple[int, int]] = {}
+    for delimiter in _DELIMITER_CANDIDATES:
+        counts = [_count_unquoted(line, delimiter) for line in lines]
+        counts = [count for count in counts if count > 0]
+        if not counts:
+            continue
+        mode = max(set(counts), key=counts.count)
+        stats[delimiter] = (counts.count(mode), mode)
+
+    if not stats:
         return default
-    best, best_count = default, -1
-    for d in _DELIMITER_CANDIDATES:
-        count = max(ln.count(d) for ln in lines)
-        if count > best_count:
-            best, best_count = d, count
-    return best
+    # 扩展名给出的分隔符只要确实出现过，就优先
+    if default in stats:
+        return default
+    return max(stats, key=lambda d: stats[d])
 
 
 class FileReader:
