@@ -177,19 +177,16 @@ class ApiReader:
                     sep = "&" if "?" in url else "?"
                     req_url = f"{url}{sep}{urlencode(params)}"
             data = _fetch_json(req_url, method=method, headers=headers, body=body_bytes)
-            # 尝试解析 JSON 为 DataFrame
-            if isinstance(data, list):
-                df = pd.DataFrame(data)
-            elif isinstance(data, dict):
-                # 尝试找到数据数组
-                for key in ["data", "results", "items", "records"]:
-                    if key in data and isinstance(data[key], list):
-                        df = pd.DataFrame(data[key])
+            # 尝试找到数据数组（常见包装：{"data": [...]}）
+            if isinstance(data, dict):
+                for key in ("data", "results", "items", "records", "rows", "list"):
+                    value = data.get(key)
+                    if isinstance(value, list):
+                        data = value
                         break
-                else:
-                    df = pd.DataFrame([data])
-            else:
-                df = pd.DataFrame([{"value": data}])
+            from service.data_ingestion.readers.file_reader import json_to_frame
+
+            df = json_to_frame(data)
             source_path = url
         else:
             raise ValueError("必须提供 api_type 或 url")

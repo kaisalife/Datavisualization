@@ -218,14 +218,11 @@ def _records_to_frame(records: list) -> pd.DataFrame:
         return pd.DataFrame({"value": records})
 
 
-def _read_json_document(path: str) -> pd.DataFrame:
-    """读取单个 JSON 文档（对象或数组）。"""
-    text = _read_text(path)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"JSON 解析失败: {Path(path).name}: {exc}") from exc
+def json_to_frame(data) -> pd.DataFrame:
+    """JSON 值 -> DataFrame（数组、单对象、列数组、嵌套对象都兼容）。
 
+    文件 Reader 与 API Reader 共用；嵌套对象展开成 ``指标.销售额`` 这类点号列。
+    """
     if isinstance(data, list):
         return _records_to_frame(data)
     if isinstance(data, dict):
@@ -239,6 +236,16 @@ def _read_json_document(path: str) -> pd.DataFrame:
         # 单条记录（含嵌套对象）包一层，交给 json_normalize 展开
         return _records_to_frame([data])
     return pd.DataFrame({"value": [data]})
+
+
+def _read_json_document(path: str) -> pd.DataFrame:
+    """读取单个 JSON 文档（对象或数组）。"""
+    text = _read_text(path)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON 解析失败: {Path(path).name}: {exc}") from exc
+    return json_to_frame(data)
 
 
 def _read_json_lines(path: str) -> pd.DataFrame:
