@@ -58,7 +58,7 @@ api/
 | 字段 | 必填 | 类型 | 说明 |
 |------|------|------|------|
 | `files` | 条件 | File[] | 上传的数据文件。CSV / Excel / JSON / Parquet / 文档 / **图片 / PDF** 都支持；docx/pptx/xlsx 的内嵌图片也会抽表 |
-| `db_config` | 条件 | JSON string | 数据库连接配置（非法 JSON / 不支持的 `type` / sqlite 缺 `database` 直接 `400`） |
+| `db_config` | 条件 | JSON string | 数据库连接配置（非法 JSON / 不支持的 `type` / sqlite 缺 `database` 直接 `400`）；可选 `tables` 数组或 `query` 自定义 SQL |
 | `api_config` | 条件 | JSON string | 外部 API 数据源配置（缺 `url` 且无 `api_type` 直接 `400`） |
 | `user_prompt` | 可选 | string | 可视化需求描述 |
 | `config` | 可选 | string | 图表配置 JSON（宽高 / 主题 / 配色） |

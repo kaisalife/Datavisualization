@@ -94,6 +94,9 @@ function renderDbList() {
   }
   list.innerHTML = state.dbConfigs.map((db, idx) => {
     const typeCls = 'db-type-' + (db.dbType || 'mysql').toLowerCase().replace(/\s/g, '');
+    const scope = (db.query || '').trim()
+      ? '自定义 SQL'
+      : ((db.tables || '').trim() ? '表: ' + db.tables.trim() : '全部表');
     if (editingDbId === idx) {
       return '<div class="db-form">' +
         '<div class="form-group"><label class="form-label">连接名称</label><input class="form-input" id="edbName" value="' + escAttr(db.name) + '"></div>' +
@@ -103,19 +106,22 @@ function renderDbList() {
         '<div class="form-row"><div class="form-group"><label class="form-label">用户名</label><input class="form-input" id="edbUser" value="' + escAttr(db.user) + '"></div>' +
         '<div class="form-group"><label class="form-label">密码</label><input class="form-input" type="password" id="edbPass" value="' + escAttr(db.password || '') + '"></div></div>' +
         '<div class="form-group"><label class="form-label">数据库</label><input class="form-input" id="edbDb" value="' + escAttr(db.database || '') + '"></div>' +
+        '<div class="form-group"><label class="form-label">表名（可选，逗号分隔）</label><input class="form-input" id="edbTables" value="' + escAttr(db.tables || '') + '" placeholder="留空读取全部表，如 sales,users"></div>' +
+        '<div class="form-group"><label class="form-label">自定义 SQL（可选，优先于表名）</label><textarea class="form-input" id="edbQuery" rows="3" placeholder="SELECT * FROM sales WHERE ...">' + escHtml(db.query || '') + '</textarea></div>' +
         '<div class="db-form-actions"><button class="btn btn-primary" style="padding:6px 16px;font-size:13px" onclick="saveDbEdit(' + idx + ')">保存</button><button class="btn btn-ghost" style="padding:6px 16px;font-size:13px" onclick="cancelDbEdit()">取消</button></div>' +
       '</div>';
     }
     return '<div class="db-config-card">' +
       '<div class="db-config-header"><div class="db-config-name">' + escHtml(db.name) + '</div><div class="db-config-type ' + typeCls + '">' + escHtml(db.dbType) + '</div></div>' +
       '<div class="db-config-detail">' + escHtml(db.host) + ':' + escHtml(db.port) + '/' + escHtml(db.database || '-') + '</div>' +
+      '<div class="db-config-detail">' + escHtml(scope) + '</div>' +
       '<div class="db-config-actions"><button class="db-edit-btn" onclick="editDb(' + idx + ')">编辑</button><button class="db-del-btn" onclick="deleteDbConfig(' + idx + ')">删除</button></div>' +
     '</div>';
   }).join('');
 }
 
 function addDbConfigForm() {
-  state.dbConfigs.push({ name: '新连接', dbType: 'MySQL', host: 'localhost', port: '3306', user: 'root', password: '', database: '' });
+  state.dbConfigs.push({ name: '新连接', dbType: 'MySQL', host: 'localhost', port: '3306', user: 'root', password: '', database: '', tables: '', query: '' });
   editingDbId = state.dbConfigs.length - 1;
   renderDbList();
 }
@@ -133,6 +139,8 @@ function saveDbEdit(idx) {
   db.user = document.getElementById('edbUser').value;
   db.password = document.getElementById('edbPass').value;
   db.database = document.getElementById('edbDb').value;
+  db.tables = document.getElementById('edbTables').value;
+  db.query = document.getElementById('edbQuery').value;
   editingDbId = null;
   renderDbList();
   window.app.showToast('数据库配置已保存', 'success');

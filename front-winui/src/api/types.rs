@@ -256,20 +256,43 @@ pub struct DbConfig {
     /// 数据库名
     #[serde(default)]
     pub database: String,
+    /// 只读取这些表（逗号/分号/换行分隔）；空 = 读取全部表
+    #[serde(default)]
+    pub tables: String,
+    /// 自定义 SQL（优先于 tables）；空 = 不执行
+    #[serde(default)]
+    pub query: String,
 }
 
 impl DbConfig {
     /// 生成用于后端 API 的 JSON 字符串
     pub fn to_json_string(&self) -> String {
-        serde_json::json!({
+        // tables 在表单里是分隔字符串，后端要求 JSON 数组；
+        // 中文逗号/分号也支持，避免用户从表格里粘贴后解析失败。
+        let tables: Vec<String> = self
+            .tables
+            .split(|c: char| c == ',' || c == '，' || c == ';' || c == '；' || c == '\n')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        let mut payload = serde_json::json!({
             "type": self.db_type,
             "host": self.host,
             "port": self.port,
             "user": self.user,
             "password": self.password,
             "database": self.database,
-        })
-        .to_string()
+        });
+        if !tables.is_empty() {
+            payload["tables"] = serde_json::json!(tables);
+        }
+        let query = self.query.trim();
+        if !query.is_empty() {
+            payload["query"] = serde_json::json!(query);
+        }
+        payload.to_string()
     }
 
     /// 显示用的简短描述

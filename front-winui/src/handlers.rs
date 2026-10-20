@@ -1296,6 +1296,16 @@ impl MainModel {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    tables: item
+                        .get("tables")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    query: item
+                        .get("query")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 });
             }
             self.settings.db_configs = new_configs;
@@ -1477,6 +1487,16 @@ impl MainModel {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
+            tables: data
+                .get("tables")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            query: data
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         };
         self.settings.db_configs.push(config);
         let configs = self.settings.db_configs.clone();
@@ -1533,6 +1553,16 @@ impl MainModel {
             .to_string();
         config.database = data
             .get("database")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        config.tables = data
+            .get("tables")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        config.query = data
+            .get("query")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();

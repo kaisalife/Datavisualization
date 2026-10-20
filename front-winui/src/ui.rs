@@ -148,6 +148,8 @@ impl MainModel {
                     "user": db.user,
                     "password": db.password,
                     "database": db.database,
+                    "tables": db.tables,
+                    "query": db.query,
                 })
             }).collect::<Vec<_>>(),
         })
@@ -209,6 +211,8 @@ impl MainModel {
                     "user": db.user,
                     "password": db.password,
                     "database": db.database,
+                    "tables": db.tables,
+                    "query": db.query,
                 })
             })
             .collect();
