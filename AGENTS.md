@@ -365,7 +365,8 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   文本表格化（HTML / Markdown / 日志）同样按内容哈希缓存到 `runtime/cache/llm_text`
   （`LLM_TEXT_CACHE_DIR` 可改），键额外包含 `max_text_chars`；`VISION_CACHE=0` 同时关闭两者。
   前端先预览再生成图表时不会重复调用 LLM；只缓存成功结果，测试注入假模型时不走缓存
-  （`service/data_ingestion/vision_cache.py`）。
+  （`service/data_ingestion/vision_cache.py`）。真机验过：表格截图 3.4s→0.1s、docx 内嵌图
+  3.0s→0.1s、Markdown 文本 3.6s→0.0s，结果与 `source_path` 均一致。
 - `/api/data-profile` 也能直接传图片/PDF（多模态这一步会调用 LLM），可用于抽表预览。
 - 测试注入假模型即可，不联网：`MultimodalReader.read(path, llm=FakeLLM(...))`。
 - **真机 E2E 已验**：`/api/generate-chart-with-prompt` 传 PNG + `model_url/model_api_key` +
