@@ -29,9 +29,21 @@ def test_known_chart_types_use_chinese_function_words():
 
 
 def test_unknown_chart_type_keeps_type_name():
-    query = build_rag_query("Polar")
-    assert "Polar" in query
+    query = build_rag_query("Violin")
+    assert "Violin" in query
     assert "示例" in query
+
+
+def test_extended_chart_types_use_function_words():
+    assert "日历图" in build_rag_query("Calendar")
+    assert "K线图" in build_rag_query("Kline")
+    assert "旭日图" in build_rag_query("Sunburst")
+    assert "象形柱图" in build_rag_query("PictorialBar")
+    assert "极坐标系" in build_rag_query("Polar")
+    assert "3D 柱状图" in build_rag_query("Bar3D")
+    assert "柱线组合" in build_rag_query("Overlap")
+    assert "时间轴" in build_rag_query("Timeline")
+    assert "数据集" in build_rag_query("Dataset")
 
 
 def test_query_uses_chart_type_and_ignores_business_title():
