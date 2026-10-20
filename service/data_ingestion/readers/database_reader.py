@@ -22,6 +22,14 @@ from service.observability import get_logger
 logger = get_logger(__name__)
 
 
+def _quote_identifier(name: str, db_type: str) -> str:
+    """按数据库方言引用表名，转义标识符里的引号（防拼接出非法 SQL）。"""
+    text = str(name)
+    if db_type == "mysql":
+        return "`" + text.replace("`", "``") + "`"
+    return '"' + text.replace('"', '""') + '"'
+
+
 class DatabaseReader:
     """从数据库读取数据为 DataFrame。"""
 
@@ -103,7 +111,8 @@ class DatabaseReader:
             raw_tables = []
             for i, tbl in enumerate(target_tables):
                 name = safe_table_name(table_name if i == 0 else tbl)
-                df = pd.read_sql(f'SELECT * FROM "{tbl}"', conn)
+                quoted = _quote_identifier(tbl, db_type)
+                df = pd.read_sql(f"SELECT * FROM {quoted}", conn)
                 raw_tables.append(RawTable(
                     name=name, df=df, source_kind="database", source_path=f"{source_path}#{tbl}"
                 ))
