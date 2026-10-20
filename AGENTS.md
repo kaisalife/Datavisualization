@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 166 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 168 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -190,8 +190,8 @@ $env:BACKEND_URL="http://localhost:5000"
 
 ## Excel 合并表头 / 标题行
 
-中文报表常见「一行合并大标题 + 两行合并表头」。`ExcelReader` 直接从 xlsx/xlsm 的 zip XML 读合并区域
-（不加载整个 openpyxl 工作簿），再决定怎么读：
+中文报表常见「一行合并大标题 + 两行合并表头」。`ExcelReader` 对 xlsx/xlsm 直接从 zip XML 读合并区域
+（不加载整个 openpyxl 工作簿），.xls 用 xlrd 的 `merged_cells`（读取失败自动退回 pandas），再决定怎么读：
 
 - 顶部跨列的单值合并行（如 `A1:E1`「2024 年销售报表」）→ 当标题跳过，最多 2 行；
 - 表头自身有纵向/横向合并（如 `B1:C1`「2023 年」+ `B2`「销售额」）→ 把 2–3 行表头压成单行，

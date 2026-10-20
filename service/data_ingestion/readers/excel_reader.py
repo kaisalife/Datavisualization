@@ -94,13 +94,34 @@ def _sheet_xml_path(zf: zipfile.ZipFile, sheet_name: str) -> str | None:
     return None
 
 
+def _xls_merged_ranges(
+    path: str, sheet_name: str
+) -> list[tuple[int, int, int, int]] | None:
+    """老 .xls 用 xlrd 读合并区域；失败返回 None 让调用方退回 pandas。"""
+    try:
+        import xlrd
+
+        book = xlrd.open_workbook(path, formatting_info=True)
+        sheet = book.sheet_by_name(sheet_name)
+        # xlrd: (rlo, rhi, clo, chi)，rhi/chi 为开区间；转成 1-based 闭区间
+        return [
+            (rlo + 1, clo + 1, rhi, chi)
+            for rlo, rhi, clo, chi in sheet.merged_cells
+        ]
+    except Exception:
+        return None
+
+
 def _merged_ranges(path: str, sheet_name: str) -> list[tuple[int, int, int, int]] | None:
     """读取 sheet 的合并区域，返回 [(min_row, min_col, max_row, max_col)]。
 
-    返回 None 表示无法解析（例如老 .xls），调用方直接走 pandas。
+    返回 None 表示无法解析，调用方直接走 pandas。
     """
-    if Path(path).suffix.lower() not in {".xlsx", ".xlsm"}:
+    ext = Path(path).suffix.lower()
+    if ext not in {".xlsx", ".xlsm", ".xls"}:
         return None
+    if ext == ".xls":
+        return _xls_merged_ranges(path, sheet_name)
     try:
         with zipfile.ZipFile(path) as zf:
             xml_path = _sheet_xml_path(zf, sheet_name)

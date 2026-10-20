@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from openpyxl import Workbook
 
-from service.data_ingestion.readers.excel_reader import ExcelReader
+from service.data_ingestion.readers.excel_reader import ExcelReader, _merged_ranges
 
 
 def _new(path: Path):
@@ -264,6 +264,38 @@ async def test_merged_header_reaches_data_profile(tmp_path: Path):
         "2024 年_销售额",
         "2024 年_利润",
     ]
+
+
+def test_xls_merged_ranges_are_converted(monkeypatch, tmp_path: Path):
+    """xlrd 的 rhi/chi 是开区间，转成 1-based 闭区间后才能和 xlsx 逻辑共用。"""
+    path = tmp_path / "old.xls"
+    path.write_bytes(b"placeholder")
+
+    class _Sheet:
+        merged_cells = [(0, 2, 0, 1), (1, 2, 1, 3)]
+
+    class _Book:
+        def sheet_by_name(self, name):
+            return _Sheet()
+
+    import xlrd
+
+    monkeypatch.setattr(xlrd, "open_workbook", lambda *args, **kwargs: _Book())
+
+    assert _merged_ranges(str(path), "Sheet1") == [(1, 1, 2, 1), (2, 2, 2, 3)]
+
+
+def test_xls_merged_ranges_falls_back_on_error(monkeypatch, tmp_path: Path):
+    path = tmp_path / "broken.xls"
+    path.write_bytes(b"not a real xls")
+
+    import xlrd
+
+    monkeypatch.setattr(
+        xlrd, "open_workbook", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("bad"))
+    )
+
+    assert _merged_ranges(str(path), "Sheet1") is None
 
 
 def test_merged_data_cells_fill_text_down(tmp_path: Path):
