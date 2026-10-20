@@ -9,6 +9,7 @@ pandas 自动推断类型。
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -151,8 +152,7 @@ class FileReader:
                 encoding=encoding,
             )
         elif ext in {".json", ".jsonl", ".ndjson"}:
-            lines = ext != ".json" or _is_jsonl(path)
-            df = pd.read_json(path, lines=lines, encoding=_detect_encoding(path))
+            df = _read_json(path, lines=ext != ".json" or _is_jsonl(path))
         elif ext == ".parquet":
             df = pd.read_parquet(path)
         else:  # pragma: no cover
@@ -164,11 +164,100 @@ class FileReader:
         return [RawTable(name=name, df=df, source_kind="file", source_path=path)]
 
 
-def _is_jsonl(path: str) -> bool:
-    """粗略判断 JSON 是否为 JSONL（逐行对象）。"""
+def _read_text(path: str) -> str:
+    """按探测到的编码读取文本（JSON/JSONL 共用）。"""
+    encoding = _detect_encoding(path)
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            first = f.readline().lstrip()
-        return first.lstrip().startswith(("{", "["))
+        return Path(path).read_text(encoding=encoding)
+    except UnicodeDecodeError:
+        # 探测将来可能遇到混合编码文件，替换非法字节比直接失败更有用
+        return Path(path).read_text(encoding=encoding, errors="replace")
+
+
+def _is_jsonl(path: str) -> bool:
+    """判断 .json 文件是否实际是逐行 JSON（JSONL/NDJSON）。
+
+    先尝试把整个文件当成一个 JSON 文档；能解析就**不是** JSONL。
+    只有整体解析失败、且首个非空行本身是 JSON 对象/数组时，才按 JSONL 读取。
+    这样既不会把格式化过的 JSON 数组误判成 JSONL，也能兼容扩展名写错的
+    多行对象文件。
+    """
+    try:
+        text = _read_text(path)
     except OSError:
         return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    try:
+        json.loads(stripped)
+        return False
+    except json.JSONDecodeError:
+        pass
+
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    if not first:
+        return False
+    try:
+        value = json.loads(first)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(value, (dict, list))
+
+
+def _records_to_frame(records: list) -> pd.DataFrame:
+    """记录列表 -> DataFrame；对象记录用 json_normalize 展开嵌套字段。"""
+    if not records:
+        return pd.DataFrame()
+    if all(isinstance(item, dict) for item in records):
+        return pd.json_normalize(records)
+    try:
+        return pd.DataFrame(records)
+    except ValueError:
+        # 标量/嵌套混合时退化为单列，避免整份数据读不出来
+        return pd.DataFrame({"value": records})
+
+
+def _read_json_document(path: str) -> pd.DataFrame:
+    """读取单个 JSON 文档（对象或数组）。"""
+    text = _read_text(path)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON 解析失败: {Path(path).name}: {exc}") from exc
+
+    if isinstance(data, list):
+        return _records_to_frame(data)
+    if isinstance(data, dict):
+        values = list(data.values())
+        # 顶层是「列名 -> 数组」的宽表形态，按列构造
+        if values and all(isinstance(v, (list, tuple)) for v in values):
+            try:
+                return pd.DataFrame(data)
+            except ValueError:
+                pass
+        # 单条记录（含嵌套对象）包一层，交给 json_normalize 展开
+        return _records_to_frame([data])
+    return pd.DataFrame({"value": [data]})
+
+
+def _read_json_lines(path: str) -> pd.DataFrame:
+    """读取 JSONL/NDJSON：一行一个 JSON 对象（空行忽略）。"""
+    text = _read_text(path)
+    records: list = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"JSONL 解析失败: {Path(path).name} 第 {line_no} 行: {exc}"
+            ) from exc
+    return _records_to_frame(records)
+
+
+def _read_json(path: str, lines: bool) -> pd.DataFrame:
+    """读取 JSON/JSONL，兼容单对象、数组、列数组与嵌套字段。"""
+    return _read_json_lines(path) if lines else _read_json_document(path)
