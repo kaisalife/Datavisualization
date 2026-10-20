@@ -11,6 +11,7 @@
 - 键包含文件内容哈希、后缀、表名、hint、multi_table、页数上限、图片参数、模型签名与缓存版本；
   **不含文件路径**——预览与图表各自上传的副本（UUID 前缀不同）可以共享。
 - 先写 parquet，最后写 ``meta.json`` 作为完成标记；缺失/损坏一律按未命中处理。
+- **改了抽表 prompt 或 RawTable 输出结构要递增 ``_CACHE_VERSION``**，否则可能命中旧结果。
 - 多模态默认目录 ``runtime/cache/vision``，文本默认 ``runtime/cache/llm_text``；
   ``VISION_CACHE=0`` 关闭全部抽表缓存，``VISION_CACHE_TTL_DAYS``（默认 14）控制清理。
 """
