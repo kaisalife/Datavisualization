@@ -12,11 +12,13 @@ from __future__ import annotations
 import base64
 import io
 import os
+import re
 from pathlib import Path
 
 import pandas as pd
 
 from service.data_ingestion.models import RawTable, safe_table_name
+from service.data_ingestion.profiler import _is_time_label
 from service.observability import get_logger
 from service.runtime.utils import get_env_int, get_llm_extra_headers
 
@@ -286,6 +288,122 @@ def _parse_tables_payload(text: str) -> list[dict]:
     return []
 
 
+# PDF 跨页续表合并：只在证据明确时合并，避免把「按月拆开的独立快照表」拼在一起
+_TOTAL_ROW_MARKERS = (
+    "合计", "总计", "小计", "累计", "平均", "均值",
+    "total", "subtotal", "average", "grandtotal",
+)
+_ROW_NA = "<NA>"
+
+
+def _row_key(row) -> tuple[str, ...]:
+    """行指纹：空值统一成哨兵，其余转字符串去首尾空白。"""
+    return tuple(
+        _ROW_NA if pd.isna(value) else str(value).strip()
+        for value in row.tolist()
+    )
+
+
+def _is_total_row(row) -> bool:
+    """判断一行是否是合计/小计/平均等汇总行。"""
+    for value in row.tolist():
+        if pd.isna(value):
+            continue
+        text = re.sub(r"[\s:：,，]+", "", str(value)).lower()
+        if text and any(text.startswith(marker) for marker in _TOTAL_ROW_MARKERS):
+            return True
+    return False
+
+
+def _can_merge_pdf_pages(previous: pd.DataFrame, current: pd.DataFrame) -> bool:
+    """判断下一页的表是否是上一页的续表（保守规则）。
+
+    合并条件：
+    - 列结构与顺序完全一致，且至少两列；
+    - 上一页最后一行、下一页第一行都不是合计/小计行；
+    - 有时间列：上一页的时间序列尚未结束，下一页从更晚的时间继续
+      （两页都只有一个固定期间时视为独立快照，如「1 月表」「2 月表」）；
+    - 没有时间列：只有下一页重复了上一页最后一行（扫描/分页重叠）才合并。
+    """
+    if list(previous.columns) != list(current.columns) or len(previous.columns) < 2:
+        return False
+    if previous.empty or current.empty:
+        return False
+    if _is_total_row(previous.iloc[-1]) or _is_total_row(current.iloc[0]):
+        return False
+
+    time_cols = [col for col in previous.columns if _is_time_label(col)]
+    if time_cols:
+        col = time_cols[0]
+        previous_times = previous[col].dropna()
+        current_times = current[col].dropna()
+        if previous_times.empty or current_times.empty:
+            return False
+        # 两页各自只有一个时间值：通常是按月/按日拆开的独立快照表，不合并
+        if previous_times.nunique() <= 1 and current_times.nunique() <= 1:
+            return False
+        from service.data_ingestion.series.splitter import _natural_key
+
+        return _natural_key(previous_times.iloc[-1]) < _natural_key(current_times.iloc[0])
+
+    return _row_key(current.iloc[0]) == _row_key(previous.iloc[-1])
+
+
+def _merge_pdf_continuation(previous: RawTable, current: RawTable) -> RawTable:
+    """拼接两页续表；页边界重复行只保留一份。"""
+    current_df = current.df
+    if not current_df.empty and not previous.df.empty:
+        if _row_key(current_df.iloc[0]) == _row_key(previous.df.iloc[-1]):
+            current_df = current_df.iloc[1:]
+    return RawTable(
+        name=previous.name,
+        df=pd.concat([previous.df, current_df], ignore_index=True),
+        source_kind=previous.source_kind,
+        source_path=previous.source_path,
+        degraded=previous.degraded or current.degraded,
+        degraded_reason=previous.degraded_reason or current.degraded_reason,
+    )
+
+
+def _merge_pdf_page_tables(
+    page_groups: list[list[RawTable]], base_name: str, path: str
+) -> list[RawTable]:
+    """把相邻单表页按续表规则合并；多表页原样保留。"""
+    merged_tables: list[RawTable] = []
+    index = 0
+    while index < len(page_groups):
+        group = page_groups[index]
+        if len(group) != 1:
+            merged_tables.extend(group)
+            index += 1
+            continue
+
+        current = group[0]
+        last_index = index
+        while last_index + 1 < len(page_groups) and len(page_groups[last_index + 1]) == 1:
+            candidate = page_groups[last_index + 1][0]
+            if not _can_merge_pdf_pages(current.df, candidate.df):
+                break
+            current = _merge_pdf_continuation(current, candidate)
+            last_index += 1
+
+        if last_index > index:
+            first_page = index + 1
+            last_page = last_index + 1
+            current.name = base_name if first_page == 1 else f"{base_name}_p{first_page}"
+            current.source_path = f"{path}#page{first_page}-{last_page}"
+            logger.info(
+                "PDF 跨页续表已合并",
+                path=path,
+                first_page=first_page,
+                last_page=last_page,
+                rows=len(current.df),
+            )
+        merged_tables.append(current)
+        index = last_index + 1
+    return merged_tables
+
+
 def extract_tables_from_image(
     llm,
     image_url: str,
@@ -383,7 +501,8 @@ class MultimodalReader:
                 None 时读 ``VISION_MULTI_TABLE``（默认 0，只取主表）
 
         Returns:
-            list[RawTable]（图片 1 条；PDF 每页有表格则各 1 条；多表模式一图可多条）
+            list[RawTable]（图片 1 条；PDF 每页有表格则各 1 条，跨页续表会按保守规则
+            合并为 1 条；多表模式一图可多条）
 
         Raises:
             FileNotFoundError: 文件不存在
@@ -404,7 +523,7 @@ class MultimodalReader:
             pages = [_image_to_data_url(p)]
 
         base_name = safe_table_name(table_name or p.name)
-        tables: list[RawTable] = []
+        page_groups: list[list[RawTable]] = []
         errors: list[str] = []
         multi_page = len(pages) > 1
         is_pdf = MultimodalReader.is_pdf(p)
@@ -417,16 +536,16 @@ class MultimodalReader:
             except Exception as e:  # 单页失败不拖垮整个文件
                 errors.append(f"page {index}: {type(e).__name__}: {e}")
                 logger.warning("多模态单页解析失败", path=str(p), page=index, error=str(e), error_type=type(e).__name__)
+                page_groups.append([])
                 continue
 
             if not dataframes:
                 logger.info("多模态未在该页提取到表格", path=str(p), page=index)
+                page_groups.append([])
                 continue
 
+            page_tables: list[RawTable] = []
             for table_index, df in enumerate(dataframes, start=1):
-                if len(df) > _MAX_ROWS:
-                    df = df.head(_MAX_ROWS)
-
                 suffix = ""
                 if multi_page:
                     suffix += f"_p{index}"
@@ -437,7 +556,7 @@ class MultimodalReader:
                 if len(dataframes) > 1:
                     source_path += f"/table{table_index}"
 
-                tables.append(
+                page_tables.append(
                     RawTable(
                         name=f"{base_name}{suffix}",
                         df=df,
@@ -445,6 +564,17 @@ class MultimodalReader:
                         source_path=source_path,
                     )
                 )
+            page_groups.append(page_tables)
+
+        if is_pdf and multi_page:
+            tables = _merge_pdf_page_tables(page_groups, base_name, path)
+        else:
+            tables = [table for group in page_groups for table in group]
+
+        # 合并后的表可能超过单表行数上限，统一在最后截断
+        for table in tables:
+            if len(table.df) > _MAX_ROWS:
+                table.df = table.df.head(_MAX_ROWS)
 
         if not tables:
             detail = f"；失败页: {'; '.join(errors[:3])}" if errors else ""

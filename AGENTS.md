@@ -241,9 +241,12 @@ $env:BACKEND_URL="http://localhost:5000"
 - 多个指标每个一条 series；多个维度选基数最小且 ≥2 的维度；
 - 只有一个类别时回退到普通「时间 + 指标」序列；
 - 普通时间序列按自然时间排序（`1月 < 2月 < 10月`），同一时间点多行按指标语义聚合
-  （率/均价取平均，其余求和），避免折线来回折、x 轴重复。
+  （率/均价取平均，其余求和），避免折线来回折、x 轴重复；
+- 自然排序同时支持中文数字：`一月 < 二月 < 十月 < 十一月`、`第一季度…第四季度`、
+  `星期一…星期日`；中文数字只在时间标签/序数/逐位年份上下文展开，不改写「统一」等普通词。
 
-回归：`tests/test_series_split.py`（透视、自然时间序、多指标、多维度、高基数排行、重复单元格聚合）。
+回归：`tests/test_series_split.py`（透视、自然时间序、中文月份/季度/星期、多指标、多维度、
+高基数排行、重复单元格聚合）。
 
 ## CSV 编码
 
@@ -251,6 +254,13 @@ $env:BACKEND_URL="http://localhost:5000"
 按奇偶字节判断端序）> UTF-8 > GB18030（兼容 GBK/GB2312）。Windows 上 Excel 默认导出的 GBK CSV
 不再报 `UnicodeDecodeError`；分隔符嗅探复用同一编码，并只统计**引号外**的分隔符
 （`"说明,含逗号"` 不会把逗号误判成列分隔符）。回归 `tests/test_csv_encoding.py`。
+
+## JSON / JSONL
+
+`FileReader` 先判断 `.json` 是整个 JSON 文档还是逐行 JSON：整体能解析就按文档读
+（对象、数组、`列名 -> 数组` 宽表都支持）；整体解析失败且首个非空行是对象/数组时才按 JSONL。
+单条对象会包成一行，嵌套字段用 `json_normalize` 展开成 `指标.销售额` 这类点号列。
+错误信息带文件名/行号。回归 `tests/test_file_reader_json.py`。
 
 ## 预览数据导出
 
@@ -309,6 +319,11 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   真机验过“只贴一张表格截图的 docx”：Unstructured 抛“未提取到任何内容”→ 兜底 → 7.4 秒拿到
   列名逐字一致（`城市`/`2023 年`/`2024 年`）的 3 行表；同一张图里两张不同表也全部抽出
   （多表模式 9.1 秒、2/2，值逐字一致）。
+- **PDF 跨页续表**：相邻页的表格列结构完全一致、页边界没有合计/小计行时，才按保守规则合并：
+  有时间列且时间轴严格递增（上一页最后一个时间 < 下一页第一个时间）才合并；两页各自只有一个
+  固定期间（如「1 月表」「2 月表」）视为独立快照，不合并；无时间列时只有下一页重复上一页最后一行
+  （分页重叠）才合并。合并后的表名去掉 `_pN`，`source_path` 记为 `#pageN-M`。真机用两页销售表
+  验证：同表 2 页合并为 40 行，两个月份快照仍保持 2 张表。
 - **一图多表**：`VISION_MULTI_TABLE=1`（或 `MultimodalReader.read(..., multi_table=True)`）时
   prompt 换成 `MULTIMODAL_MULTI_TABLE_PROMPT`，输出 `{"tables":[{title,columns,rows}]}`，
   一图/一页可产出多条 RawTable（命名 `_t1`/`_t2`，PDF 再叠 `_p1`），每页最多
@@ -330,6 +345,8 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   agent 分别出图（约 73 秒）。
 - **`multi_table` 请求级开关**：`/api/generate-chart-with-prompt` 与 `/api/data-profile` 都解析表单
   字段并透传（`chart_api` 曾漏接，只有 data-profile 生效；回归见 `chart_api` + `data_source`）。
+  WinUI 输入框下方有「多表抽取」chip，开启后经 Rust `GenerateChartRequest.multi_table` 以
+  `multi_table=1` 下发；未开启时不下发，仍由 `VISION_MULTI_TABLE` 兜底。
 - **上传文件名的 UUID 前缀只用于磁盘防冲突**：接口存成 `<32位hex>_<原名>`，但表名 / series 名 / 预览名
   用 `display_name_from_path()`（`service/runtime/utils.py`）去掉前缀；`runtime/charts/` 目录仍保留
   前缀，避免同名文件的两个任务互相覆盖。`ingest_files` 单文件分支也要带上 `multi_table`（已修）。
