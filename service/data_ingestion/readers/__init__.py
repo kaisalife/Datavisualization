@@ -11,6 +11,8 @@ from service.data_ingestion.readers.api_reader import ApiReader
 from service.data_ingestion.readers.document_reader import DocumentReader
 from service.data_ingestion.readers.archive_reader import ArchiveReader
 from service.data_ingestion.readers.llm_tabular_reader import LlmTabularReader
+from service.data_ingestion.readers.multimodal_reader import MultimodalReader
+from service.data_ingestion.readers.office_image_reader import OfficeImageReader
 
 __all__ = [
     "FileReader",
@@ -20,4 +22,6 @@ __all__ = [
     "DocumentReader",
     "ArchiveReader",
     "LlmTabularReader",
+    "MultimodalReader",
+    "OfficeImageReader",
 ]

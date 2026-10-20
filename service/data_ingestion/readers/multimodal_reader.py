@@ -95,6 +95,14 @@ def _load_env_llm(vision_cfg: dict | None = None):
     )
 
 
+def load_vision_llm(vision_cfg: dict | None = None):
+    """按 ``vision_cfg`` / ``VISION_*`` / ``.env`` 构造视觉模型客户端。
+
+    供 OfficeImageReader 等复用；参数与 :func:`_load_env_llm` 一致。
+    """
+    return _load_env_llm(vision_cfg)
+
+
 def _content_to_text(content) -> str:
     """兼容 str / list[block] 两种模型返回格式。"""
     if isinstance(content, str):
@@ -183,6 +191,22 @@ def _image_to_data_url(path: Path) -> str:
         return _image_to_data_url_from_pil(img, path.suffix)
 
 
+def image_bytes_to_data_url(payload: bytes, suffix: str) -> str:
+    """内存中的图片字节 -> data URL（供 OOXML 内嵌图片复用）。
+
+    Args:
+        payload: 图片原始字节
+        suffix: 文件扩展名（决定 mime 与编码策略，如 ".png"）
+
+    Returns:
+        ``data:image/...;base64,...``
+    """
+    from PIL import Image
+
+    with Image.open(io.BytesIO(payload)) as img:
+        return _image_to_data_url_from_pil(img, suffix)
+
+
 def _pdf_page_data_urls(path: Path, max_pages: int) -> list[str]:
     """PDF 前 N 页渲染为 data URL 列表。"""
     try:
@@ -205,8 +229,8 @@ def _pdf_page_data_urls(path: Path, max_pages: int) -> list[str]:
     return urls
 
 
-def _extract_one(llm, image_url: str, hint: str) -> pd.DataFrame | None:
-    """调用视觉模型抽取单张图片中的表格。"""
+def extract_table_from_image(llm, image_url: str, hint: str = "") -> pd.DataFrame | None:
+    """调用视觉模型抽取单张图片中的表格，返回 DataFrame 或 None。"""
     from prompts.multimodal_tabularize_prompt import build_multimodal_tabularize_messages
     from service.data_ingestion.readers.llm_tabular_reader import parse_tabular_json
 
@@ -291,7 +315,7 @@ class MultimodalReader:
 
         for index, image_url in enumerate(pages, start=1):
             try:
-                df = _extract_one(llm, image_url, hint)
+                df = extract_table_from_image(llm, image_url, hint)
             except Exception as e:  # 单页失败不拖垮整个文件
                 errors.append(f"page {index}: {type(e).__name__}: {e}")
                 logger.warning("多模态单页解析失败", path=str(p), page=index, error=str(e), error_type=type(e).__name__)

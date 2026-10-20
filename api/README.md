@@ -313,6 +313,9 @@ X-API-Key: <your_key>
 | `VISION_BASE_URL` / `VISION_API_KEY` | `""` | 视觉模型独立凭证（可选） |
 | `VISION_MAX_IMAGE_SIDE` | `2000` | 上传前图片最大边长（像素） |
 | `VISION_MAX_PDF_PAGES` | `5` | PDF 视觉兜底最多解析页数 |
+| `VISION_MIN_IMAGE_BYTES` | `4096` | Office 内嵌图片体积下限（字节） |
+| `VISION_MIN_IMAGE_SIDE` | `160` | Office 内嵌图片最短边下限（像素） |
+| `VISION_MAX_OFFICE_IMAGES` | `8` | docx/pptx/xlsx 单文件最多抽几张图 |
 | `FLASK_HOST` | `0.0.0.0` | 监听地址 |
 | `FLASK_PORT` | `5000` | 监听端口 |
 | `FLASK_DEBUG` | `false` | 是否开启 debug |

@@ -37,6 +37,10 @@ from service.data_ingestion.readers.archive_reader import ArchiveReader
 from service.data_ingestion.readers.document_reader import DocumentReader
 from service.data_ingestion.readers.llm_tabular_reader import LlmTabularReader
 from service.data_ingestion.readers.multimodal_reader import MultimodalReader
+from service.data_ingestion.readers.office_image_reader import (
+    NoEmbeddedImages,
+    OfficeImageReader,
+)
 from service.data_ingestion.readers.excel_reader import ExcelReader
 from service.data_ingestion.readers.file_reader import FileReader
 from service.data_ingestion.series.splitter import build_series_catalog
@@ -185,7 +189,21 @@ def _route_file(source: DataSource) -> list[RawTable]:
     if FileReader.can_handle(path):
         return FileReader.read(path, table_name=source.name)
     elif ExcelReader.can_handle(path):
-        return ExcelReader.read(path, table_name=source.name)
+        try:
+            return ExcelReader.read(path, table_name=source.name)
+        except Exception as e:
+            # 纯图表工作簿（只有粘贴的图、没有数据区）走内嵌图片抽表
+            if OfficeImageReader.can_handle(path):
+                logger.info("表格解析失败，尝试内嵌图片抽表", path=path, error=str(e))
+                try:
+                    return OfficeImageReader.read(
+                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                    )
+                except Exception as img_error:
+                    logger.warning(
+                        "内嵌图片兜底失败，保留原始错误", path=path, error=str(img_error)
+                    )
+            raise
     elif MultimodalReader.is_image(path):
         # 图片：视觉模型优先，失败回退 Unstructured OCR
         try:
@@ -218,15 +236,39 @@ def _route_file(source: DataSource) -> list[RawTable]:
             reason = f"llm_tabular_failed: {e}"
             return _mark_degraded(tables, reason)
     elif DocumentReader.can_handle(path):
-        tables = DocumentReader.read(path, table_name=source.name)
-        # PDF 文字层解析退化（只剩单列文本）时，用视觉模型兜底
-        if MultimodalReader.is_pdf(path) and _is_degenerate(tables):
+        try:
+            tables = DocumentReader.read(path, table_name=source.name)
+        except Exception as e:
+            # Word/PPT 只有图片、文字层没有内容时，直接走内嵌图片抽表
+            if OfficeImageReader.can_handle(path):
+                logger.info("文档解析失败，尝试内嵌图片抽表", path=path, error=str(e))
+                try:
+                    return OfficeImageReader.read(
+                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                    )
+                except Exception as img_error:
+                    logger.warning(
+                        "内嵌图片兜底失败，保留原始错误", path=path, error=str(img_error)
+                    )
+            raise
+
+        # 文字层解析退化（只剩单列文本）时，用视觉模型兜底：
+        # PDF -> 整页渲染；Office 文档 -> 只取内嵌图片
+        if _is_degenerate(tables):
             try:
-                return MultimodalReader.read(
-                    path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
-                )
+                if MultimodalReader.is_pdf(path):
+                    return MultimodalReader.read(
+                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                    )
+                if OfficeImageReader.can_handle(path):
+                    return OfficeImageReader.read(
+                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                    )
+            except NoEmbeddedImages:
+                # 纯文字文档没有图片：保留文字解析结果，不算降级
+                return tables
             except Exception as e:
-                logger.warning("PDF 视觉兜底失败，保留文本解析结果", path=path, error=str(e))
+                logger.warning("视觉兜底失败，保留文本解析结果", path=path, error=str(e))
                 return _mark_degraded(tables, f"multimodal_failed: {e}")
         return tables
     elif ArchiveReader.can_handle(path):
@@ -296,8 +338,8 @@ def _route_document(source: DataSource) -> list[RawTable]:
     """路由文档类型 (PDF/DOCX/图片)。"""
     if not source.path:
         raise ValueError("document 类型数据源必须提供 path")
-    # 图片走多模态（显式 document 入口同样受益）
-    if MultimodalReader.is_image(source.path):
+    # 图片 / Office 文档（内嵌图片）走统一的 file 路由，享受多模态兜底
+    if MultimodalReader.is_image(source.path) or OfficeImageReader.can_handle(source.path):
         return _route_file(source)
     strategy = source.options.get("strategy", "auto")
     return DocumentReader.read(source.path, table_name=source.name, strategy=strategy)

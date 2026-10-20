@@ -38,7 +38,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 59 passed / 15 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 72 passed / 15 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -75,7 +75,7 @@
   `The reasoning_content in the thinking mode must be passed back`；`chart_generator` 已兜底为
   "退回 prompt 重试"，任务仍能成功。
 - 评估口径是"能不能直接支撑画图"，不是逐字一致：列名双向包含即命中，数值按容差比（图表估读 ±12%）。
-  基线 7/7：Markdown 表、日志、表格截图、柱状图估读（误差约 2%）、无表格图不臆造、合并单元格下填、多表选主表。
+  基线 8/8：Markdown 表、日志、表格截图、柱状图估读（误差约 2%）、无表格图不臆造、合并单元格下填、多表选主表、docx 内嵌表格截图。
 - 造图用 Pillow + `C:\Windows\Fonts\msyh.ttc`（否则中文渲染成方框）；"无表格"用例用渐变图检验不臆造。
 - 改了多模态 prompt / reader 后，先在 `-s` 下看真实输出，再决定阈值和是否调 prompt；别只跑假模型单测就收工。
 
@@ -168,12 +168,14 @@ $env:BACKEND_URL="http://localhost:5000"
 
 ```
 上传图片/PDF → router._route_file → MultimodalReader（视觉模型）
+上传 docx/pptx/xlsx（内嵌图片）→ DocumentReader 失败/退化 → OfficeImageReader（视觉模型）
             → {"columns", "rows"} → DataFrame → RawTable
             → series 拆分(.parquet) → 与普通表格一样进 plan / 图表生成
 ```
 
 代码位置：`service/data_ingestion/readers/multimodal_reader.py`，
-prompt 在 `prompts/multimodal_tabularize_prompt.py`。
+prompt 在 `prompts/multimodal_tabularize_prompt.py`；
+Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`。
 
 - **模型凭证优先级**：`VISION_BASE_URL`/`VISION_API_KEY` > 请求带来的 `model_url`/`model_api_key`
   > `.env` 的 `BASE_URL`/`API_KEY`。`.env` 目前是空模板，实际凭证由前端 `settings.json` 下发。
@@ -187,6 +189,14 @@ prompt 在 `prompts/multimodal_tabularize_prompt.py`。
   会吃掉 max_tokens，输出被截断会报错点名 `VISION_MAX_TOKENS`，宁可调大。
 - **降级顺序**：图片先视觉模型，失败回退 Unstructured OCR（本机没装 tesseract，回退基本必失败）；
   PDF 先文字层解析，只有退化成单列 `content` 时才走视觉模型。两条路都失败要抛带两段原因的错误。
+- **Office 内嵌图片**：docx/pptx/xlsx 里的表格常是截图，Unstructured 只拿文字层。文字层为空、
+  解析抛错或退化成单列 `content` 时，`OfficeImageReader` 按 OOXML zip 读 `word|ppt|xl/media`
+  下的图片交给视觉模型，一张图一条 RawTable（多图时命名 `<名字>_img1`…）。过滤规则：
+  字节数 >= `VISION_MIN_IMAGE_BYTES`(4096)、最短边 >= `VISION_MIN_IMAGE_SIDE`(160)、
+  最多 `VISION_MAX_OFFICE_IMAGES`(8) 张（按 `image2 < image10` 自然序）。纯文字文档（没有图片）
+  保留文字结果且**不标** degraded；有图片但抽表失败才标 `multimodal_failed`。
+  真机验过“只贴一张表格截图的 docx”：Unstructured 抛“未提取到任何内容”→ 兜底 → 7.4 秒拿到
+  列名逐字一致（`城市`/`2023 年`/`2024 年`）的 3 行表。
 - **用户意图**：`ingest_data_source` 把 `user_prompt` 作为 `vision_hint` 透传，帮助模型在多张表中选主表；
   单文件用 `build_file_options()`，多文件用 `ingest_files(..., hint=..., vision_cfg=...)`。
 - `/api/data-profile` 也能直接传图片/PDF（多模态这一步会调用 LLM），可用于抽表预览。

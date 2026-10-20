@@ -403,3 +403,39 @@ def test_image_multiple_tables_picks_main(test_llm, tmp_path: Path):
     }
     assert _report("图片-多表", checks) == 1.0
 
+
+def test_docx_embedded_table_image(test_llm, tmp_path: Path):
+    """Word 里贴的表格截图 -> 表格（走 OOXML 内嵌图片链路）。"""
+    from docx import Document
+    from docx.shared import Inches
+
+    from service.data_ingestion.readers.office_image_reader import OfficeImageReader
+
+    png = tmp_path / "table.png"
+    _render_table(
+        png,
+        ["城市", "2023 年", "2024 年"],
+        [["北京", "1200", "1500"], ["上海", "1100", "1400"], ["广州", "900", "1250"]],
+    )
+
+    doc = Document()
+    doc.add_paragraph("附件：2024 年区域销售情况（截图）")
+    doc.add_picture(str(png), width=Inches(6))
+    docx_path = tmp_path / "sales_report.docx"
+    doc.save(str(docx_path))
+
+    tables = OfficeImageReader.read(str(docx_path), table_name="区域销售", llm=test_llm)
+    df = tables[0].df
+    beijing = _row_values(df, "北京", "城市")
+    values_2024 = [_cell_number(v) for k, v in beijing.items() if "2024" in _norm(k)]
+    print("\nDOCX内嵌图 columns:", list(df.columns), "rows:", len(df), "path:", tables[0].source_path)
+    print(df.to_string(index=False))
+
+    checks = {
+        "只抽到1张表": len(tables) == 1,
+        "列名与原图一致": [_norm(c) for c in df.columns] == ["城市", "2023年", "2024年"],
+        "行数=3": len(df) == 3,
+        "北京2024=1500": any(v == 1500 for v in values_2024 if v is not None),
+    }
+    assert _report("DOCX-内嵌表格截图", checks) == 1.0
+
