@@ -135,6 +135,24 @@ def test_series_path_outside_session_is_refused(client, tmp_path: Path):
     assert resp.status_code == 404
 
 
+def test_upload_filename_cannot_escape_upload_dir(client, tmp_path: Path):
+    source = tmp_path / "source" / "evil.csv"
+    source.parent.mkdir()
+    source.write_text("城市,销售额\n北京,1200\n", encoding="utf-8")
+
+    with open(source, "rb") as fh:
+        resp = client.post(
+            "/api/data-profile",
+            data={"files": (fh, "../evil.csv")},
+            content_type="multipart/form-data",
+        )
+
+    assert resp.status_code == 200
+    # 不能被写到 uploads 的上一级
+    assert not (tmp_path / "evil.csv").exists()
+    assert len(list((tmp_path / "uploads").glob("*_evil.csv"))) == 1
+
+
 def test_data_profile_returns_export_links_and_keeps_session(client, tmp_path: Path):
     csv_path = tmp_path / "sales.csv"
     csv_path.write_text(

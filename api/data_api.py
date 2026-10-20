@@ -68,10 +68,14 @@ def data_profile():
     for f in files:
         if not f or not f.filename:
             continue
-        save_path = get_upload_dir() / f"{uuid.uuid4().hex}_{f.filename}"
+        # 只取 basename，防止客户端传 "../x.csv" 把文件写到上传目录之外
+        original_name = Path(f.filename).name
+        if not original_name:
+            continue
+        save_path = get_upload_dir() / f"{uuid.uuid4().hex}_{original_name}"
         f.save(str(save_path))
         saved_paths.append(str(save_path))
-        saved_names.append(Path(f.filename).stem)
+        saved_names.append(Path(original_name).stem)
 
     if not saved_paths:
         return jsonify(ErrorResponse(detail="必须提供 files").model_dump()), 400

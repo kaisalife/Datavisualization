@@ -5,6 +5,7 @@ POST /api/complete-viz-code   可视化代码补全
 """
 import asyncio
 import uuid
+from pathlib import Path
 
 from flask import Blueprint, request, jsonify
 from Entity import CompleteVizCodeRequest, ErrorResponse
@@ -38,7 +39,10 @@ def complete_viz_code():
             for f in uploaded:
                 if not f or not f.filename:
                     continue
-                save_path = get_upload_dir() / f"{uuid.uuid4().hex}_{f.filename}"
+                original_name = Path(f.filename).name
+                if not original_name:
+                    continue
+                save_path = get_upload_dir() / f"{uuid.uuid4().hex}_{original_name}"
                 f.save(str(save_path))
                 code_file_paths.append(str(save_path))
 

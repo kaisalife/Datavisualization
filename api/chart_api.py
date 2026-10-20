@@ -41,7 +41,10 @@ def generate_chart_with_prompt():
         for f in files:
             if not f or not f.filename:
                 continue
-            save_path = get_upload_dir() / f"{uuid.uuid4().hex}_{f.filename}"
+            original_name = Path(f.filename).name
+            if not original_name:
+                continue
+            save_path = get_upload_dir() / f"{uuid.uuid4().hex}_{original_name}"
             f.save(str(save_path))
             saved_paths.append(str(save_path))
 
