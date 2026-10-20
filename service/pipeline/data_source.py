@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from service.runtime.exceptions import ConfigError
 from service.observability import get_logger
+from service.runtime.utils import display_name_from_path
 
 logger = get_logger(__name__)
 
@@ -56,6 +57,7 @@ async def ingest_data_source(model_, first_file_stem: str, agent_logs: list):
             if len(model_.file_paths) > 1:
                 profile = await ingest_files(
                     model_.file_paths,
+                    names=[display_name_from_path(p) for p in model_.file_paths],
                     hint=vision_hint,
                     vision_cfg=vision_cfg,
                     multi_table=multi_table,

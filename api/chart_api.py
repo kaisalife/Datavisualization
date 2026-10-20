@@ -54,6 +54,13 @@ def generate_chart_with_prompt():
         mcp_prompt = request.form.get("mcp_prompt", "")
         skill_prompt = request.form.get("skill_prompt", "")
         viz_mode = request.form.get("viz_mode", "auto")
+        # 一图多表：把图片 / PDF / Office 内嵌图片里的每张表都抽出来
+        multi_table = (request.form.get("multi_table") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
         # --- 数据库源（JSON string）---
         db_config = None
@@ -89,6 +96,7 @@ def generate_chart_with_prompt():
             mcp_prompt=mcp_prompt,
             skill_prompt=skill_prompt,
             viz_mode=viz_mode,
+            multi_table=multi_table,
         )
 
         # --- 提交任务 ---

@@ -549,3 +549,113 @@ def test_image_heic_table(test_llm, tmp_path: Path):
         "北京2024=1500": any(v == 1500 for v in values_2024 if v is not None),
     }
     assert _report("图片-HEIC", checks) == 1.0
+
+
+def test_pdf_scanned_table(test_llm, tmp_path: Path):
+    """扫描版 PDF（无文字层）-> 逐页渲染后视觉抽表。"""
+    from PIL import Image
+
+    from service.data_ingestion.readers.multimodal_reader import MultimodalReader
+
+    png = tmp_path / "table.png"
+    _render_table(
+        png,
+        ["城市", "2023 年", "2024 年"],
+        [["北京", "1200", "1500"], ["上海", "1100", "1400"], ["广州", "900", "1250"]],
+    )
+    pdf = tmp_path / "scan.pdf"
+    Image.open(png).convert("RGB").save(pdf, "PDF", resolution=150)
+
+    tables = MultimodalReader.read(str(pdf), llm=test_llm)
+    df = tables[0].df
+    beijing = _row_values(df, "北京", "城市")
+    values_2024 = [_cell_number(v) for k, v in beijing.items() if "2024" in _norm(k)]
+    print("\nPDF扫描件 columns:", list(df.columns), "rows:", len(df), "tables:", len(tables))
+    print(df.to_string(index=False))
+
+    checks = {
+        "单页1张表": len(tables) == 1,
+        "列名与原图一致": [_norm(c) for c in df.columns] == ["城市", "2023年", "2024年"],
+        "行数=3": len(df) == 3,
+        "北京2024=1500": any(v == 1500 for v in values_2024 if v is not None),
+    }
+    assert _report("PDF-扫描表格", checks) == 1.0
+
+
+def test_pdf_multiple_pages(test_llm, tmp_path: Path):
+    """两页 PDF、每页一张不同的表 -> 两条 RawTable（_p1/_p2）。"""
+    from PIL import Image
+
+    from service.data_ingestion.readers.multimodal_reader import MultimodalReader
+
+    page1 = tmp_path / "page1.png"
+    _render_table(
+        page1,
+        ["城市", "2024 年"],
+        [["北京", "1500"], ["上海", "1400"], ["广州", "1250"]],
+    )
+    page2 = tmp_path / "page2.png"
+    _render_table(page2, ["产品", "库存"], [["A", "30"], ["B", "45"]])
+
+    pdf = tmp_path / "report.pdf"
+    images = [Image.open(page1).convert("RGB"), Image.open(page2).convert("RGB")]
+    images[0].save(pdf, "PDF", save_all=True, append_images=images[1:], resolution=150)
+
+    tables = MultimodalReader.read(str(pdf), llm=test_llm)
+    print("\nPDF多页 names:", [t.name for t in tables])
+    for t in tables:
+        print(f"[{t.name}] {list(t.df.columns)} rows={len(t.df)}")
+        print(t.df.to_string(index=False))
+
+    names = [t.name for t in tables]
+    sales = next((t.df for t in tables if any("城市" in _norm(c) for c in t.df.columns)), None)
+    stock = next((t.df for t in tables if any("产品" in _norm(c) for c in t.df.columns)), None)
+    beijing = _row_values(sales, "北京", "城市") if sales is not None else {}
+    values_2024 = [_cell_number(v) for k, v in beijing.items() if "2024" in _norm(k)]
+    a_row = _row_values(stock, "A", "产品") if stock is not None else {}
+
+    checks = {
+        "2页各1张表": len(tables) == 2,
+        "命名含p1/p2": names[0].endswith("_p1") and names[1].endswith("_p2"),
+        "销售页3行": sales is not None and len(sales) == 3,
+        "北京2024=1500": any(v == 1500 for v in values_2024 if v is not None),
+        "库存页2行": stock is not None and len(stock) == 2,
+        "库存A=30": _cell_number(a_row.get("库存", a_row.get(_key_column(stock, "库存")))) == 30 if a_row else False,
+    }
+    assert _report("PDF-多页", checks) == 1.0
+
+
+def test_pptx_embedded_table_image(test_llm, tmp_path: Path):
+    """PPT 里贴的表格截图 -> 表格（pptx/media 抽取）。"""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    from service.data_ingestion.readers.office_image_reader import OfficeImageReader
+
+    png = tmp_path / "table.png"
+    _render_table(
+        png,
+        ["城市", "2023 年", "2024 年"],
+        [["北京", "1200", "1500"], ["上海", "1100", "1400"], ["广州", "900", "1250"]],
+    )
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.shapes.add_picture(str(png), Inches(0.5), Inches(0.7), width=Inches(6))
+    pptx_path = tmp_path / "deck.pptx"
+    prs.save(str(pptx_path))
+
+    tables = OfficeImageReader.read(str(pptx_path), table_name="deck", llm=test_llm)
+    df = tables[0].df
+    beijing = _row_values(df, "北京", "城市")
+    values_2024 = [_cell_number(v) for k, v in beijing.items() if "2024" in _norm(k)]
+    print("\nPPT内嵌图 columns:", list(df.columns), "rows:", len(df), "path:", tables[0].source_path)
+    print(df.to_string(index=False))
+
+    checks = {
+        "只抽到1张表": len(tables) == 1,
+        "列名与原图一致": [_norm(c) for c in df.columns] == ["城市", "2023年", "2024年"],
+        "行数=3": len(df) == 3,
+        "北京2024=1500": any(v == 1500 for v in values_2024 if v is not None),
+    }
+    assert _report("PPT-内嵌表格截图", checks) == 1.0

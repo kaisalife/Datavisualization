@@ -38,7 +38,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 85 passed / 18 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 90 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -75,7 +75,7 @@
   `The reasoning_content in the thinking mode must be passed back`；`chart_generator` 已兜底为
   "退回 prompt 重试"，任务仍能成功。
 - 评估口径是"能不能直接支撑画图"，不是逐字一致：列名双向包含即命中，数值按容差比（图表估读 ±12%）。
-  基线 10/10：Markdown 表、日志、表格截图、柱状图估读（误差约 2%）、无表格图不臆造、合并单元格下填、多表选主表、docx 内嵌表格截图、一图多表全抽、HEIC 照片。
+  基线 13/13：Markdown 表、日志、表格截图、柱状图估读（误差约 2%）、无表格图不臆造、合并单元格下填、多表选主表、docx 内嵌表格截图、一图多表全抽、HEIC 照片、扫描版 PDF、PDF 多页（`_p1`/`_p2`）、pptx 内嵌表格截图。
 - 造图用 Pillow + `C:\Windows\Fonts\msyh.ttc`（否则中文渲染成方框）；"无表格"用例用渐变图检验不臆造。
 - 改了多模态 prompt / reader 后，先在 `-s` 下看真实输出，再决定阈值和是否调 prompt；别只跑假模型单测就收工。
 
@@ -185,6 +185,7 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   否则会拿文本模型跑图片。
 - **图片预处理**：Pillow 按 EXIF 转正、最大边 `VISION_MAX_IMAGE_SIDE`(2000)，截图类存 PNG，
   超过 4MB 再降级 JPEG；PDF 用 pypdfium2 渲染前 `VISION_MAX_PDF_PAGES`(5) 页。
+  扫描版 PDF（无文字层）逐页走视觉抽表，命名 `_p1`/`_p2`；两页各一张表的真机用例已纳入评估。
 - **图片格式**：png/jpg/jpeg/webp/bmp/gif/tif/tiff + AVIF（Pillow 内置，须 >=11.3）+
   HEIC/HEIF（iPhone 照片，`pillow-heif` 解码，`_register_heif()` 懒注册）。缺 pillow-heif 时
   会抛带安装命令的 RuntimeError，而不是 UnidentifiedImageError。前端文件过滤器同步加了这三种格式。
@@ -218,6 +219,17 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
 - **真机 E2E 已验**：`/api/generate-chart-with-prompt` 传 PNG + `model_url/model_api_key` +
   `model_type=deepseek-v4.1-flash`、`viz_mode=auto`，约 60–90 秒返回 4 张图表；抽表值与原图逐值一致
   （近期一次 58 秒、0 次 debug 重试）。
+- **整条链路真机验过**（docx 里只贴一张表格截图 → 图表）：约 96 秒产出 4 张图，图表 HTML 里含
+  原图数值；HEIC 一图两表 + `multi_table=1` 时，两张表都成为 series（`..._t1` / `..._t2`），
+  agent 分别出图（约 73 秒）。
+- **`multi_table` 请求级开关**：`/api/generate-chart-with-prompt` 与 `/api/data-profile` 都解析表单
+  字段并透传（`chart_api` 曾漏接，只有 data-profile 生效；回归见 `chart_api` + `data_source`）。
+- **上传文件名的 UUID 前缀只用于磁盘防冲突**：接口存成 `<32位hex>_<原名>`，但表名 / series 名 / 预览名
+  用 `display_name_from_path()`（`service/runtime/utils.py`）去掉前缀；`runtime/charts/` 目录仍保留
+  前缀，避免同名文件的两个任务互相覆盖。`ingest_files` 单文件分支也要带上 `multi_table`（已修）。
+- **错误路径行为**：无表格图片 / 损坏图片 → HTTP 500，`detail` 同时给出视觉模型与 OCR 两段原因；
+  纯文字 docx 没有表格也没有图片 → 200，退化为单列 `content` 表且**不标** degraded（沿用原设计）。
+  多文件混合（HEIC + CSV）→ 200，series 目录同时包含视觉表与 CSV 表。
 
 ## 任务生命周期与探针
 

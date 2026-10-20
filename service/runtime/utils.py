@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from pathlib import Path
 
 from service.observability import get_logger
 
@@ -10,6 +11,25 @@ JSON_PATTERN = re.compile(r'```json\s*(.*?)\s*```', re.DOTALL)
 CODE_PATTERN = re.compile(r'```python\s*(.*?)\s*```', re.DOTALL)
 CODE_FALLBACK_PATTERN = re.compile(r'```\s*(.*?)\s*```', re.DOTALL)
 CHART_PATH_PATTERN = re.compile(r'chart_.*?\.html')
+# 上传文件落盘时加了 32 位 hex 前缀防重名，展示表名要去掉
+UPLOAD_PREFIX_PATTERN = re.compile(r"^[0-9a-f]{32}_", re.IGNORECASE)
+
+
+def display_name_from_path(path: str | Path) -> str:
+    """去掉上传文件名的 UUID 前缀，返回展示用表名。
+
+    接口保存上传文件时用 ``<32位hex>_<原名>`` 防重名；这个前缀不该进入
+    表名 / series 名 / agent 上下文。没有前缀时原样返回 stem。
+
+    Args:
+        path: 上传文件的磁盘路径（或任意带文件名的路径）
+
+    Returns:
+        str: 去掉 UUID 前缀后的文件名 stem；清理后为空时回退原 stem。
+    """
+    stem = Path(path).stem
+    cleaned = UPLOAD_PREFIX_PATTERN.sub("", stem)
+    return cleaned or stem
 
 
 def get_env_int(name: str, default: int) -> int:

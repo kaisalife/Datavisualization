@@ -422,7 +422,10 @@ async def ingest_files(
         name = names[0] if names else None
         return await ingest(
             DataSource(
-                kind="file", path=paths[0], name=name, options=build_file_options(hint, vision_cfg)
+                kind="file",
+                path=paths[0],
+                name=name,
+                options=build_file_options(hint, vision_cfg, multi_table),
             )
         )
 

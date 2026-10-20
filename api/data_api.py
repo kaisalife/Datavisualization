@@ -53,12 +53,14 @@ def data_profile():
         vision_cfg = None
     files = request.files.getlist("files")
     saved_paths = []
+    saved_names = []
     for f in files:
         if not f or not f.filename:
             continue
         save_path = get_upload_dir() / f"{uuid.uuid4().hex}_{f.filename}"
         f.save(str(save_path))
         saved_paths.append(str(save_path))
+        saved_names.append(Path(f.filename).stem)
 
     if not saved_paths:
         return jsonify(ErrorResponse(detail="必须提供 files").model_dump()), 400
@@ -70,12 +72,17 @@ def data_profile():
         async def _run():
             if len(saved_paths) > 1:
                 return await ingest_files(
-                    saved_paths, hint=hint, vision_cfg=vision_cfg, multi_table=multi_table
+                    saved_paths,
+                    names=saved_names,
+                    hint=hint,
+                    vision_cfg=vision_cfg,
+                    multi_table=multi_table,
                 )
             return await ingest(
                 DataSource(
                     kind="file",
                     path=saved_paths[0],
+                    name=saved_names[0],
                     options=build_file_options(hint, vision_cfg, multi_table),
                 )
             )

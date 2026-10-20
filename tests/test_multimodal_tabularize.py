@@ -106,6 +106,34 @@ class TestMultimodalReader:
         with pytest.raises(FileNotFoundError):
             MultimodalReader.read(str(tmp_path / "nope.png"), llm=_FakeLLM("{}"))
 
+    def test_pdf_pages_are_named_p1_p2(self, tmp_path: Path, monkeypatch):
+        """多页 PDF：每页一条 RawTable，命名带 _p1/_p2，来源标 #pageN。"""
+        pdf = tmp_path / "doc.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+
+        monkeypatch.setattr(
+            "service.data_ingestion.readers.multimodal_reader._pdf_page_data_urls",
+            lambda path, max_pages: [
+                "data:image/png;base64,AAA",
+                "data:image/png;base64,BBB",
+            ],
+        )
+
+        class _SeqLLM:
+            def __init__(self):
+                self.calls = 0
+
+            def invoke(self, messages):
+                self.calls += 1
+                return _FakeReply(_payload(["城市"], [{"城市": f"城市{self.calls}"}]))
+
+        tables = MultimodalReader.read(str(pdf), llm=_SeqLLM())
+
+        assert [t.name for t in tables] == ["doc_p1", "doc_p2"]
+        assert [t.df["城市"].tolist() for t in tables] == [["城市1"], ["城市2"]]
+        assert tables[0].source_path.endswith("#page1")
+        assert tables[1].source_path.endswith("#page2")
+
     def test_can_handle_covers_images_and_pdf(self):
         assert MultimodalReader.can_handle("a.PNG")
         assert MultimodalReader.can_handle("a.jpeg")

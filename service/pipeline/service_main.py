@@ -21,12 +21,14 @@ try:
     from service.runtime.config import load_config, get_agent_class
     from service.runtime.query_engine import QueryEngine
     from service.runtime.exceptions import ConfigError
+    from service.runtime.utils import display_name_from_path
 except ImportError:
     from Entity import GenerateChartWithPromptRequest
     from .data_preview import get_smart_file_preview
     from ..runtime.config import load_config, get_agent_class
     from ..runtime.query_engine import QueryEngine
     from ..runtime.exceptions import ConfigError
+    from ..runtime.utils import display_name_from_path
 
 from service.pipeline.data_source import ingest_data_source
 from service.pipeline.plan_generator import generate_chart_plans
@@ -88,15 +90,21 @@ async def _init_chat(model_, mcp_config, agent_logs: list):
 
 
 def _prepare_output_folder(model_) -> tuple[Path, str]:
-    """提前派生输出目录（data_preview 需要保存接口代码）。"""
+    """提前派生输出目录（data_preview 需要保存接口代码）。
+
+    Returns:
+        (输出目录含 UUID 前缀防冲突, 展示用表名（去掉上传 UUID 前缀）)
+    """
     from service.runtime.constants import get_charts_dir
     base_charts_folder = get_charts_dir()
     base_charts_folder.mkdir(parents=True, exist_ok=True)
-    first_file_stem = Path(model_.file_paths[0]).stem if model_.file_paths else "dataset"
-    output_folder = base_charts_folder / first_file_stem
+    raw_stem = Path(model_.file_paths[0]).stem if model_.file_paths else "dataset"
+    output_folder = base_charts_folder / raw_stem
     output_folder.mkdir(exist_ok=True)
     logger.info("输出文件夹", folder=str(output_folder))
-    return output_folder, first_file_stem
+    # 上传文件名形如 <32位hex>_<原名>：目录保留前缀防冲突，表名/series 用原名
+    display_name = display_name_from_path(model_.file_paths[0]) if model_.file_paths else raw_stem
+    return output_folder, display_name
 
 
 @trace(category="pipeline")
