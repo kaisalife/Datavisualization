@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -18,7 +19,10 @@ def test_profile_preview_and_stats_are_standard_json():
         }
     )
 
-    profile = build_profile_from_df(df, "t", "file", "x")
+    # inf 参与统计时 numpy 会发 RuntimeWarning，这里故意构造非法值，忽略即可
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        profile = build_profile_from_df(df, "t", "file", "x")
     payload = profile.to_prompt_dict()
 
     # allow_nan=False：NaN / Infinity 还没清理干净就会直接抛 ValueError
