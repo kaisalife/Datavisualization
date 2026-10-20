@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import time
 from pathlib import Path
 
@@ -141,6 +142,8 @@ async def ingest(source: DataSource) -> DataProfile:
             kind=source.kind,
             exc_info=True,
         )
+        # 失败时不留半成品会话目录（空目录不会被 24h 清理逻辑识别）
+        shutil.rmtree(session_dir, ignore_errors=True)
         raise
 
 
@@ -478,6 +481,7 @@ async def ingest_files(
             n_files=len(paths),
             exc_info=True,
         )
+        shutil.rmtree(session_dir, ignore_errors=True)
         raise
 
 

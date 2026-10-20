@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 127 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 132 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -220,6 +220,17 @@ $env:BACKEND_URL="http://localhost:5000"
 `_is_id_label()` 按英文整词匹配，`width` 不会因为含 `id` 被当成编号。
 
 回归：`tests/test_numeric_coercion.py`、`tests/test_series_split.py`。
+
+## 预览数据导出
+
+`POST /api/data-profile` 的响应新增 `session_id` 与 `exports[]`（每个 series 的 `csv_url`）。
+预览不再立即删除 series 会话目录：保留到下一次 `allocate_session_dir` 时按 24 小时 TTL 清理。
+
+- `GET /api/data-profile/export?session_id=...&series_id=...` 返回单系列 CSV（UTF-8 BOM，Excel 不乱码）；
+  不传 `series_id` 时打包全部系列为 ZIP。
+- `session_id` 必须匹配 `ds_<12位hex>`；`series_id` 只从 `manifest.json` 查，解析后的 parquet
+  路径必须落在会话目录内，防路径穿越。
+- 回归：`tests/test_data_profile_export.py`（单文件 / ZIP / 非法会话 / 越界路径 / 预览响应链接）。
 
 ## 多模态输入（图片 / PDF → 表格）
 

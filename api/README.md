@@ -29,6 +29,7 @@ api/
 | `GET`  | `/api/chart/<chart_id>` | `chart_api.py` | ❌ | 获取生成的图表 HTML |
 | `POST` | `/api/complete-viz-code` | `code_api.py` | ✅ | 现有 Python 文件追加可视化代码 |
 | `POST` | `/api/data-profile` | `data_api.py` | ✅ | 数据预览 / 图片·PDF 抽表 |
+| `GET`  | `/api/data-profile/export` | `data_api.py` | ✅ | 导出预览数据（CSV / ZIP） |
 | `GET`  | `/api/charts-dir` | `data_api.py` | ✅ | 取图表输出目录 |
 | `GET`  | `/api/conversations` | `conversation_api.py` | ✅ | 历史对话列表（分页） |
 | `GET`  | `/api/conversations/<id>` | `conversation_api.py` | ✅ | 对话详情（含 agent_logs） |
@@ -206,7 +207,16 @@ X-API-Key: <your_key>
     "schema": [{"name": "年份", "type": "int64"}],
     "preview": [{"年份": 2023, "销售额": 1200}],
     "series_index": "...",
-    "source_kind": "file"
+    "source_kind": "file",
+    "session_id": "ds_0123456789ab",
+    "exports": [
+      {
+        "series_id": "sales.城市",
+        "name": "城市",
+        "axis_kind": "categorical_comparison",
+        "csv_url": "/api/data-profile/export?session_id=ds_0123456789ab&series_id=sales.%E5%9F%8E%E5%B8%82"
+      }
+    ]
   },
   "file_count": 1
 }
@@ -215,6 +225,25 @@ X-API-Key: <your_key>
 图片 / PDF / Office 内嵌图片走视觉模型时**会调用 LLM**；纯表格文件不调用。
 Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列文本时才把内嵌图片交给视觉模型。
 图片格式：png / jpg / jpeg / webp / gif / bmp / tif / tiff / avif / heic / heif（HEIC 需 `pillow-heif`）。
+
+预览产生的 series 会话目录会保留（超过 24 小时后由下一次 `allocate_session_dir` 清理），
+便于前端通过 `exports[].csv_url` 下载抽表结果。
+
+---
+
+### GET /api/data-profile/export
+
+按会话导出 series 数据（CSV 带 UTF-8 BOM，Excel 打开中文不乱码）。
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `session_id` | 是 | `POST /api/data-profile` 返回的 `profile.session_id` |
+| `series_id` | 否 | 只导出指定系列；不传则把全部系列打包成 ZIP |
+
+- 单系列返回 `text/csv`；不传 `series_id` 返回 `application/zip`（每个系列一个 `.csv`）。
+- `series_id` 只从会话的 `manifest.json` 查找，且解析后的 parquet 路径必须位于会话目录内；
+  非法/过期会话返回 404，防止路径穿越。
+- 会话目录由 `TEMP_DATASETS_DIR` 决定，默认 `runtime/datasets/`。
 
 ---
 
