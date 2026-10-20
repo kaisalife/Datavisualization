@@ -22,10 +22,24 @@ from service.observability import get_logger
 logger = get_logger(__name__)
 
 
+_DB_TYPE_ALIASES = {
+    "postgres": "postgresql",
+    "postgresql": "postgresql",
+    "mysql": "mysql",
+    "sqlite": "sqlite",
+}
+
+
+def _normalize_db_type(db_type: str) -> str:
+    """统一数据库类型大小写与常见别名（前端默认发 "MySQL" / "PostgreSQL"）。"""
+    text = str(db_type or "").strip().lower()
+    return _DB_TYPE_ALIASES.get(text, text)
+
+
 def _quote_identifier(name: str, db_type: str) -> str:
     """按数据库方言引用表名，转义标识符里的引号（防拼接出非法 SQL）。"""
     text = str(name)
-    if db_type == "mysql":
+    if _normalize_db_type(db_type) == "mysql":
         return "`" + text.replace("`", "``") + "`"
     return '"' + text.replace('"', '""') + '"'
 
@@ -35,13 +49,14 @@ class DatabaseReader:
 
     @staticmethod
     def can_handle(db_type: str) -> bool:
-        return (db_type or "").lower() in {"postgresql", "mysql", "sqlite"}
+        return _normalize_db_type(db_type) in {"postgresql", "mysql", "sqlite"}
 
     @staticmethod
     def _build_url(db_config: dict, db_type: str):
         """构建 sqlalchemy URL（postgres/mysql 用），自动转义账号密码里的特殊字符。"""
         from sqlalchemy.engine import URL
 
+        db_type = _normalize_db_type(db_type)
         default_port = 5432 if db_type == "postgresql" else 3306
         host = str(db_config.get("host") or "localhost")
         try:
@@ -73,6 +88,7 @@ class DatabaseReader:
 
         sqlite 用标准库连接；postgres/mysql 用 sqlalchemy（需安装对应驱动）。
         """
+        db_type = _normalize_db_type(db_type)
         if db_type == "sqlite":
             path = db_config.get("database", db_config.get("path", ""))
             if not path:
@@ -109,6 +125,7 @@ class DatabaseReader:
         Returns:
             list[RawTable]（多表时每个一条）
         """
+        db_type = _normalize_db_type(db_type)
         if not DatabaseReader.can_handle(db_type):
             raise ValueError(f"不支持的数据库类型: {db_type}")
 

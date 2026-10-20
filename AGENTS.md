@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 221 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 224 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -233,6 +233,12 @@ $env:BACKEND_URL="http://localhost:5000"
 `_is_id_label()` 按英文整词匹配，`width` 不会因为含 `id` 被当成编号。
 
 回归：`tests/test_numeric_coercion.py`、`tests/test_series_split.py`。
+
+## 数据库读取
+
+`DatabaseReader` 入口统一把 `db_type` 去空格、转小写，并把 `postgres` 归一到 `postgresql`：前端设置里
+默认发的是 `MySQL` / `PostgreSQL`，不能直接拿原值去比较。表名按方言引用（MySQL 反引号，其余双引号），
+连接串用 SQLAlchemy `URL.create` 转义账号密码里的 `@/:?#`。回归见 `tests/test_database_reader.py`。
 
 ## 表头清洗
 

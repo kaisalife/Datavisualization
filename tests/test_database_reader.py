@@ -32,6 +32,17 @@ def test_sqlite_reads_normal_table(tmp_path):
     ]
 
 
+def test_sqlite_accepts_uppercase_type_from_frontend(tmp_path):
+    db_path = _make_sqlite(tmp_path, "sales")
+
+    tables = DatabaseReader.read(
+        {"database": str(db_path)}, "SQLite", tables=["sales"]
+    )
+
+    assert len(tables) == 1
+    assert tables[0].df["销售额"].tolist() == [1200, 1500]
+
+
 def test_sqlite_table_name_with_double_quote(tmp_path):
     db_path = _make_sqlite(tmp_path, 'sales"2024')
 
@@ -73,6 +84,11 @@ def test_quote_identifier_escapes_by_dialect():
     assert _quote_identifier("a`b", "postgresql") == '"a`b"'
 
 
+def test_quote_identifier_accepts_frontend_case():
+    assert _quote_identifier("a`b", "MySQL") == "`a``b`"
+    assert _quote_identifier('a"b', "PostgreSQL") == '"a""b"'
+
+
 def test_build_url_escapes_special_characters_in_credentials():
     url = DatabaseReader._build_url(
         {
@@ -91,6 +107,16 @@ def test_build_url_escapes_special_characters_in_credentials():
     assert url.host == "db.example.com"
     assert url.port == 5433
     assert url.database == "my db"
+
+
+def test_build_url_accepts_frontend_case_and_postgres_alias():
+    mysql_url = DatabaseReader._build_url({"database": "d"}, "MySQL")
+    assert mysql_url.drivername == "mysql+pymysql"
+    assert mysql_url.port == 3306
+
+    pg_url = DatabaseReader._build_url({"database": "d"}, "Postgres")
+    assert pg_url.drivername == "postgresql+psycopg2"
+    assert pg_url.port == 5432
 
 
 def test_build_url_uses_default_port_for_invalid_value():
