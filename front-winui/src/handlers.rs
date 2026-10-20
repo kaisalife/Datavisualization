@@ -41,6 +41,8 @@ impl MainModel {
             "openChartsDir" => self.handle_open_charts_dir(sender),
             "revealChart" => self.handle_reveal_chart(msg.data, sender),
             "exportChart" => self.handle_export_chart(msg.data, sender).await,
+            "previewData" => self.handle_preview_data(msg.data, sender),
+            "downloadDataExport" => self.handle_download_data_export(msg.data, sender),
             _ => {
                 println!("[Bridge] 未知 action: {}", msg.action);
                 Ok(false)
@@ -233,6 +235,193 @@ impl MainModel {
                     }
                     Err(e) => {
                         sender.post(MainMessage::TaskFailed(format!("提交失败: {}", e)));
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 请求数据预览（调用 /api/data-profile，不启动图表任务）
+    fn handle_preview_data(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let files: Vec<String> = data
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if files.is_empty() {
+            self.js_show_toast("请先选择要预览的数据文件", "info");
+            return Ok(true);
+        }
+
+        let hint = data
+            .get("hint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let multi_table = data
+            .get("multiTable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let model_cfg = self.settings.active_model_config();
+        let (model_url, model_api_key) = match &model_cfg {
+            Some(m) => (Some(m.model_url.clone()), Some(m.model_api_key.clone())),
+            None => (None, None),
+        };
+
+        let client = self.client.clone();
+        let sender = sender.clone();
+        sender.post(MainMessage::SetStatus("解析数据...".to_string()));
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                let result = client
+                    .data_profile(
+                        &files,
+                        &hint,
+                        multi_table,
+                        model_url.as_deref(),
+                        model_api_key.as_deref(),
+                    )
+                    .await;
+                match result {
+                    Ok(profile) => {
+                        sender.post(MainMessage::DataProfileLoaded(profile));
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::ShowToast {
+                            message: format!("数据预览失败: {}", e),
+                            toast_type: "error".to_string(),
+                        });
+                    }
+                }
+                sender.post(MainMessage::SetStatus("就绪".to_string()));
+            });
+        });
+        Ok(true)
+    }
+
+    /// 面板收到数据预览后转发给 JS 渲染
+    pub(crate) fn handle_data_profile_loaded(
+        &mut self,
+        profile: serde_json::Value,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&profile).unwrap_or_else(|_| "{}".to_string());
+        self.js_show_data_preview(&json);
+        Ok(true)
+    }
+
+    /// 下载数据预览导出的 CSV / ZIP 到系统下载目录
+    fn handle_download_data_export(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let url = data.get("url").and_then(|v| v.as_str()).unwrap_or("");
+        if !url.starts_with("/api/data-profile/export") {
+            self.js_show_toast("导出地址无效", "error");
+            return Ok(true);
+        }
+        let raw_name = data
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .unwrap_or("export.csv");
+        // 只取 basename + 过滤 Windows 非法字符，防止写到下载目录之外
+        let base = std::path::Path::new(raw_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("export.csv");
+        let safe_name: String = base
+            .chars()
+            .map(|c| if "\\/:*?\"<>|".contains(c) { '_' } else { c })
+            .collect();
+        let mut safe_name = if safe_name.trim().is_empty() {
+            "export.csv".to_string()
+        } else {
+            safe_name
+        };
+        // Windows 保留设备名（CON/NUL/COM1…）与结尾的点/空格不能直接落盘
+        let stem_upper = std::path::Path::new(&safe_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_uppercase();
+        let reserved = [
+            "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+            "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        ];
+        if reserved.contains(&stem_upper.as_str())
+            || safe_name.ends_with('.')
+            || safe_name.ends_with(' ')
+        {
+            safe_name = format!("_{}", safe_name);
+        }
+
+        let client = self.client.clone();
+        let sender = sender.clone();
+        let url = url.to_string();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.download_export(&url).await {
+                    Ok(bytes) => {
+                        let dir = std::env::var_os("USERPROFILE")
+                            .map(std::path::PathBuf::from)
+                            .map(|p| p.join("Downloads"))
+                            .unwrap_or_else(std::env::temp_dir);
+                        if let Err(e) = std::fs::create_dir_all(&dir) {
+                            sender.post(MainMessage::ShowToast {
+                                message: format!("创建下载目录失败: {}", e),
+                                toast_type: "error".to_string(),
+                            });
+                            return;
+                        }
+                        let mut target = dir.join(&safe_name);
+                        if target.exists() {
+                            let stem = std::path::Path::new(&safe_name)
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("export");
+                            let ext = std::path::Path::new(&safe_name)
+                                .extension()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("");
+                            for i in 1..1000 {
+                                let candidate = if ext.is_empty() {
+                                    format!("{}_{}", stem, i)
+                                } else {
+                                    format!("{}_{}.{}", stem, i, ext)
+                                };
+                                target = dir.join(candidate);
+                                if !target.exists() {
+                                    break;
+                                }
+                            }
+                        }
+                        match std::fs::write(&target, bytes) {
+                            Ok(_) => sender.post(MainMessage::ShowToast {
+                                message: format!("已保存到 {}", target.display()),
+                                toast_type: "success".to_string(),
+                            }),
+                            Err(e) => sender.post(MainMessage::ShowToast {
+                                message: format!("保存失败: {}", e),
+                                toast_type: "error".to_string(),
+                            }),
+                        }
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::ShowToast {
+                            message: format!("下载失败: {}", e),
+                            toast_type: "error".to_string(),
+                        });
                     }
                 }
             });

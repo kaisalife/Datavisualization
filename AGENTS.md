@@ -112,6 +112,11 @@ $env:BACKEND_URL="http://localhost:5000"
    （必要时加 `api/types.rs`）。
 6. **配置优先级**：`AppSettings::load()` 先读 `front-winui/settings.json`（已 gitignore），不存在才用
    `BACKEND_URL` / `API_KEY` / `MODEL_*` 环境变量。改环境变量前先删或改 settings.json，否则不生效。
+7. **数据预览面板**：输入框旁「预览」按钮把当前文件经 `previewData` 交给 Rust，Rust 同步调
+   `POST /api/data-profile`（图片/PDF 会走视觉模型，可能耗时几十秒），再把返回 JSON 交给
+   `js/preview.js` 的 `window.app.showDataPreview` 渲染。下载按钮走 `downloadDataExport`，Rust 只接受
+   `/api/data-profile/export` 开头的相对地址，落盘到 `%USERPROFILE%\Downloads`（同名自动加序号）。
+   预览面板的原始表依赖 `/api/data-profile` 的 `save_raw=True`；图表任务本身仍不保存原始表。
 
 ## 依赖约束（不要随手升级）
 

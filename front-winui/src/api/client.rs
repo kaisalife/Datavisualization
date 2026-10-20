@@ -41,6 +41,35 @@ fn format_http_error(status: StatusCode, body: &str) -> String {
     }
 }
 
+/// 把本地文件流式附加到 multipart 表单（图表提交与数据预览共用）。
+async fn attach_files(
+    mut form: reqwest::multipart::Form,
+    file_paths: &[String],
+) -> Result<reqwest::multipart::Form> {
+    for file_path in file_paths {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            anyhow::bail!("文件不存在: {}", file_path);
+        }
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file");
+
+        // 流式读取文件，避免大文件全部读入内存
+        let file = tokio::fs::File::open(file_path)
+            .await
+            .context(format!("读取文件失败: {}", file_path))?;
+        let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+        let stream = tokio_util::io::ReaderStream::new(file);
+        let body = reqwest::Body::wrap_stream(stream);
+        let part = reqwest::multipart::Part::stream_with_length(body, size)
+            .file_name(filename.to_string());
+        form = form.part("files", part);
+    }
+    Ok(form)
+}
+
 impl ApiClient {
     /// 创建新的 API 客户端
     pub fn new(base_url: &str, api_key: &str) -> Self {
@@ -103,28 +132,7 @@ impl ApiClient {
             form = form.text("multi_table", "1");
         }
 
-        for file_path in &request.file_paths {
-            let path = Path::new(file_path);
-            if !path.exists() {
-                anyhow::bail!("文件不存在: {}", file_path);
-            }
-            let filename = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("file");
-
-            // 流式读取文件，避免大文件全部读入内存
-            let file = tokio::fs::File::open(file_path)
-                .await
-                .context(format!("读取文件失败: {}", file_path))?;
-            let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
-            let stream = tokio_util::io::ReaderStream::new(file);
-            let body = reqwest::Body::wrap_stream(stream);
-            let part = reqwest::multipart::Part::stream_with_length(body, size)
-                .file_name(filename.to_string());
-            form = form.part("files", part);
-        }
-
+        let form = attach_files(form, &request.file_paths).await?;
         let resp = self
             .client
             .post(&url)
@@ -143,6 +151,83 @@ impl ApiClient {
         } else {
             anyhow::bail!(format_http_error(status, &body))
         }
+    }
+
+    /// 上传文件并获取数据预览（同步等待解析完成）。
+    ///
+    /// 图片 / PDF 会调用视觉模型抽表，耗时可能较长，因此单独放宽请求超时。
+    pub async fn data_profile(
+        &self,
+        file_paths: &[String],
+        hint: &str,
+        multi_table: bool,
+        model_url: Option<&str>,
+        model_api_key: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/api/data-profile", self.base_url);
+
+        let mut form = reqwest::multipart::Form::new();
+        if !hint.trim().is_empty() {
+            form = form.text("hint", hint.trim().to_string());
+        }
+        if multi_table {
+            form = form.text("multi_table", "1");
+        }
+        if let Some(model_url) = model_url {
+            form = form.text("model_url", model_url.to_string());
+        }
+        if let Some(model_api_key) = model_api_key {
+            form = form.text("model_api_key", model_api_key.to_string());
+        }
+        let form = attach_files(form, file_paths).await?;
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("X-API-Key", &self.api_key)
+            .timeout(Duration::from_secs(900))
+            .multipart(form)
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if status == StatusCode::OK {
+            serde_json::from_str::<serde_json::Value>(&body)
+                .context(format!("解析数据预览响应失败: {}", body))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
+    /// 下载数据预览导出（CSV / ZIP）。
+    ///
+    /// `path` 必须是后端 `/api/data-profile/export` 相对路径，避免前端任意 URL 拉取。
+    pub async fn download_export(&self, path: &str) -> Result<Vec<u8>> {
+        if !path.starts_with("/api/data-profile/export") {
+            anyhow::bail!("不支持的导出地址");
+        }
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .client
+            .get(&url)
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!(format_http_error(status, &body));
+        }
+        Ok(resp
+            .bytes()
+            .await
+            .context("读取导出内容失败")?
+            .to_vec())
     }
 
     /// 查询任务状态

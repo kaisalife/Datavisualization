@@ -172,6 +172,14 @@ impl MainModel {
         ));
     }
 
+    /// 显示数据预览面板（传入 JSON 字符串，由 JS 侧解析）
+    pub(crate) fn js_show_data_preview(&mut self, json: &str) {
+        self.js(&format!(
+            "window.app.showDataPreview('{}')",
+            Self::js_escape(json)
+        ));
+    }
+
     /// 设置状态栏文本
     pub(crate) fn js_set_status(&mut self, text: &str) {
         self.js(&format!(

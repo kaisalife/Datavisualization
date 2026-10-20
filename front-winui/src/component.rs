@@ -41,6 +41,7 @@ impl Component for MainModel {
             include_str!("js/input.js"),
             include_str!("js/api.js"),
             include_str!("js/trace.js"),
+            include_str!("js/preview.js"),
         ].concat();
         let html = include_str!("app.html")
             .replace("__CSS__", css)
@@ -128,6 +129,7 @@ impl Component for MainModel {
             MainMessage::ConversationDetailLoaded(detail) => self.handle_conversation_detail_loaded(detail),
             MainMessage::ConversationDeleted => self.handle_conversation_deleted(sender),
             MainMessage::CodeCompleted(code) => self.handle_code_completed(code),
+            MainMessage::DataProfileLoaded(profile) => self.handle_data_profile_loaded(profile),
         }
     }
 

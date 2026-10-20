@@ -21,4 +21,5 @@ pub enum MainMessage {
     ConversationDetailLoaded(api::types::ConversationDetail),
     ConversationDeleted,
     CodeCompleted(String),
+    DataProfileLoaded(serde_json::Value),
 }
