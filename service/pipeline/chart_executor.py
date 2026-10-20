@@ -19,11 +19,11 @@ logger = get_logger(__name__)
 
 try:
     from prompts.agent_prompt import get_agent_debug_chart_prompt, get_agent_generate_chart_prompt
-    from RAG.RAG_main import RAGRetriever
+    from RAG.RAG_main import get_default_retriever
     from Entity.plan_models import plan_get
 except ImportError:
     from prompts.agent_prompt import get_agent_debug_chart_prompt, get_agent_generate_chart_prompt
-    from RAG.RAG_main import RAGRetriever
+    from RAG.RAG_main import get_default_retriever
     from ..plan_models import plan_get
 
 
@@ -112,7 +112,7 @@ async def execute_chart_plans(
 
     logger.info("初始化 RAG 检索器")
     try:
-        rag_retriever = RAGRetriever()
+        rag_retriever = get_default_retriever()
         logger.info("RAG 检索器初始化成功")
     except Exception as e:
         logger.warning("RAG 检索器初始化失败", error=str(e))

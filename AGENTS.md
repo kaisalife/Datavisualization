@@ -31,6 +31,10 @@
 - 启动耗时**不是**优化目标（按服务方式部署，启动次数很少）；别为提速牺牲可读性
 - 健康检查：`GET /api/health`（存活，不鉴权）、`GET /api/ready`（目录可写 + 对话库可用，未就绪 503）
 - 项目已以 editable 方式装在 venv 里，改代码无需重装
+- **Windows 上 Werkzeug 会设 `SO_REUSEADDR`，两个后端进程可以同时绑定 5000**：请求会随机落到
+  不同的进程，表现为刚提交的任务立刻 `404 Task not found`（任务在另一个进程的内存里）、
+  `/api/health` 的 `tasks.total` 忽高忽低。起服务前先确认只有一个监听进程：
+  `Get-NetTCPConnection -State Listen -LocalPort 5000`（多行 = 有重复实例，先停掉多余的）
 
 ### 测试
 
@@ -38,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 90 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 95 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -148,6 +152,25 @@ $env:BACKEND_URL="http://localhost:5000"
 
 `agent_tools/tool_run_code.py` 跑在独立 MCP 进程里（stdio）。`configs/default_config.json` 里的
 `"command": "python"` 会被 `service/runtime/config.py` 自动替换为当前解释器绝对路径。
+
+## RAG 知识库（Qwen3-Embedding-0.6B）
+
+- 模型放在 `D:/myLangchain/QwenEmbedding`（`QWEN_EMBEDDING_PATH`），Qwen3-Embedding-0.6B，
+  1024 维，`model.safetensors` 约 1.1 GB；知识库是 `RAG/RAG_Data` 下 177 篇 pyecharts Markdown。
+- 下载（本机 `huggingface.co` 不通，走镜像）：
+  `HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 hf download Qwen/Qwen3-Embedding-0.6B --local-dir D:/myLangchain/QwenEmbedding`
+  **必须关 Xet**（`HF_HUB_DISABLE_XET=1`），否则会绕过镜像直连 `cas-server.xethub.hf.co` 报 401。
+- **CPU 上必须 fp32**：模型 `config.json` 是 `bfloat16`，CPU 没有原生 bf16 指令，直接加载慢约 10 倍
+  （实测 32 条 500-token 文本要 8 分钟）；`SentenceTransformerEmbeddings` 已在 CPU 强制
+  `torch_dtype=float32`。本机 torch 是 `+cpu`，没有 CUDA。
+- 177 篇切完约 **398 个 chunk / 10.7 万 token**（平均 271、最长 1296）。首次启动建库在 CPU 上约
+  30–40 分钟（`RAG_EMBED_BATCH_SIZE=8`、`RAG_MAX_SEQ_LENGTH=1024`、按长度排序分批减少 padding），
+  建好后持久化到 `runtime/chroma`，之后只做 query（短查询约 0.8 秒）。**换 embedding 模型必须删/改名
+  `runtime/chroma`**，代码会检查维度并给出明确报错。建库是边算边写，**中途中断会留下部分向量**
+  （代码只识别 0 条的空库），中断后务必删掉 `runtime/chroma` 重来。
+- 已验证检索质量：`柱状图 标题设置`、`Grid 多图组合` 等查询能命中对应示例文档。
+- 检索器用 `get_default_retriever()` 进程内复用（模型约 2.4 GB、加载约 8 秒）；`agent_pipeline` 与
+  `chart_executor` 都走它，不要再直接 `RAGRetriever()`，并发任务会把内存吃满。
 
 ## 图表生成规范
 

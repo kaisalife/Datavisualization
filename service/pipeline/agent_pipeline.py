@@ -86,14 +86,14 @@ async def run_agent_pipeline(
     from service.pipeline.chart_generator import generate_single_chart
     from prompts.agent_prompt import get_agent_generate_chart_prompt, get_agent_debug_chart_prompt
     from service.runtime.query_engine import QueryEngine
-    from RAG.RAG_main import RAGRetriever
+    from RAG.RAG_main import get_default_retriever
 
     engine = QueryEngine(chat_model=chat, model_name=model_.model_type or "")
     generate_prompt = get_agent_generate_chart_prompt()
     debug_prompt = get_agent_debug_chart_prompt()
 
     try:
-        rag_retriever = RAGRetriever()
+        rag_retriever = get_default_retriever()
     except Exception as e:
         agent_logs.append(f"⚠️ RAG 初始化失败: {e}")
         rag_retriever = None

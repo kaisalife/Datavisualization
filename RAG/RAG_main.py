@@ -5,6 +5,7 @@ Pyecharts 纯检索系统
 """
 
 import os
+import threading
 from pathlib import Path
 
 # 加载环境变量
@@ -34,25 +35,42 @@ import torch
 class SentenceTransformerEmbeddings(Embeddings):
     """
     基于 SentenceTransformer 的 Embeddings。CPU 友好模型（如 bge-small-zh-v1.5,
-    24M 参数）构建/检索都快；也兼容 Qwen3-Embedding（需 GPU）。
+    24M 参数）构建/检索都快；Qwen3-Embedding-0.6B 也能在 CPU 跑但首次建库较慢
+    （代码会在 CPU 强制 float32，见 __init__）。
     """
-    def __init__(self, model_path: str, device: str = None, max_seq_length: int = 512):
+    def __init__(self, model_path: str, device: str = None, max_seq_length: int = None):
         if not HAS_SENTENCE_TRANSFORMERS:
             raise ImportError("请安装 sentence-transformers: pip install sentence-transformers")
 
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.model = SentenceTransformer(model_path, device=device)
-        # 限制最大序列长度：pyecharts 示例 avg ~240 token，512 足够且大幅加速 CPU encode
+        # Qwen3-Embedding 的 config 是 bfloat16；CPU 上没有原生 bf16 指令，
+        # 实测会比 float32 慢一个数量级，所以 CPU 强制 fp32。
+        model_kwargs = {"torch_dtype": torch.float32} if device == "cpu" else None
+        self.model = SentenceTransformer(model_path, device=device, model_kwargs=model_kwargs)
+
+        # 限制最大序列长度：知识库 chunk 平均约 270 token（最长约 1300），
+        # 1024 可覆盖 97% 以上；可用 RAG_MAX_SEQ_LENGTH 覆盖。
+        if max_seq_length is None:
+            max_seq_length = int(os.getenv("RAG_MAX_SEQ_LENGTH", "1024"))
         self.model.max_seq_length = max_seq_length
 
+        # CPU 上 batch 越大越省时间，但长序列 batch 32 的注意力激活可能吃满内存
+        self.batch_size = int(os.getenv("RAG_EMBED_BATCH_SIZE", "8"))
+
     def embed_documents(self, texts):
+        # 按长度排序后分批，减少 padding 浪费（CPU 上能快 20%+）；返回时恢复原顺序
+        order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+        sorted_texts = [texts[i] for i in order]
         embeddings = self.model.encode(
-            texts, normalize_embeddings=True,
-            batch_size=32, show_progress_bar=True,
+            sorted_texts, normalize_embeddings=True,
+            batch_size=self.batch_size, show_progress_bar=True,
         )
-        return embeddings.tolist()
+        result = [None] * len(texts)
+        for pos, idx in enumerate(order):
+            result[idx] = embeddings[pos].tolist()
+        return result
     
     def embed_query(self, text):
         try:
@@ -65,14 +83,18 @@ class SentenceTransformerEmbeddings(Embeddings):
 
 # ==================== 配置路径（从环境变量读取，带项目根相对默认值）====================
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-EMBEDDING_MODEL_PATH = os.getenv(
+
+
+def _env_path(name: str, default: str) -> str:
+    """读取路径型环境变量；空字符串视为未设置（.env 模板里常见 VAR=""）。"""
+    return os.getenv(name) or default
+
+
+EMBEDDING_MODEL_PATH = _env_path(
     "QWEN_EMBEDDING_PATH",
     str(_PROJECT_ROOT / "RAG" / "models" / "bge-small-zh-v1.5"),  # 本地 CPU 友好模型，避免在线下载超时
 )
-DATA_ROOT = os.getenv(
-    "RAG_DATA_ROOT",
-    str(_PROJECT_ROOT / "RAG" / "RAG_Data"),
-)
+DATA_ROOT = _env_path("RAG_DATA_ROOT", str(_PROJECT_ROOT / "RAG" / "RAG_Data"))
 _chroma_env = os.getenv("CHROMA_DB_PATH", "")
 CHROMA_PERSIST_DIR = _chroma_env if _chroma_env else str(_PROJECT_ROOT / "runtime" / "chroma")
 DEFAULT_K = int(os.getenv("RAG_RETRIEVE_K", "3"))                 # 默认检索返回文档数
@@ -181,6 +203,29 @@ class RAGRetriever:
         print(f"切分后得到 {len(chunks)} 个文本块")
         return chunks
 
+    def _check_embedding_dimension(self, vectorstore):
+        """旧向量库与当前 embedding 模型维度不一致时给出明确指引。
+
+        换过嵌入模型（例如 bge-small 512 维 -> Qwen3-Embedding 1024 维）后
+        直接复用旧库，检索会在 Chroma 内部抛难懂的维度错误，这里提前说清楚。
+        """
+        try:
+            get_dim = getattr(self.embeddings.model, "get_embedding_dimension", None) or getattr(
+                self.embeddings.model, "get_sentence_embedding_dimension"
+            )
+            expected = int(get_dim())
+            peeked = vectorstore._collection.peek(limit=1).get("embeddings")
+            existing = len(peeked[0]) if peeked is not None and len(peeked) else 0
+            if existing and expected and existing != expected:
+                raise RuntimeError(
+                    f"向量库维度 {existing} 与当前嵌入模型 {expected} 不一致；"
+                    f"请删除或改名 {self.persist_dir} 后重建"
+                )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            print(f"⚠️ 无法校验向量库维度（忽略）: {e}")
+
     def _build_or_load_vectorstore(self):
         """
         如果持久化目录已存在且非空，则加载已有向量库；
@@ -198,6 +243,7 @@ class RAGRetriever:
             except Exception:
                 doc_count = 0
             if doc_count > 0:
+                self._check_embedding_dimension(vectorstore)
                 print(f"已有 {doc_count} 条向量，直接复用")
                 return vectorstore
             print(f"⚠️ 检测到空库（0 文档），可能是上次构建失败残留，将重新构建...")
@@ -232,6 +278,22 @@ class RAGRetriever:
     def get_retriever(self):
         """返回检索器，便于自定义使用"""
         return self.retriever
+
+
+# 进程内复用：Qwen3-Embedding-0.6B 每次加载约 8 秒、占约 2.4 GB，
+# 每个图表任务都新建会拖慢首图并让并发任务吃满内存。
+_default_retriever = None
+_default_lock = threading.Lock()
+
+
+def get_default_retriever() -> "RAGRetriever":
+    """返回进程级共享的 RAGRetriever（线程安全，惰性初始化）。"""
+    global _default_retriever
+    if _default_retriever is None:
+        with _default_lock:
+            if _default_retriever is None:
+                _default_retriever = RAGRetriever()
+    return _default_retriever
 
 
 # ==================== 使用示例 ====================
