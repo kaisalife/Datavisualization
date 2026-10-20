@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from service.data_ingestion import vision_cache
 from service.data_ingestion.models import RawTable, safe_table_name
 from service.data_ingestion.profiler import _is_time_label
 from service.observability import get_logger
@@ -513,16 +514,40 @@ class MultimodalReader:
         if not p.exists():
             raise FileNotFoundError(f"文件不存在: {path}")
 
+        use_cache = llm is None
         llm = llm or _load_env_llm(vision_cfg)
         if multi_table is None:
             multi_table = bool(get_env_int("VISION_MULTI_TABLE", 0))
+        effective_max_pages = max_pages or get_env_int(
+            "VISION_MAX_PDF_PAGES", _DEFAULT_MAX_PDF_PAGES
+        )
+
+        base_name = safe_table_name(table_name or p.name)
+        cache_key_value = None
+        if use_cache and vision_cache.cache_enabled():
+            cache_key_value = vision_cache.cache_key(
+                p,
+                base_name=base_name,
+                hint=hint,
+                multi_table=multi_table,
+                max_pages=effective_max_pages,
+                signature=vision_cache.model_signature(llm),
+            )
+            cached = vision_cache.load_tables(cache_key_value, p)
+            if cached:
+                logger.info(
+                    "多模态缓存命中",
+                    path=str(p),
+                    tables=len(cached),
+                    rows=sum(len(t.df) for t in cached),
+                )
+                return cached
 
         if MultimodalReader.is_pdf(p):
-            pages = _pdf_page_data_urls(p, max_pages or get_env_int("VISION_MAX_PDF_PAGES", _DEFAULT_MAX_PDF_PAGES))
+            pages = _pdf_page_data_urls(p, effective_max_pages)
         else:
             pages = [_image_to_data_url(p)]
 
-        base_name = safe_table_name(table_name or p.name)
         page_groups: list[list[RawTable]] = []
         errors: list[str] = []
         multi_page = len(pages) > 1
@@ -579,6 +604,9 @@ class MultimodalReader:
         if not tables:
             detail = f"；失败页: {'; '.join(errors[:3])}" if errors else ""
             raise ValueError(f"未从图片中提取到结构化表格: {p.name}{detail}")
+
+        if cache_key_value:
+            vision_cache.save_tables(cache_key_value, tables, p)
 
         logger.info(
             "多模态表格提取完成",

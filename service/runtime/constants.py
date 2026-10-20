@@ -31,3 +31,15 @@ def get_charts_dir() -> Path:
     if override:
         return Path(override)
     return _PROJECT_ROOT / "runtime" / "charts"
+
+
+def get_vision_cache_dir() -> Path:
+    """多模态抽表结果缓存目录。
+
+    读 VISION_CACHE_DIR env，默认 <项目根>/runtime/cache/vision。
+    按文件内容哈希存放，预览与图表任务共用，避免同一图片重复调用视觉模型。
+    """
+    override = os.getenv("VISION_CACHE_DIR", "").strip()
+    if override:
+        return Path(override)
+    return _PROJECT_ROOT / "runtime" / "cache" / "vision"
