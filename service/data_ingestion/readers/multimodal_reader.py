@@ -22,8 +22,9 @@ from service.runtime.utils import get_env_int, get_llm_extra_headers
 
 logger = get_logger(__name__)
 
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff", ".avif", ".heic", ".heif"}
 _PDF_EXTS = {".pdf"}
+_HEIF_EXTS = {".heic", ".heif"}
 
 _MIME_FALLBACK = {
     ".png": "image/png",
@@ -34,10 +35,14 @@ _MIME_FALLBACK = {
     ".gif": "image/gif",
     ".tif": "image/tiff",
     ".tiff": "image/tiff",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".avif": "image/avif",
 }
 
 _MAX_ROWS = 200
 _DEFAULT_MAX_TABLES = 5
+_heif_ready = False
 _DEFAULT_MAX_SIDE = 2000
 _DEFAULT_MAX_PDF_PAGES = 5
 _PNG_EXTS = {".png", ".bmp", ".gif", ".tif", ".tiff"}
@@ -143,6 +148,24 @@ def _to_dataframe(data: dict) -> pd.DataFrame | None:
     return to_dataframe(data)
 
 
+def _register_heif() -> bool:
+    """注册 HEIC/HEIF 解码器（pillow-heif 为可选依赖，缺失时返回 False）。
+
+    返回:
+        是否可用（重复调用只注册一次）
+    """
+    global _heif_ready
+    if _heif_ready:
+        return True
+    try:
+        from pillow_heif import register_heif_opener
+    except ImportError:
+        return False
+    register_heif_opener()
+    _heif_ready = True
+    return True
+
+
 def _image_to_data_url_from_pil(pil_image, ext: str) -> str:
     """PIL 图片 -> data URL；截图类优先 PNG，过大时降级 JPEG。"""
     from PIL import Image, ImageOps
@@ -188,6 +211,11 @@ def _image_to_data_url(path: Path) -> str:
     """图片文件 -> data URL。"""
     from PIL import Image
 
+    if path.suffix.lower() in _HEIF_EXTS and not _register_heif():
+        raise RuntimeError(
+            "读取 HEIC/HEIF 需要 pillow-heif：请执行 "
+            "pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pillow-heif"
+        )
     with Image.open(path) as img:
         return _image_to_data_url_from_pil(img, path.suffix)
 
@@ -204,6 +232,11 @@ def image_bytes_to_data_url(payload: bytes, suffix: str) -> str:
     """
     from PIL import Image
 
+    if suffix.lower() in _HEIF_EXTS and not _register_heif():
+        raise RuntimeError(
+            "读取 HEIC/HEIF 需要 pillow-heif：请执行 "
+            "pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pillow-heif"
+        )
     with Image.open(io.BytesIO(payload)) as img:
         return _image_to_data_url_from_pil(img, suffix)
 

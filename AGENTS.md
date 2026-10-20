@@ -38,7 +38,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 78 passed / 17 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 80 passed / 18 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -75,7 +75,7 @@
   `The reasoning_content in the thinking mode must be passed back`；`chart_generator` 已兜底为
   "退回 prompt 重试"，任务仍能成功。
 - 评估口径是"能不能直接支撑画图"，不是逐字一致：列名双向包含即命中，数值按容差比（图表估读 ±12%）。
-  基线 9/9：Markdown 表、日志、表格截图、柱状图估读（误差约 2%）、无表格图不臆造、合并单元格下填、多表选主表、docx 内嵌表格截图、一图多表全抽。
+  基线 10/10：Markdown 表、日志、表格截图、柱状图估读（误差约 2%）、无表格图不臆造、合并单元格下填、多表选主表、docx 内嵌表格截图、一图多表全抽、HEIC 照片。
 - 造图用 Pillow + `C:\Windows\Fonts\msyh.ttc`（否则中文渲染成方框）；"无表格"用例用渐变图检验不臆造。
 - 改了多模态 prompt / reader 后，先在 `-s` 下看真实输出，再决定阈值和是否调 prompt；别只跑假模型单测就收工。
 
@@ -117,7 +117,7 @@ $env:BACKEND_URL="http://localhost:5000"
 - 已验证可用组合（已写入 `pyproject.toml` 与 `uv.lock`）：
   `langchain-core 1.6.12` / `langchain-openai 1.7.2` / `langchain-community 0.4.2` /
   `langchain-classic 1.0.8` / `langchain-text-splitters 1.1.3` / `langchain-mcp-adapters 0.3.2` /
-  `mcp 1.30.0` / `fastmcp 3.4.9` / `pandas 2.3.3` / `pyarrow 26.0.0`
+  `mcp 1.30.0` / `fastmcp 3.4.9` / `pandas 2.3.3` / `pyarrow 26.0.0` / `pillow-heif 1.8.1`
 - **`pyarrow` 是硬依赖**：series 全程用 `.parquet`（`splitter.py` 写、注入代码读），缺了主流程必挂
   （`get_engine` 报 "Unable to find a usable engine"）。安装后 `pandas.to_parquet/read_parquet` 自动选它。
 - 本机直连 pypi.org 只有 15–20 kB/s；**用清华镜像快 100 倍以上**（实测 5.3 MB/s）：
@@ -185,6 +185,9 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   否则会拿文本模型跑图片。
 - **图片预处理**：Pillow 按 EXIF 转正、最大边 `VISION_MAX_IMAGE_SIDE`(2000)，截图类存 PNG，
   超过 4MB 再降级 JPEG；PDF 用 pypdfium2 渲染前 `VISION_MAX_PDF_PAGES`(5) 页。
+- **图片格式**：png/jpg/jpeg/webp/bmp/gif/tif/tiff + AVIF（Pillow 内置，须 >=11.3）+
+  HEIC/HEIF（iPhone 照片，`pillow-heif` 解码，`_register_heif()` 懒注册）。缺 pillow-heif 时
+  会抛带安装命令的 RuntimeError，而不是 UnidentifiedImageError。前端文件过滤器同步加了这三种格式。
 - **调用参数**：`VISION_MAX_TOKENS`(8192) / `VISION_TIMEOUT`(90)。用推理模型做视觉时 reasoning
   会吃掉 max_tokens，输出被截断会报错点名 `VISION_MAX_TOKENS`，宁可调大。
 - **降级顺序**：图片先视觉模型，失败回退 Unstructured OCR（本机没装 tesseract，回退基本必失败）；

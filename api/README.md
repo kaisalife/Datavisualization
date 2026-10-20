@@ -212,6 +212,7 @@ X-API-Key: <your_key>
 
 图片 / PDF / Office 内嵌图片走视觉模型时**会调用 LLM**；纯表格文件不调用。
 Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列文本时才把内嵌图片交给视觉模型。
+图片格式：png / jpg / jpeg / webp / gif / bmp / tif / tiff / avif / heic / heif（HEIC 需 `pillow-heif`）。
 
 ---
 

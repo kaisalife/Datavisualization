@@ -50,7 +50,8 @@ dependencies = [
     # ---- 数据处理 ----
     "pandas>=2.0",
     "pyarrow>=17",     # series .parquet 读写引擎（pandas to_parquet/read_parquet 必需）
-    "pillow>=10",      # 多模态图片预处理（EXIF 转正 / 缩放 / 编码）
+    "pillow>=11.3",    # 多模态图片预处理（EXIF 转正 / 缩放 / 编码，AVIF 内置）
+    "pillow-heif>=1.8",  # iPhone HEIC/HEIF 照片解码（多模态输入）
     "pypdfium2>=4",    # PDF 逐页渲染（多模态兜底）
     "openpyxl>=3.1",   # .xlsx 读写
     "xlrd>=2.0",       # .xls 读取

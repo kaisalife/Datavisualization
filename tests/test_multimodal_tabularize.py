@@ -109,8 +109,41 @@ class TestMultimodalReader:
     def test_can_handle_covers_images_and_pdf(self):
         assert MultimodalReader.can_handle("a.PNG")
         assert MultimodalReader.can_handle("a.jpeg")
+        assert MultimodalReader.can_handle("a.heic")
+        assert MultimodalReader.can_handle("a.avif")
         assert MultimodalReader.can_handle("a.pdf")
         assert not MultimodalReader.can_handle("a.csv")
+
+    def test_heic_image_is_decoded_and_converted(self, tmp_path: Path):
+        """iPhone 照片（HEIC）经 pillow-heif 解码后以 JPEG data URL 送模型。"""
+        pytest.importorskip("pillow_heif")
+        from PIL import Image
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+        path = tmp_path / "photo.heic"
+        Image.new("RGB", (320, 160), "white").save(path)
+
+        llm = _FakeLLM(_payload(["城市"], [{"城市": "北京"}]))
+        tables = MultimodalReader.read(str(path), llm=llm)
+
+        assert tables[0].df["城市"].tolist() == ["北京"]
+        data_url = llm.last_messages[-1].content[1]["image_url"]["url"]
+        assert data_url.startswith("data:image/jpeg;base64,")
+
+    def test_avif_image_is_decoded(self, tmp_path: Path):
+        from PIL import Image, features
+
+        if not features.check("avif"):
+            pytest.skip("当前 Pillow 未编译 AVIF 支持")
+
+        path = tmp_path / "shot.avif"
+        Image.new("RGB", (320, 160), "white").save(path, format="AVIF")
+
+        llm = _FakeLLM(_payload(["城市"], [{"城市": "上海"}]))
+        tables = MultimodalReader.read(str(path), llm=llm)
+
+        assert tables[0].df["城市"].tolist() == ["上海"]
 
 
 class TestMultimodalMultiTable:

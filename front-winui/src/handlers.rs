@@ -315,7 +315,7 @@ impl MainModel {
                 .title("选择数据文件")
                 .add_filter(("Excel 文件", "*.xlsx"))
                 .add_filter(("CSV 文件", "*.csv"))
-                .add_filter(("图片（表格识别）", "*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.tif;*.tiff"))
+                .add_filter(("图片（表格识别）", "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.tif;*.tiff;*.avif;*.heic;*.heif"))
                 .add_filter(("PDF / 文档", "*.pdf;*.docx;*.doc;*.pptx;*.html;*.md;*.txt"))
                 .add_filter(("所有文件", "*.*")),
             AppMode::CodeCompletion => FileBox::new()

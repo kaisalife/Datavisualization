@@ -517,3 +517,35 @@ def test_image_multi_table_extraction(test_llm, tmp_path: Path):
         "库存A=30": a_stock == 30,
     }
     assert _report("图片-一图多表", checks) == 1.0
+
+def test_image_heic_table(test_llm, tmp_path: Path):
+    """iPhone 照片格式（HEIC）-> 表格：验证解码链路不丢数据。"""
+    pytest.importorskip("pillow_heif")
+    from PIL import Image
+    from pillow_heif import register_heif_opener
+
+    from service.data_ingestion.readers.multimodal_reader import MultimodalReader
+
+    png = tmp_path / "table.png"
+    _render_table(
+        png,
+        ["城市", "2023 年", "2024 年"],
+        [["北京", "1200", "1500"], ["上海", "1100", "1400"], ["广州", "900", "1250"]],
+    )
+
+    register_heif_opener()
+    heic = tmp_path / "table.heic"
+    Image.open(png).save(heic, format="HEIF", quality=92)
+
+    df = MultimodalReader.read(str(heic), llm=test_llm)[0].df
+    beijing = _row_values(df, "北京", "城市")
+    values_2024 = [_cell_number(v) for k, v in beijing.items() if "2024" in _norm(k)]
+    print("\nHEIC表 columns:", list(df.columns), "rows:", len(df))
+    print(df.to_string(index=False))
+
+    checks = {
+        "列名与原图一致": [_norm(c) for c in df.columns] == ["城市", "2023年", "2024年"],
+        "行数=3": len(df) == 3,
+        "北京2024=1500": any(v == 1500 for v in values_2024 if v is not None),
+    }
+    assert _report("图片-HEIC", checks) == 1.0
