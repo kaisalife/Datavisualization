@@ -20,6 +20,7 @@ import re
 import zipfile
 from pathlib import Path
 
+from service.data_ingestion import vision_cache
 from service.data_ingestion.models import RawTable, safe_table_name
 from service.data_ingestion.readers.multimodal_reader import (
     extract_tables_from_image,
@@ -38,6 +39,8 @@ _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"
 _DEFAULT_MIN_BYTES = 4096
 _DEFAULT_MIN_SIDE = 160
 _DEFAULT_MAX_IMAGES = 8
+_DEFAULT_MAX_TABLES = 5
+_DEFAULT_MAX_SIDE = 2000
 _MAX_ROWS = 200
 
 
@@ -173,11 +176,40 @@ class OfficeImageReader:
             ValueError: 有图片但全部抽表失败
         """
         images = OfficeImageReader.extract_images(path)
+        use_cache = llm is None
         llm = llm or load_vision_llm(vision_cfg)
         if multi_table is None:
             multi_table = bool(get_env_int("VISION_MULTI_TABLE", 0))
 
         base_name = safe_table_name(table_name or Path(path).name)
+        cache_key_value = None
+        if use_cache and vision_cache.cache_enabled():
+            office_settings = (
+                f"office:{get_env_int('VISION_MIN_IMAGE_BYTES', _DEFAULT_MIN_BYTES)}"
+                f":{get_env_int('VISION_MIN_IMAGE_SIDE', _DEFAULT_MIN_SIDE)}"
+                f":{get_env_int('VISION_MAX_OFFICE_IMAGES', _DEFAULT_MAX_IMAGES)}"
+            )
+            cache_key_value = vision_cache.cache_key(
+                path,
+                base_name=base_name,
+                hint=hint,
+                multi_table=multi_table,
+                max_pages=0,
+                max_tables=get_env_int("VISION_MAX_TABLES", _DEFAULT_MAX_TABLES),
+                max_side=get_env_int("VISION_MAX_IMAGE_SIDE", _DEFAULT_MAX_SIDE),
+                signature=vision_cache.model_signature(llm),
+                extra=office_settings,
+            )
+            cached = vision_cache.load_tables(cache_key_value, path)
+            if cached:
+                logger.info(
+                    "文档内嵌图片缓存命中",
+                    path=str(path),
+                    tables=len(cached),
+                    rows=sum(len(t.df) for t in cached),
+                )
+                return cached
+
         multi_image = len(images) > 1
         tables: list[RawTable] = []
         errors: list[str] = []
@@ -227,6 +259,9 @@ class OfficeImageReader:
         if not tables:
             detail = f"；失败: {'; '.join(errors[:3])}" if errors else ""
             raise ValueError(f"文档内嵌图片均未提取到表格: {Path(path).name}{detail}")
+
+        if cache_key_value:
+            vision_cache.save_tables(cache_key_value, tables, path)
 
         logger.info(
             "文档内嵌图片抽表完成",

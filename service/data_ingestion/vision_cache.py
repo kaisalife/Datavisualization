@@ -69,6 +69,7 @@ def cache_key(
     max_tables: int = 5,
     max_side: int = 2000,
     signature: str = "",
+    extra: str = "",
 ) -> str:
     """构造内容寻址缓存键。"""
     p = Path(path)
@@ -83,6 +84,7 @@ def cache_key(
         str(int(max_tables)),
         str(int(max_side)),
         str(signature or ""),
+        str(extra or ""),
     ]
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
 

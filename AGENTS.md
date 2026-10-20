@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 248 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 250 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -356,10 +356,11 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   `related_tables` 与 `series_index` 都含第二张，值逐字一致。
 - **用户意图**：`ingest_data_source` 把 `user_prompt` 作为 `vision_hint` 透传，帮助模型在多张表中选主表；
   单文件用 `build_file_options()`，多文件用 `ingest_files(..., hint=..., vision_cfg=...)`。
-- **抽表结果缓存**：同一文件内容 + `hint` + 多表开关 + 页数上限 + 模型签名会命中
-  `runtime/cache/vision`（内容哈希，默认开启；`VISION_CACHE=0` 关闭，
-  `VISION_CACHE_TTL_DAYS` 默认 14 天，`VISION_CACHE_DIR` 可改目录）。前端先预览再生成图表时不会重复
-  调用视觉模型；只缓存成功结果，测试注入假模型时不走缓存（`service/data_ingestion/vision_cache.py`）。
+- **抽表结果缓存**：图片 / PDF / Office 内嵌图片的抽表结果按「文件内容 + `hint` + 多表开关 +
+  页数上限 + 图片预处理参数 + 模型签名」命中 `runtime/cache/vision`（默认开启；
+  `VISION_CACHE=0` 关闭，`VISION_CACHE_TTL_DAYS` 默认 14 天，`VISION_CACHE_DIR` 可改目录）。
+  前端先预览再生成图表时不会重复调用视觉模型；只缓存成功结果，测试注入假模型时不走缓存
+  （`service/data_ingestion/vision_cache.py`）。
 - `/api/data-profile` 也能直接传图片/PDF（多模态这一步会调用 LLM），可用于抽表预览。
 - 测试注入假模型即可，不联网：`MultimodalReader.read(path, llm=FakeLLM(...))`。
 - **真机 E2E 已验**：`/api/generate-chart-with-prompt` 传 PNG + `model_url/model_api_key` +

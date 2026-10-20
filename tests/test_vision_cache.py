@@ -1,6 +1,9 @@
 """多模态抽表缓存回归（不调用真实视觉模型）。"""
 from __future__ import annotations
 
+import io
+import os
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -142,3 +145,36 @@ def test_multimodal_read_skips_cache_for_injected_llm(tmp_path: Path, monkeypatc
     mr.MultimodalReader.read(str(image), llm=injected, table_name="sales", hint="画图")
 
     assert injected.calls == 2
+
+
+def _noisy_png(size: tuple[int, int] = (400, 300)) -> bytes:
+    """随机噪声保证超过内嵌图片默认 4KB 阈值。"""
+    img = Image.frombytes("RGB", size, os.urandom(size[0] * size[1] * 3))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _docx_with_image(path: Path) -> Path:
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("[Content_Types].xml", "<Types/>")
+        zf.writestr("word/document.xml", "<w:document/>")
+        zf.writestr("word/media/image1.png", _noisy_png())
+    return path
+
+
+def test_office_read_reuses_cache_for_real_client(tmp_path: Path, monkeypatch):
+    import service.data_ingestion.readers.office_image_reader as oir
+
+    monkeypatch.setenv("VISION_CACHE_DIR", str(tmp_path / "cache"))
+    payload = '{"columns":["城市","销售额"],"rows":[{"城市":"北京","销售额":1200}]}'
+    fake = _CountingLLM(payload)
+    monkeypatch.setattr(oir, "load_vision_llm", lambda cfg=None: fake)
+    docx = _docx_with_image(tmp_path / "report.docx")
+
+    first = oir.OfficeImageReader.read(str(docx), table_name="sales", hint="画柱状图")
+    second = oir.OfficeImageReader.read(str(docx), table_name="sales", hint="画柱状图")
+
+    assert fake.calls == 1
+    assert second[0].df.equals(first[0].df)
+    assert second[0].source_path.startswith(str(docx))

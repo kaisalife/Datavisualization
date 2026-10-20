@@ -155,6 +155,25 @@ def test_read_raises_when_no_images(tmp_path):
         OfficeImageReader.read(docx, llm=FakeVisionLLM())
 
 
+def test_read_no_images_does_not_construct_llm(tmp_path, monkeypatch):
+    """纯文字文档应先报 NoEmbeddedImages，不能因为缺模型凭证变成配置错误。"""
+    import service.data_ingestion.readers.office_image_reader as oir
+
+    docx = _make_ooxml(tmp_path / "textonly.docx", {})
+    calls = {"count": 0}
+
+    def _boom(cfg=None):
+        calls["count"] += 1
+        raise AssertionError("不应构造视觉模型")
+
+    monkeypatch.setattr(oir, "load_vision_llm", _boom)
+
+    with pytest.raises(NoEmbeddedImages):
+        OfficeImageReader.read(docx)
+
+    assert calls["count"] == 0
+
+
 def _two_tables_payload() -> str:
     return json.dumps(
         {
