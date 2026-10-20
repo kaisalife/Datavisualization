@@ -14,8 +14,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from service.data_ingestion import vision_cache
 from service.data_ingestion.models import RawTable, safe_table_name
 from service.observability import get_logger
+from service.runtime.constants import get_llm_text_cache_dir
 from service.runtime.utils import extract_json_from_response
 
 logger = get_logger(__name__)
@@ -107,14 +109,46 @@ class LlmTabularReader:
         Raises:
             ValueError: 文件为空 / LLM 未提取到结构化数据
             RuntimeError: .env 未配置模型且未注入 llm
+
+        说明：
+            ``llm=None`` 走真实模型时，成功结果按文件内容 + 截断长度 + 模型签名缓存到
+            ``runtime/cache/llm_text``；注入 ``llm``（测试）时不走缓存。
         """
         text = Path(path).read_text(encoding="utf-8", errors="replace")[:max_text_chars]
         if not text.strip():
             raise ValueError(f"文件为空或无法读取: {path}")
 
+        base_name = safe_table_name(table_name or Path(path).name)
+        use_cache = llm is None
+        llm = llm or _load_env_llm()
+        cache_dir = get_llm_text_cache_dir()
+        cache_key_value = None
+        if use_cache and vision_cache.cache_enabled():
+            cache_key_value = vision_cache.cache_key(
+                path,
+                base_name=base_name,
+                hint="",
+                multi_table=False,
+                max_pages=0,
+                max_tables=0,
+                max_side=0,
+                signature=vision_cache.model_signature(llm),
+                extra=f"llm_tabular:{max_text_chars}",
+            )
+            cached = vision_cache.load_tables(
+                cache_key_value, path, cache_dir=cache_dir
+            )
+            if cached:
+                logger.info(
+                    "文本表格化缓存命中",
+                    path=str(path),
+                    tables=len(cached),
+                    rows=sum(len(t.df) for t in cached),
+                )
+                return cached
+
         from prompts.tabularize_prompt import get_tabularize_prompt
 
-        llm = llm or _load_env_llm()
         prompt = get_tabularize_prompt().invoke({"text": text})
         resp = llm.invoke(prompt)
         content = resp["content"] if isinstance(resp, dict) else getattr(resp, "content", str(resp))
@@ -125,5 +159,11 @@ class LlmTabularReader:
             logger.warning("LLM 未提取到结构化数据", path=path)
             raise ValueError(f"LLM 未从文本中提取到结构化数据: {path}")
 
-        base_name = safe_table_name(table_name or Path(path).name)
-        return [RawTable(name=base_name, df=df, source_kind="document", source_path=path)]
+        table = RawTable(
+            name=base_name, df=df, source_kind="document", source_path=path
+        )
+        if cache_key_value:
+            vision_cache.save_tables(
+                cache_key_value, [table], path, cache_dir=cache_dir
+            )
+        return [table]

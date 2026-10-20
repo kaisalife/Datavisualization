@@ -43,3 +43,15 @@ def get_vision_cache_dir() -> Path:
     if override:
         return Path(override)
     return _PROJECT_ROOT / "runtime" / "cache" / "vision"
+
+
+def get_llm_text_cache_dir() -> Path:
+    """文本表格化（HTML/Markdown/日志）结果缓存目录。
+
+    读 LLM_TEXT_CACHE_DIR env，默认 <项目根>/runtime/cache/llm_text。
+    与多模态缓存分开存放，便于分别清理。
+    """
+    override = os.getenv("LLM_TEXT_CACHE_DIR", "").strip()
+    if override:
+        return Path(override)
+    return _PROJECT_ROOT / "runtime" / "cache" / "llm_text"

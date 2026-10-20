@@ -1,15 +1,18 @@
-"""多模态抽表结果缓存（内容寻址）。
+"""LLM 抽表结果缓存（内容寻址）。
 
-同一张图片/PDF（文件字节相同）、同样的 hint / 多表开关 / 页数上限 / 模型，
-抽表结果可以复用：前端先「预览」再生成图表时，不会第二次调用视觉模型。
+多模态（图片 / PDF）、Office 内嵌图片、文本表格化（HTML / Markdown / 日志）共用
+这套序列化 / 读取逻辑；不同来源通过 ``cache_key`` 的 ``extra`` 字段隔离。
+
+同一文件内容、同样的 hint / 多表开关 / 页数上限 / 预处理参数 / 模型时，抽表结果可以复用：
+前端先「预览」再生成图表时，不会第二次调用 LLM。
 
 设计要点：
 - 只缓存成功结果（至少一张非空表）；失败/空结果不写缓存，下次仍会重试。
-- 键包含文件内容哈希、后缀、表名、hint、multi_table、页数上限、模型签名与缓存版本；
+- 键包含文件内容哈希、后缀、表名、hint、multi_table、页数上限、图片参数、模型签名与缓存版本；
   **不含文件路径**——预览与图表各自上传的副本（UUID 前缀不同）可以共享。
 - 先写 parquet，最后写 ``meta.json`` 作为完成标记；缺失/损坏一律按未命中处理。
-- 默认目录 ``runtime/cache/vision``，``VISION_CACHE=0`` 关闭，
-  ``VISION_CACHE_TTL_DAYS``（默认 14）控制清理。
+- 多模态默认目录 ``runtime/cache/vision``，文本默认 ``runtime/cache/llm_text``；
+  ``VISION_CACHE=0`` 关闭全部抽表缓存，``VISION_CACHE_TTL_DAYS``（默认 14）控制清理。
 """
 from __future__ import annotations
 
@@ -89,17 +92,20 @@ def cache_key(
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
 
 
-def load_tables(key: str, path: str | Path) -> list[RawTable] | None:
+def load_tables(
+    key: str, path: str | Path, cache_dir: str | Path | None = None
+) -> list[RawTable] | None:
     """读取缓存；未命中或损坏时返回 None（不抛异常）。"""
-    root = get_vision_cache_dir() / key
-    meta_path = root / _META_NAME
+    base_dir = Path(cache_dir) if cache_dir is not None else get_vision_cache_dir()
+    entry_dir = base_dir / key
+    meta_path = entry_dir / _META_NAME
     if not meta_path.exists():
         return None
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         tables: list[RawTable] = []
         for item in meta.get("tables") or []:
-            df = pd.read_parquet(root / item["parquet"])
+            df = pd.read_parquet(entry_dir / item["parquet"])
             source_path = str(item.get("source_path") or "").replace("{path}", str(path))
             tables.append(
                 RawTable(
@@ -122,11 +128,16 @@ def load_tables(key: str, path: str | Path) -> list[RawTable] | None:
         return None
 
 
-def save_tables(key: str, tables: list[RawTable], path: str | Path) -> bool:
+def save_tables(
+    key: str,
+    tables: list[RawTable],
+    path: str | Path,
+    cache_dir: str | Path | None = None,
+) -> bool:
     """写入缓存；失败只记日志，不影响主流程。"""
     if not tables:
         return False
-    root = get_vision_cache_dir()
+    root = Path(cache_dir) if cache_dir is not None else get_vision_cache_dir()
     target = root / key
     try:
         target.mkdir(parents=True, exist_ok=True)

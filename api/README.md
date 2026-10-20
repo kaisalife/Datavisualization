@@ -371,8 +371,9 @@ Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列�
 | `VISION_MAX_OFFICE_IMAGES` | `8` | docx/pptx/xlsx 单文件最多抽几张图 |
 | `VISION_MULTI_TABLE` | `0` | `1` = 一图多表（每张表一条 series） |
 | `VISION_MAX_TABLES` | `5` | 一图多表模式下每图最多保留张数 |
-| `VISION_CACHE` | `1` | `0` 关闭多模态抽表结果缓存 |
-| `VISION_CACHE_DIR` | `runtime/cache/vision/` | 抽表缓存目录（内容哈希） |
+| `VISION_CACHE` | `1` | `0` 关闭全部抽表结果缓存（多模态 + 文本） |
+| `VISION_CACHE_DIR` | `runtime/cache/vision/` | 多模态抽表缓存目录（内容哈希） |
+| `LLM_TEXT_CACHE_DIR` | `runtime/cache/llm_text/` | 文本表格化缓存目录（内容哈希） |
 | `VISION_CACHE_TTL_DAYS` | `14` | 抽表缓存保留天数，`0` 不清理 |
 | `FLASK_HOST` | `0.0.0.0` | 监听地址 |
 | `FLASK_PORT` | `5000` | 监听端口 |
