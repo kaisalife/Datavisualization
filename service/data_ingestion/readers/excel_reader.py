@@ -135,6 +135,44 @@ def _fill_merged_values(rows: list[list], ranges) -> list[list]:
     return filled
 
 
+def _fill_merged_data_cells(
+    df: pd.DataFrame,
+    ranges,
+    data_start_row: int,
+) -> pd.DataFrame:
+    """把数据区「纵向合并」的文本值向下填满。
+
+    中文报表常见 ``城市`` 在连续几行合并（北京 跨 1/2 月），pandas 只保留首行，
+    其余行变 NaN，拆 series 时会丢类别。这里只处理：
+
+    - 纵向合并（同一列，多行）；
+    - 左上角是文本（数值合并多为合计/小计，向下填会重复计量）；
+    - 区域完全落在数据行内（不碰表头）。
+
+    Args:
+        df: pandas 读出的数据（不含表头）
+        ranges: [(min_row, min_col, max_row, max_col)]，1-based 闭区间
+        data_start_row: df 第 0 行对应的工作表 0-based 行号
+    """
+    if df.empty or not ranges:
+        return df
+    filled = df.copy()
+    n_rows, n_cols = filled.shape
+    for min_row, min_col, max_row, max_col in ranges:
+        if max_row <= min_row or max_col != min_col:
+            continue  # 只处理纵向合并
+        row_start = min_row - 1 - data_start_row
+        row_end = max_row - 1 - data_start_row
+        col = min_col - 1
+        if row_start < 0 or row_end >= n_rows or col >= n_cols:
+            continue
+        value = filled.iat[row_start, col]
+        if _is_blank(value) or _is_number(value):
+            continue
+        filled.iloc[row_start : row_end + 1, col] = value
+    return filled
+
+
 def _title_row_index(rows: list[list], ranges, width: int, row_offset: int = 0) -> int | None:
     """识别表格顶部「跨多列的单值合并行」，返回相对 ``rows`` 的 0-based 行号。
 
@@ -312,9 +350,18 @@ def _fit_headers(headers: list[str], width: int) -> list[str]:
     return headers[:width]
 
 
-def _read_with_headers(path: str, sheet: str | int, headers: list[str], skip: int) -> pd.DataFrame:
+def _read_with_headers(
+    path: str,
+    sheet: str | int,
+    headers: list[str],
+    skip: int,
+    ranges=None,
+) -> pd.DataFrame:
     """按表头解析结果读取数据行（跳过标题/表头，列名用合并后的名字）。"""
     df = pd.read_excel(path, sheet_name=sheet, header=None, skiprows=skip)
+    if ranges:
+        # 必须在 dropna/reset_index 之前按绝对行号填充
+        df = _fill_merged_data_cells(df, ranges, skip)
     df.columns = _fit_headers(headers, df.shape[1])
     df = df.dropna(how="all").reset_index(drop=True)
     # 合并表头文件常在右侧留格式空列，整列为空的 Unnamed 列直接去掉
@@ -354,10 +401,11 @@ class ExcelReader:
                 layout = _merged_header_layout(rows, ranges, peek.shape[1])
                 if layout is not None:
                     headers, skip = layout
-                    return _read_with_headers(path, sheet, headers, skip)
+                    return _read_with_headers(path, sheet, headers, skip, ranges)
                 skip = _title_skip_rows(rows, ranges, peek.shape[1])
                 if skip:
-                    return pd.read_excel(path, sheet_name=sheet, skiprows=skip)
+                    df = pd.read_excel(path, sheet_name=sheet, skiprows=skip)
+                    return _fill_merged_data_cells(df, ranges, skip + 1)
             except Exception:
                 # 表头解析失败不影响主流程，退回 pandas
                 pass
@@ -371,7 +419,9 @@ class ExcelReader:
                     return _read_with_headers(path, sheet, headers, skip)
             except Exception:
                 pass
-        return pd.read_excel(path, sheet_name=sheet)
+        df = pd.read_excel(path, sheet_name=sheet)
+        # 默认 header=0：df 第 0 行对应工作表第 1 行（0-based）
+        return _fill_merged_data_cells(df, ranges, 1)
 
     @staticmethod
     def read(

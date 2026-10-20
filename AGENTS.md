@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 156 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 159 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -198,8 +198,10 @@ $env:BACKEND_URL="http://localhost:5000"
   用 `_` 连接成 `2023 年_销售额`；纵向合并产生的重复值会去重（`城市` 不会变 `城市_城市`）；
 - 没有合并、靠空白格表达的两行表头也能识别（第二行首列为空、非空值更多、全文字，且第三行有数字）；
   不满足这些条件就按普通表处理，不会吃掉数据行；
-- 合并区域必须**与首行表头相交**才触发；数据区里的合并单元格不会改变表头；
-- 没有表头问题的文件只多一次 4 行 peek，数据仍由 pandas 读取，行为不变；
+- 合并区域必须**与首行表头相交**才触发**表头压缩**；数据区里的合并单元格不改变表头，
+  但纵向合并的**文本**（如 `城市` 跨多行）会在读取后向下填满；数值合并（合计/小计）不填，
+  避免重复计量；
+- 没有表头问题的文件只多一次 4 行 peek；有数据区纵向合并时按合并区域补全文本；
 - 实测 1 万行合并表头 0.85 秒、2 万行普通表 3.5–4 秒（比原先 openpyxl 全量加载 + pandas 双读快约 30%）。
 
 实现：`service/data_ingestion/readers/excel_reader.py`；回归 `tests/test_excel_reader.py`

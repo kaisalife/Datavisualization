@@ -264,3 +264,69 @@ async def test_merged_header_reaches_data_profile(tmp_path: Path):
         "2024 年_销售额",
         "2024 年_利润",
     ]
+
+
+def test_merged_data_cells_fill_text_down(tmp_path: Path):
+    """数据区纵向合并的文本（城市）要向下填满，不能让后续行变 NaN。"""
+    path = tmp_path / "merged_data.xlsx"
+    wb, ws = _new(path)
+    ws.append(["城市", "月份", "销售额"])
+    ws.append(["北京", "1月", 100])
+    ws.append([None, "2月", 120])
+    ws.merge_cells("A2:A3")
+    ws.append(["上海", "1月", 90])
+    ws.append([None, "2月", 95])
+    ws.merge_cells("A4:A5")
+    wb.save(path)
+
+    df = ExcelReader.read(str(path))[0].df
+
+    assert df["城市"].tolist() == ["北京", "北京", "上海", "上海"]
+    assert df["月份"].tolist() == ["1月", "2月", "1月", "2月"]
+    assert df["销售额"].tolist() == [100, 120, 90, 95]
+
+
+def test_merged_numeric_total_not_filled_down(tmp_path: Path):
+    """数值合并多为合计/小计，向下填会重复计量，必须保持 NaN。"""
+    path = tmp_path / "merged_total.xlsx"
+    wb, ws = _new(path)
+    ws.append(["城市", "销售额", "备注"])
+    ws.append(["北京", 100, None])
+    ws.append([None, 200, None])
+    ws.merge_cells("A2:A3")
+    ws.append(["合计", 300, "小计"])
+    ws.append([None, None, "尾部说明"])
+    ws.merge_cells("B4:B5")
+    wb.save(path)
+
+    df = ExcelReader.read(str(path))[0].df
+
+    assert df["城市"].tolist()[:2] == ["北京", "北京"]
+    assert df.iloc[2]["城市"] == "合计"
+    assert pd.isna(df.iloc[3]["销售额"])
+    assert df.iloc[3]["备注"] == "尾部说明"
+
+
+def test_merged_data_with_two_level_header(tmp_path: Path):
+    """两行合并表头 + 数据区纵向合并：填充行号要按实际数据起始行对齐。"""
+    path = tmp_path / "merged_both.xlsx"
+    wb, ws = _new(path)
+    ws["A1"] = "城市"
+    ws.merge_cells("A1:A2")
+    ws["B1"] = "2023 年"
+    ws.merge_cells("B1:C1")
+    ws["B2"] = "销售额"
+    ws["C2"] = "利润"
+
+    ws["A3"] = "北京"
+    ws.merge_cells("A3:A4")
+    ws["B3"], ws["C3"] = 100, 10
+    ws["B4"], ws["C4"] = 120, 12
+    ws["A5"], ws["B5"], ws["C5"] = "上海", 90, 9
+    wb.save(path)
+
+    df = ExcelReader.read(str(path))[0].df
+
+    assert list(df.columns) == ["城市", "2023 年_销售额", "2023 年_利润"]
+    assert df["城市"].tolist() == ["北京", "北京", "上海"]
+    assert df["2023 年_销售额"].tolist() == [100, 120, 90]
