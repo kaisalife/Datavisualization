@@ -302,3 +302,88 @@ def test_duplicate_cells_use_sum_or_mean_by_measure_name():
     assert by_name["销售额 按城市"]["df"]["北京"].tolist() == [30]
     assert by_name["增长率 按城市"]["df"]["北京"].tolist() == [15.0]
 
+
+def test_chinese_month_labels_sorted_naturally():
+    df = pd.DataFrame(
+        {
+            "月份": ["十一月", "一月", "十月", "二月", "十二月", "三月"],
+            "销售额": [110, 10, 100, 20, 120, 30],
+        }
+    )
+
+    spec = split_raw_table(df, "cn_month")[0]
+
+    assert spec["df"]["月份"].tolist() == [
+        "一月", "二月", "三月", "十月", "十一月", "十二月",
+    ]
+    assert spec["df"]["销售额"].tolist() == [10, 20, 30, 100, 110, 120]
+
+
+def test_chinese_quarter_labels_sorted_naturally():
+    df = pd.DataFrame(
+        {
+            "季度": ["第四季度", "第一季度", "第三季度", "第二季度"],
+            "销售额": [40, 10, 30, 20],
+        }
+    )
+
+    spec = split_raw_table(df, "cn_quarter")[0]
+
+    assert spec["df"]["季度"].tolist() == [
+        "第一季度", "第二季度", "第三季度", "第四季度",
+    ]
+    assert spec["df"]["销售额"].tolist() == [10, 20, 30, 40]
+
+
+def test_chinese_weekday_labels_sorted_naturally():
+    df = pd.DataFrame(
+        {
+            "星期": ["星期三", "星期一", "星期日", "星期二"],
+            "销售额": [30, 10, 70, 20],
+        }
+    )
+
+    spec = split_raw_table(df, "cn_weekday")[0]
+
+    assert spec["df"]["星期"].tolist() == ["星期一", "星期二", "星期三", "星期日"]
+
+
+def test_chinese_month_pivot_sorted_naturally():
+    df = pd.DataFrame(
+        {
+            "城市": ["北京", "北京", "上海", "上海"],
+            "月份": ["十月", "二月", "十月", "二月"],
+            "销售额": [100, 20, 90, 19],
+        }
+    )
+
+    spec = split_raw_table(df, "cn_pivot")[0]
+
+    assert spec["axis_kind"] == "time_series"
+    assert spec["df"]["月份"].tolist() == ["二月", "十月"]
+    assert spec["df"]["北京"].tolist() == [20, 100]
+    assert spec["df"]["上海"].tolist() == [19, 90]
+
+
+def test_wide_time_headers_sorted_naturally_with_chinese_months():
+    df = pd.DataFrame(
+        {
+            "指标": ["销售额"],
+            "十月": [100],
+            "一月": [10],
+            "二月": [20],
+        }
+    )
+
+    spec = split_raw_table(df, "cn_wide")[0]
+
+    assert spec["df"]["时间"].tolist() == ["一月", "二月", "十月"]
+    assert spec["df"]["值"].tolist() == [10, 20, 100]
+
+
+def test_natural_key_does_not_rewrite_plain_words():
+    # 只影响排序键；普通词里的「一」不应被当成时间数字展开
+    assert "一" in _natural_key("统一")
+    assert "一" in _natural_key("万一")
+    assert _natural_key("一月") < _natural_key("二月") < _natural_key("十一月")
+

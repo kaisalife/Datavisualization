@@ -47,9 +47,74 @@ def _measure_agg(measure: str) -> str:
     return "mean" if any(hint in name for hint in _AVERAGE_HINTS) else "sum"
 
 
+_CN_DIGITS = {
+    "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+_CN_SMALL_UNITS = {"十": 10, "百": 100, "千": 1000}
+_CN_BIG_UNITS = {"万": 10_000, "亿": 100_000_000}
+_CN_NUMERAL_RUN = re.compile(r"[零〇一二三四五六七八九两十百千万亿]+")
+_CN_TIME_SUFFIXES = ("月", "季度", "季", "周", "星期", "年", "日", "号")
+
+
+def _cn_number_to_int(text: str) -> int | None:
+    """把中文数字转成整数（支持逐位年份、十/百/千/万/亿）。"""
+    if not text:
+        return None
+    if all(ch in _CN_DIGITS for ch in text):
+        # 「二零二四」「〇八」这类逐位写法
+        return int("".join(str(_CN_DIGITS[ch]) for ch in text))
+
+    total = 0
+    section = 0
+    number = 0
+    for ch in text:
+        if ch in _CN_DIGITS:
+            number = _CN_DIGITS[ch]
+        elif ch in _CN_SMALL_UNITS:
+            if number == 0:
+                number = 1
+            section += number * _CN_SMALL_UNITS[ch]
+            number = 0
+        elif ch in _CN_BIG_UNITS:
+            unit = _CN_BIG_UNITS[ch]
+            section += number
+            number = 0
+            if unit == 10_000:
+                total += section * unit
+                section = 0
+            else:
+                total = (total + section) * unit
+                section = 0
+        else:
+            return None
+    return total + section + number
+
+
 def _natural_key(value) -> str:
-    """自然排序键：1月 < 2月 < 10月，Q1 < Q2 < Q10。"""
-    return re.sub(r"\d+", lambda m: m.group(0).zfill(10), str(value))
+    """自然排序键：1月 < 2月 < 10月，一月 < 二月 < 十一月，Q1 < Q2 < Q10。
+
+    中文数字只在「时间标签 / 序数 / 逐位年份」上下文里展开，避免把
+    「统一」「万一」这类普通词也改写成数字（排序键只影响顺序，不改数据）。
+    """
+    text = str(value)
+
+    def _replace(match: re.Match) -> str:
+        run = match.group(0)
+        start, end = match.start(), match.end()
+        prev = text[start - 1] if start > 0 else ""
+        nxt = text[end : end + 2]
+        is_time = nxt.startswith(_CN_TIME_SUFFIXES)
+        is_ordinal = prev == "第"
+        is_weekday = prev == "周" or text[max(0, start - 2) : start] == "星期"
+        is_digit_year = len(run) >= 2 and all(ch in _CN_DIGITS for ch in run)
+        if not (is_time or is_ordinal or is_weekday or is_digit_year):
+            return run
+        number = _cn_number_to_int(run)
+        return f"{number:010d}" if number is not None else run
+
+    text = _CN_NUMERAL_RUN.sub(_replace, text)
+    return re.sub(r"\d+", lambda m: m.group(0).zfill(10), text)
 
 
 def _split_long_with_dimension(
@@ -165,7 +230,7 @@ def _sanitize_series_name(name: str, limit: int = 60) -> str:
 
 def _split_wide_with_time(df: pd.DataFrame, table_name: str) -> list[tuple]:
     """启发式1：宽表且时间列头为主（指标×年份）。行=指标，列头=时间点。"""
-    time_cols = _time_header_cols(df)
+    time_cols = sorted(_time_header_cols(df), key=_natural_key)
     if len(time_cols) < _WIDE_TIME_MIN_TIME_HEADS:
         return []
     total = len(df.columns)

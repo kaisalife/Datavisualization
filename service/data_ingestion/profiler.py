@@ -24,7 +24,9 @@ _STRING_TYPES = ("VARCHAR", "TEXT", "CHAR", "STRING")
 _TIME_TYPES = ("DATE", "TIMESTAMP", "TIME", "DATETIME")
 
 # 中文时间词（按长度倒序替换，避免 "日期" 被 "日" 先拆掉）
-_CN_TIME_WORDS = ("日期", "时间戳", "时间", "年份", "月份", "年度", "季度", "年", "月", "日", "周")
+_CN_TIME_WORDS = ("日期", "时间戳", "星期", "礼拜", "时间", "年份", "月份", "年度", "季度", "年", "月", "日", "周")
+# 星期/周/礼拜 + 星期几：作为时间轴，交给自然排序
+_WEEKDAY_RE = re.compile(r"^(?:星期|周|礼拜)[一二三四五六日天]$")
 # 英文时间词：date/time 出现在任意位置都算；year/month 等只在末尾算
 _EN_TIME_ANY = {"date", "time", "timestamp", "datetime"}
 _EN_TIME_SUFFIX = {"year", "month", "day", "hour", "quarter", "week"}
@@ -54,6 +56,8 @@ def _is_time_label(name: str) -> bool:
     text = str(name).strip()
     if not text:
         return False
+    if _WEEKDAY_RE.fullmatch(text):
+        return True
     low = text.lower()
 
     tokens = [t for t in re.split(r"[^a-z]+", low) if t]
