@@ -195,42 +195,45 @@ def _df_stats(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
     return stats
 
 
-def _serialize(val: Any) -> Any:
-    """把 numpy 标量 / 时间转为 JSON 可序列化值。"""
-    if val is None or (isinstance(val, float) and (pd.isna(val) or np.isnan(val))):
+def _json_scalar(val: Any) -> Any:
+    """把单个单元格转成标准 JSON 值（NaN/Inf 一律转 null）。
+
+    Flask 默认会把 NaN/Infinity 原样写进 JSON，``serde_json`` 等严格解析器会直接
+    报错；数据预览与统计必须只输出标准 JSON。
+    """
+    if val is None:
         return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        # list/dict 等非标量会让 pd.isna 返回数组，忽略即可
+        pass
     if isinstance(val, (pd.Timestamp, np.datetime64)):
         try:
             return pd.Timestamp(val).isoformat()
         except (ValueError, TypeError):
             return str(val)
+    if isinstance(val, (float, np.floating)) and not np.isfinite(val):
+        return None
     if hasattr(val, "item"):
         try:
-            return val.item()
+            return _json_scalar(val.item())
         except (ValueError, TypeError, AttributeError):
             return str(val)
     return val
+
+
+def _serialize(val: Any) -> Any:
+    """把 numpy 标量 / 时间转为 JSON 可序列化值。"""
+    return _json_scalar(val)
 
 
 def _df_preview(df: pd.DataFrame, limit: int = 10) -> list[dict[str, Any]]:
     """前 N 行，复用旧 DuckDBManager.preview 的 JSON 序列化逻辑。"""
     records = []
     for _, row in df.head(limit).iterrows():
-        record: dict[str, Any] = {}
-        for col in df.columns:
-            val = row[col]
-            if pd.isna(val):
-                record[col] = None
-            elif isinstance(val, pd.Timestamp):
-                record[col] = val.isoformat()
-            elif hasattr(val, "item"):
-                try:
-                    record[col] = val.item()
-                except (ValueError, TypeError, AttributeError):
-                    record[col] = str(val)
-            else:
-                record[col] = val
-        records.append(record)
+        records.append({col: _json_scalar(row[col]) for col in df.columns})
     return records
 
 
