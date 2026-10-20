@@ -4,7 +4,7 @@
 - pipeline/  图表生成管线（service_main 入口）
 - runtime/   运行时基础设施（config / utils / query_engine ...）
 - report/    自动报告生成（demo）
-- data_ingestion/  数据接入（DuckDB）
+- data_ingestion/  数据接入（reader + series，v4 无 DuckDB）
 - monitoring/      链路追踪与错误监控
 - observability/   structlog 日志
 - code_completer/  代码可视化补全

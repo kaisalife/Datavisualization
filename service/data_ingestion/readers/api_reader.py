@@ -1,7 +1,7 @@
 """API 数据源 Reader。
 
 从 HTTP API (WorldBank/StatsGov 等) 拉取数据，
-转为 DataFrame 后注册到 DuckDB。
+转为 DataFrame 后包装成 RawTable（不再注册到 DuckDB）。
 
 支持两种模式:
 1. 内置 API: WorldBank / StatsGov (预设 URL 和解析逻辑)
@@ -120,7 +120,7 @@ def _fetch_statsgov(
 # ------------------------------------------------------------------
 
 class ApiReader:
-    """从 API 获取数据并注册为 DuckDB 表。"""
+    """从 API 获取数据并包装成 RawTable。"""
 
     # 内置 API 映射
     BUILTIN_APIS = {

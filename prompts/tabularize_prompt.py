@@ -1,7 +1,7 @@
 """LLM 表格化 prompt（P2：非表格源 -> 结构化表格）。
 
 LLM 从 HTML/Markdown/日志等非表格文本中识别并抽取结构化表格数据，
-输出 columns + rows 的统一 JSON。守护层负责解析与入 DuckDB。
+输出 columns + rows 的统一 JSON。守护层负责解析并包装成 RawTable。
 """
 from langchain_core.prompts import ChatPromptTemplate
 

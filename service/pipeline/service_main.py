@@ -1,7 +1,7 @@
 """主管线编排：数据接入 -> 计划生成 -> 并发图表生成。
 
 本模块只负责流程编排，各阶段实现拆分至:
-- data_source.py:    请求 -> DataSource 构建 + DuckDB 接入
+- data_source.py:    请求 -> DataSource 构建 + 数据接入（reader + series，v4 无 DuckDB）
 - plan_generator.py: LLM 计划生成、解析、落盘
 - chart_executor.py: 并发图表执行与结果汇总
 - agent_pipeline.py: viz_mode=agent 自主流水线（替换固定 plan->generate->debug）
@@ -119,12 +119,12 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
     with stage_timer.stage(task_id, "init_agent", "初始化 Agent"):
         chat = await _init_chat(model_, mcp_config, agent_logs)
 
-    logger.info("步骤 0: 通过 DuckDB 接入数据源")
-    agent_logs.append("📄 步骤 0: 通过 DuckDB 接入数据源")
+    logger.info("步骤 0: 接入数据源")
+    agent_logs.append("📄 步骤 0: 接入数据源")
 
     output_folder, first_file_stem = _prepare_output_folder(model_)
 
-    # ==== DuckDB 数据接入 ====
+    # ==== 数据接入 ====
     engine = QueryEngine(chat_model=chat, model_name=model_.model_type)
     with stage_timer.stage(task_id, "ingest", "数据接入"):
         profile = await ingest_data_source(model_, first_file_stem, agent_logs)
