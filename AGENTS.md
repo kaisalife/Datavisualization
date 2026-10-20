@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 95 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 108 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -184,6 +184,23 @@ $env:BACKEND_URL="http://localhost:5000"
   `Grid(...).add(chart, grid_opts=opts.GridOpts(...))`，`set_global_opts()` 没有 `grid_opts`
   （以上三条都是真机 debug 循环里踩出来的）
 - 这些规则写在 `prompts/chart_gen_prompt.py`，改规则要同时改 prompt 和该测试
+
+## Excel 合并表头 / 标题行
+
+中文报表常见「一行合并大标题 + 两行合并表头」。`ExcelReader` 直接从 xlsx/xlsm 的 zip XML 读合并区域
+（不加载整个 openpyxl 工作簿），再决定怎么读：
+
+- 顶部跨列的单值合并行（如 `A1:E1`「2024 年销售报表」）→ 当标题跳过，最多 2 行；
+- 表头自身有纵向/横向合并（如 `B1:C1`「2023 年」+ `B2`「销售额」）→ 把 2–3 行表头压成单行，
+  用 `_` 连接成 `2023 年_销售额`；纵向合并产生的重复值会去重（`城市` 不会变 `城市_城市`）；
+- 没有合并、靠空白格表达的两行表头也能识别（第二行首列为空、非空值更多、全文字，且第三行有数字）；
+  不满足这些条件就按普通表处理，不会吃掉数据行；
+- 合并区域必须**与首行表头相交**才触发；数据区里的合并单元格不会改变表头；
+- 没有表头问题的文件只多一次 4 行 peek，数据仍由 pandas 读取，行为不变；
+- 实测 1 万行合并表头 0.85 秒、2 万行普通表 3.5–4 秒（比原先 openpyxl 全量加载 + pandas 双读快约 30%）。
+
+实现：`service/data_ingestion/readers/excel_reader.py`；回归 `tests/test_excel_reader.py`
+（两行表头、标题行、空白格表头、正常表、数据区合并、多 sheet、xlsm、ingest 全链路）。
 
 ## 多模态输入（图片 / PDF → 表格）
 
