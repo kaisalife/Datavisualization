@@ -22,7 +22,7 @@ from pathlib import Path
 
 from service.data_ingestion.models import RawTable, safe_table_name
 from service.data_ingestion.readers.multimodal_reader import (
-    extract_table_from_image,
+    extract_tables_from_image,
     image_bytes_to_data_url,
     load_vision_llm,
 )
@@ -152,6 +152,7 @@ class OfficeImageReader:
         llm=None,
         hint: str = "",
         vision_cfg: dict | None = None,
+        multi_table: bool | None = None,
     ) -> list[RawTable]:
         """把文档内嵌图片逐张转成表格。
 
@@ -161,9 +162,11 @@ class OfficeImageReader:
             llm: 注入的视觉模型（测试用）；None 时按 vision_cfg / .env 构造
             hint: 用户分析意图，帮助模型从多张表中选主表
             vision_cfg: 请求带来的模型配置 ``{"base_url","api_key"}``
+            multi_table: True 时每张图片里的所有表都抽出（同图多表命名 ``_t1``/``_t2``）；
+                None 时读 ``VISION_MULTI_TABLE``（默认 0，只取主表）
 
         Returns:
-            list[RawTable]（每张图片抽到表就一条）
+            list[RawTable]（每张图片抽到表就一条；多表模式下一张图可多条）
 
         Raises:
             NoEmbeddedImages: 没有可用图片
@@ -171,16 +174,20 @@ class OfficeImageReader:
         """
         images = OfficeImageReader.extract_images(path)
         llm = llm or load_vision_llm(vision_cfg)
+        if multi_table is None:
+            multi_table = bool(get_env_int("VISION_MULTI_TABLE", 0))
 
         base_name = safe_table_name(table_name or Path(path).name)
-        multi = len(images) > 1
+        multi_image = len(images) > 1
         tables: list[RawTable] = []
         errors: list[str] = []
 
         for index, (media_name, payload) in enumerate(images, start=1):
             try:
                 data_url = image_bytes_to_data_url(payload, Path(media_name).suffix)
-                df = extract_table_from_image(llm, data_url, hint)
+                dataframes = extract_tables_from_image(
+                    llm, data_url, hint, multi_table=multi_table
+                )
             except Exception as e:
                 errors.append(f"{media_name}: {type(e).__name__}: {e}")
                 logger.warning(
@@ -192,21 +199,30 @@ class OfficeImageReader:
                 )
                 continue
 
-            if df is None or df.empty:
+            if not dataframes:
                 logger.info("内嵌图片未提取到表格", path=str(path), media=media_name)
                 continue
 
-            if len(df) > _MAX_ROWS:
-                df = df.head(_MAX_ROWS)
+            for table_index, df in enumerate(dataframes, start=1):
+                if len(df) > _MAX_ROWS:
+                    df = df.head(_MAX_ROWS)
 
-            tables.append(
-                RawTable(
-                    name=f"{base_name}_img{index}" if multi else base_name,
-                    df=df,
-                    source_kind="document",
-                    source_path=f"{path}#{media_name}",
+                suffix = f"_img{index}" if multi_image else ""
+                if len(dataframes) > 1:
+                    suffix += f"_t{table_index}"
+
+                source_path = f"{path}#{media_name}"
+                if len(dataframes) > 1:
+                    source_path += f"/table{table_index}"
+
+                tables.append(
+                    RawTable(
+                        name=f"{base_name}{suffix}",
+                        df=df,
+                        source_kind="document",
+                        source_path=source_path,
+                    )
                 )
-            )
 
         if not tables:
             detail = f"；失败: {'; '.join(errors[:3])}" if errors else ""

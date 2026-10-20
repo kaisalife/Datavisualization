@@ -155,6 +155,66 @@ def test_read_raises_when_no_images(tmp_path):
         OfficeImageReader.read(docx, llm=FakeVisionLLM())
 
 
+def _two_tables_payload() -> str:
+    return json.dumps(
+        {
+            "tables": [
+                {"columns": ["城市"], "rows": [{"城市": "北京"}]},
+                {"columns": ["产品"], "rows": [{"产品": "A"}]},
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_read_multi_table_mode_returns_all_tables(tmp_path):
+    docx = _make_ooxml(tmp_path / "two.docx", {"image1.png": _png()})
+
+    tables = OfficeImageReader.read(
+        docx,
+        table_name="报表",
+        llm=FakeVisionLLM(raw=_two_tables_payload()),
+        multi_table=True,
+    )
+
+    assert [t.name for t in tables] == ["报表_t1", "报表_t2"]
+    assert tables[0].source_path.endswith("/table1")
+    assert tables[1].df["产品"].tolist() == ["A"]
+
+
+def test_read_multi_table_names_include_image_index(tmp_path):
+    docx = _make_ooxml(
+        tmp_path / "deck.pptx",
+        {"image1.png": _png(), "image2.png": _png()},
+        media_dir="ppt/media",
+    )
+
+    tables = OfficeImageReader.read(
+        docx,
+        table_name="deck",
+        llm=FakeVisionLLM(raw=_two_tables_payload()),
+        multi_table=True,
+    )
+
+    assert [t.name for t in tables] == [
+        "deck_img1_t1",
+        "deck_img1_t2",
+        "deck_img2_t1",
+        "deck_img2_t2",
+    ]
+
+
+def test_read_multi_table_env_switch(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISION_MULTI_TABLE", "1")
+    docx = _make_ooxml(tmp_path / "env.docx", {"image1.png": _png()})
+
+    tables = OfficeImageReader.read(
+        docx, llm=FakeVisionLLM(raw=_two_tables_payload())
+    )
+
+    assert len(tables) == 2
+
+
 # ---------------------------------------------------------------- router 兜底
 
 

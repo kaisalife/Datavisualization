@@ -194,12 +194,14 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   PDF 先文字层解析，只有退化成单列 `content` 时才走视觉模型。两条路都失败要抛带两段原因的错误。
 - **Office 内嵌图片**：docx/pptx/xlsx 里的表格常是截图，Unstructured 只拿文字层。文字层为空、
   解析抛错或退化成单列 `content` 时，`OfficeImageReader` 按 OOXML zip 读 `word|ppt|xl/media`
-  下的图片交给视觉模型，一张图一条 RawTable（多图时命名 `<名字>_img1`…）。过滤规则：
+  下的图片交给视觉模型；默认一张图一条 RawTable（多图时命名 `<名字>_img1`…），
+  开启 `VISION_MULTI_TABLE=1` 后同图多表再叠 `_t1`/`_t2`。过滤规则：
   字节数 >= `VISION_MIN_IMAGE_BYTES`(4096)、最短边 >= `VISION_MIN_IMAGE_SIDE`(160)、
   最多 `VISION_MAX_OFFICE_IMAGES`(8) 张（按 `image2 < image10` 自然序）。纯文字文档（没有图片）
   保留文字结果且**不标** degraded；有图片但抽表失败才标 `multimodal_failed`。
   真机验过“只贴一张表格截图的 docx”：Unstructured 抛“未提取到任何内容”→ 兜底 → 7.4 秒拿到
-  列名逐字一致（`城市`/`2023 年`/`2024 年`）的 3 行表。
+  列名逐字一致（`城市`/`2023 年`/`2024 年`）的 3 行表；同一张图里两张不同表也全部抽出
+  （多表模式 9.1 秒、2/2，值逐字一致）。
 - **一图多表**：`VISION_MULTI_TABLE=1`（或 `MultimodalReader.read(..., multi_table=True)`）时
   prompt 换成 `MULTIMODAL_MULTI_TABLE_PROMPT`，输出 `{"tables":[{title,columns,rows}]}`，
   一图/一页可产出多条 RawTable（命名 `_t1`/`_t2`，PDF 再叠 `_p1`），每页最多
