@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 168 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 169 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -205,7 +205,8 @@ $env:BACKEND_URL="http://localhost:5000"
 - 实测 1 万行合并表头 0.85 秒、2 万行普通表 3.5–4 秒（比原先 openpyxl 全量加载 + pandas 双读快约 30%）。
 
 实现：`service/data_ingestion/readers/excel_reader.py`；回归 `tests/test_excel_reader.py`
-（两行表头、标题行、空白格表头、正常表、数据区合并、多 sheet、xlsm、ingest 全链路）。
+（两行表头、标题行、空白格表头、正常表、数据区合并、多 sheet、xlsm、ingest 全链路，
+以及 `tests/fixtures/legacy_merged.xls` 真实 .xls 夹具）。
 
 ## 数值文本与列语义
 

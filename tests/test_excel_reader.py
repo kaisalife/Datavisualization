@@ -266,6 +266,23 @@ async def test_merged_header_reaches_data_profile(tmp_path: Path):
     ]
 
 
+def test_real_xls_merged_header_fixture():
+    """真实 .xls（xlwt 生成）：标题行 + 两行合并表头 + 城市纵向合并。"""
+    path = Path(__file__).parent / "fixtures" / "legacy_merged.xls"
+
+    df = ExcelReader.read(str(path))[0].df
+
+    assert list(df.columns) == [
+        "城市",
+        "2023 年_销售额",
+        "2023 年_利润",
+        "2024 年_销售额",
+        "2024 年_利润",
+    ]
+    assert df["城市"].tolist() == ["北京", "北京", "上海"]
+    assert df.iloc[0].tolist() == ["北京", 1200, 300, 1500, 400]
+
+
 def test_xls_merged_ranges_are_converted(monkeypatch, tmp_path: Path):
     """xlrd 的 rhi/chi 是开区间，转成 1-based 闭区间后才能和 xlsx 逻辑共用。"""
     path = tmp_path / "old.xls"
