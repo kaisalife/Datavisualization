@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -54,6 +55,35 @@ from service.observability import get_logger
 logger = get_logger(__name__)
 
 
+def _normalize_columns(df):
+    """清洗列名：去首尾空白、换行/制表符压成空格、重复列名加后缀。
+
+    手写 CSV / Excel 常见 ``" 城市 "``、``"销售额\\n"`` 或重复表头；不统一会让
+    列语义识别失败，也会让 parquet 因重复列名报错。
+    """
+    if getattr(df.columns, "nlevels", 1) > 1:
+        return df  # MultiIndex 列交给 reader，避免破坏层级
+    names: list[str] = []
+    used: set[str] = set()
+    changed = False
+    for col in df.columns:
+        base = re.sub(r"\s+", " ", str(col).replace("\x00", " ")).strip() or "Unnamed"
+        name = base
+        suffix = 1
+        while name in used:
+            name = f"{base}.{suffix}"
+            suffix += 1
+        used.add(name)
+        if name != col:
+            changed = True
+        names.append(name)
+    if not changed:
+        return df
+    result = df.copy()
+    result.columns = names
+    return result
+
+
 def _assemble_profile(
     raw_tables: list[RawTable],
     session_dir: Path,
@@ -73,7 +103,10 @@ def _assemble_profile(
     # 先把 "1,200" / "12.5%" / "(1,200)" 这类数值文本转成真正的数值，
     # 否则会被 profiler 当成维度，series 拆分和图表都会退化。
     for rt in raw_tables:
-        if getattr(rt, "df", None) is not None and not rt.df.empty:
+        if getattr(rt, "df", None) is None:
+            continue
+        rt.df = _normalize_columns(rt.df)
+        if not rt.df.empty:
             rt.df = coerce_numeric_columns(rt.df)
 
     if save_raw:

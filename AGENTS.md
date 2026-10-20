@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 159 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 162 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -224,6 +224,12 @@ $env:BACKEND_URL="http://localhost:5000"
 `_is_id_label()` 按英文整词匹配，`width` 不会因为含 `id` 被当成编号。
 
 回归：`tests/test_numeric_coercion.py`、`tests/test_series_split.py`。
+
+## 表头清洗
+
+`_assemble_profile` 在数值归一化 / 拆 series 前统一清洗列名：去首尾空白、换行/制表符压成空格、
+重复列名加 `.1`/`.2` 后缀；MultiIndex 列保持原样。手写 CSV 的 `" 城市 "` 不会再让列语义识别失败，
+也不会让 parquet 因重复列名报错。回归 `tests/test_column_normalization.py`。
 
 ## Series 拆分：长表透视
 
