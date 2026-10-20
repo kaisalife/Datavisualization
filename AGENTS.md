@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 253 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 254 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收

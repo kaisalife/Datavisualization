@@ -293,6 +293,54 @@ def test_data_profile_from_sqlite_config(client, tmp_path: Path):
     assert [table["name"] for table in profile["raw_tables"]] == ["sales"]
 
 
+def test_data_profile_sqlite_tables_and_query(client, tmp_path: Path):
+    """表名兼容逗号分隔字符串；query 优先于 tables。"""
+    db_path = tmp_path / "multi.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute('CREATE TABLE "sales" (城市 TEXT, 销售额 INTEGER)')
+    conn.execute('CREATE TABLE "users" (姓名 TEXT)')
+    conn.executemany(
+        'INSERT INTO "sales" VALUES (?, ?)', [("北京", 1200), ("上海", 1500)]
+    )
+    conn.execute('INSERT INTO "users" VALUES ("张三")')
+    conn.commit()
+    conn.close()
+
+    resp = client.post(
+        "/api/data-profile",
+        data={
+            "db_config": json.dumps(
+                {"type": "SQLite", "database": str(db_path), "tables": "sales"},
+                ensure_ascii=False,
+            )
+        },
+    )
+
+    assert resp.status_code == 200
+    profile = resp.get_json()["profile"]
+    assert [table["name"] for table in profile["raw_tables"]] == ["sales"]
+
+    resp = client.post(
+        "/api/data-profile",
+        data={
+            "db_config": json.dumps(
+                {
+                    "type": "SQLite",
+                    "database": str(db_path),
+                    "tables": ["users"],
+                    "query": 'SELECT 城市, 销售额 FROM sales WHERE 销售额 > 1300',
+                },
+                ensure_ascii=False,
+            )
+        },
+    )
+
+    assert resp.status_code == 200
+    profile = resp.get_json()["profile"]
+    assert [table["name"] for table in profile["raw_tables"]] == ["query_result"]
+    assert profile["raw_tables"][0]["rows"] == 1
+
+
 def test_data_profile_rejects_invalid_source_json(client):
     resp = client.post("/api/data-profile", data={"db_config": "{not-json"})
 
