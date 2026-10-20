@@ -10,6 +10,7 @@ GET  /api/data-profile/export  按会话/系列导出 CSV（或打包 ZIP）
 """
 import asyncio
 import io
+import json
 import re
 import uuid
 import zipfile
@@ -92,13 +93,16 @@ def data_profile():
                     hint=hint,
                     vision_cfg=vision_cfg,
                     multi_table=multi_table,
+                    save_raw=True,
                 )
+            options = build_file_options(hint, vision_cfg, multi_table)
+            options["save_raw"] = True
             return await ingest(
                 DataSource(
                     kind="file",
                     path=saved_paths[0],
                     name=saved_names[0],
-                    options=build_file_options(hint, vision_cfg, multi_table),
+                    options=options,
                 )
             )
 
@@ -107,6 +111,7 @@ def data_profile():
         session_id = Path(profile.session_dir).name if profile.session_dir else ""
         result["session_id"] = session_id
         result["exports"] = _build_exports(profile, session_id)
+        result["raw_tables"] = _build_raw_exports(session_id)
         return jsonify({"profile": result, "file_count": len(saved_paths)}), 200
     except Exception as e:
         return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
@@ -133,6 +138,111 @@ def _build_exports(profile, session_id: str) -> list[dict]:
     return exports
 
 
+def _build_raw_exports(session_id: str) -> list[dict]:
+    """列出可下载的原始表（抽表结果，归一化后、拆分 series 前）。"""
+    if not session_id:
+        return []
+    session_dir = _resolve_session(session_id)
+    if session_dir is None:
+        return []
+    exports = []
+    for item in _raw_manifest(session_dir):
+        index = item.get("index")
+        if not isinstance(index, int):
+            continue
+        exports.append(
+            {
+                "index": index,
+                "name": item.get("name") or f"raw_{index}",
+                "rows": item.get("rows", 0),
+                "columns": item.get("columns", []),
+                "csv_url": (
+                    "/api/data-profile/export"
+                    f"?session_id={quote(session_id, safe='')}&raw={index}"
+                ),
+            }
+        )
+    return exports
+
+
+def _raw_manifest(session_dir: Path) -> list[dict]:
+    """读取 ``<session>/raw/manifest.json``（不存在或损坏时返回空列表）。"""
+    path = session_dir / "raw" / "manifest.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _raw_frame(session_dir: Path, index: int) -> pd.DataFrame | None:
+    """读取原始表 parquet；文件必须位于会话的 raw 目录内。"""
+    raw_dir = (session_dir / "raw").resolve()
+    path = (raw_dir / f"raw_{index}.parquet").resolve()
+    if path.parent != raw_dir or not path.is_file():
+        return None
+    return pd.read_parquet(path)
+
+
+def _export_raw(session_dir: Path, raw: str):
+    """导出原始表：``raw=<index>`` 单表，``raw=all`` / 空值打包 ZIP。"""
+    manifest = _raw_manifest(session_dir)
+    if not manifest:
+        return jsonify(ErrorResponse(detail="会话中没有原始表").model_dump()), 404
+
+    if raw.strip().lower() in {"", "all"}:
+        buffer = io.BytesIO()
+        used: set[str] = set()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for item in manifest:
+                index = item.get("index")
+                if not isinstance(index, int):
+                    continue
+                df = _raw_frame(session_dir, index)
+                if df is None:
+                    continue
+                base = _UNSAFE_NAME_RE.sub(
+                    "_", str(item.get("name") or f"raw_{index}")
+                ) or f"raw_{index}"
+                name = base
+                suffix = 1
+                while name in used:
+                    name = f"{base}_{suffix}"
+                    suffix += 1
+                used.add(name)
+                archive.writestr(f"{name}.csv", _csv_bytes(df))
+        if not used:
+            return jsonify(ErrorResponse(detail="原始表数据文件不存在").model_dump()), 404
+        return Response(
+            buffer.getvalue(),
+            mimetype="application/zip",
+            headers=_attachment_headers("raw_tables_export.zip", "raw_tables_export.zip"),
+        )
+
+    try:
+        index = int(raw)
+    except (TypeError, ValueError):
+        return jsonify(
+            ErrorResponse(detail="raw 必须是非负整数或 all").model_dump()
+        ), 400
+    item = next(
+        (entry for entry in manifest if entry.get("index") == index), None
+    )
+    if index < 0 or item is None:
+        return jsonify(ErrorResponse(detail="原始表不存在").model_dump()), 404
+    df = _raw_frame(session_dir, index)
+    if df is None:
+        return jsonify(ErrorResponse(detail="原始表数据文件不存在").model_dump()), 404
+    base = _UNSAFE_NAME_RE.sub("_", str(item.get("name") or f"raw_{index}")) or f"raw_{index}"
+    return Response(
+        _csv_bytes(df),
+        mimetype="text/csv",
+        headers=_attachment_headers(f"{base}.csv", f"raw_{index}.csv"),
+    )
+
+
 @data_bp.route("/data-profile/export", methods=["GET"])
 @monitor_response("data_api:export")
 def export_series():
@@ -141,9 +251,11 @@ def export_series():
     请求:
         session_id（必填）：``/api/data-profile`` 返回的会话 id
         series_id（可选）：只导出指定系列；不传则打包全部系列为 ZIP
+        raw（可选）：只导出原始表（抽表结果）；传序号导出单表，
+            传 ``all``（或空值）打包全部原始表为 ZIP
 
     响应:
-        ``text/csv``（单系列）或 ``application/zip``（全部系列）。
+        ``text/csv``（单系列 / 单表）或 ``application/zip``（全部）。
         CSV 使用 UTF-8 BOM，Excel 直接打开不乱码。
     """
     auth_error = check_api_key()
@@ -160,6 +272,14 @@ def export_series():
     session_dir = _resolve_session(session_id)
     if session_dir is None:
         return jsonify(ErrorResponse(detail="会话不存在或已过期").model_dump()), 404
+
+    raw = request.args.get("raw")
+    if raw is not None:
+        if series_id:
+            return jsonify(
+                ErrorResponse(detail="raw 与 series_id 不能同时使用").model_dump()
+            ), 400
+        return _export_raw(session_dir, raw)
 
     catalog = SeriesCatalog.from_manifest(str(session_dir))
 

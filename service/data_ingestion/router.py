@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import time
 from pathlib import Path
@@ -56,12 +57,15 @@ logger = get_logger(__name__)
 def _assemble_profile(
     raw_tables: list[RawTable],
     session_dir: Path,
+    save_raw: bool = False,
 ) -> DataProfile:
     """把 reader 产出的 RawTable 拆分 series、落盘，组装主 DataProfile。
 
     Args:
         raw_tables: reader 产出的原始表列表（>=1）
         session_dir: 当前会话目录（系列 parquet + manifest.json 落于此）
+        save_raw: True 时把归一化后的原始表也落盘到 ``<session>/raw/``，
+            供数据预览页导出「抽表结果」；图表任务默认关闭
 
     Returns:
         主 DataProfile（series_catalog 含全部 series，related_tables 含其余表）
@@ -71,6 +75,9 @@ def _assemble_profile(
     for rt in raw_tables:
         if getattr(rt, "df", None) is not None and not rt.df.empty:
             rt.df = coerce_numeric_columns(rt.df)
+
+    if save_raw:
+        _save_raw_tables(raw_tables, session_dir)
 
     catalog = build_series_catalog(raw_tables, session_dir)
 
@@ -101,6 +108,43 @@ def _assemble_profile(
     return profile
 
 
+def _save_raw_tables(raw_tables: list[RawTable], session_dir: Path) -> None:
+    """把归一化后的原始表写到 ``<session>/raw/``（数据预览导出用）。
+
+    只存 parquet + manifest；导出时再转 CSV。图表任务不调用，避免额外磁盘/耗时。
+    """
+    raw_dir = Path(session_dir) / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    meta: list[dict] = []
+    for index, raw in enumerate(raw_tables):
+        if raw.df is None:
+            continue
+        df = raw.df.reset_index(drop=True)
+        try:
+            df.to_parquet(raw_dir / f"raw_{index}.parquet", index=False)
+        except Exception as exc:
+            # 原始表导出是附加能力，不因为它失败而让整个预览/接入失败
+            logger.warning(
+                "raw_table_save_failed",
+                index=index,
+                table=raw.name,
+                error=str(exc),
+            )
+            continue
+        meta.append(
+            {
+                "index": index,
+                "name": raw.name,
+                "rows": int(len(df)),
+                "columns": [str(col) for col in df.columns],
+            }
+        )
+    (raw_dir / "manifest.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 @trace(category="ingest")
 async def ingest(source: DataSource) -> DataProfile:
     """统一数据接入入口（v4，无 DuckDB）。
@@ -121,7 +165,10 @@ async def ingest(source: DataSource) -> DataProfile:
     try:
         raw_tables = await asyncio.to_thread(_route, session_dir, source)
         t_route = time.perf_counter()
-        profile = await asyncio.to_thread(_assemble_profile, raw_tables, session_dir)
+        save_raw = bool((source.options or {}).get("save_raw"))
+        profile = await asyncio.to_thread(
+            _assemble_profile, raw_tables, session_dir, save_raw
+        )
         t_assemble = time.perf_counter()
         logger.info(
             "ingest 完成",
@@ -409,6 +456,7 @@ async def ingest_files(
     hint: str = "",
     vision_cfg: dict | None = None,
     multi_table: bool = False,
+    save_raw: bool = False,
 ) -> DataProfile:
     """接入多个文件到同一个会话目录。
 
@@ -421,6 +469,7 @@ async def ingest_files(
         hint: 用户分析意图（透传给多模态 reader，帮助选主表）
         vision_cfg: 视觉模型凭证 {"base_url","api_key"}（透传给多模态 reader）
         multi_table: True 时抽出每张表（一图多表 / PDF 多表 / Office 内嵌图多表）
+        save_raw: True 时把原始表额外落盘，供数据预览导出
 
     Returns:
         主 DataProfile (related_tables 包含其余文件)
@@ -430,12 +479,15 @@ async def ingest_files(
 
     if len(paths) == 1:
         name = names[0] if names else None
+        options = build_file_options(hint, vision_cfg, multi_table)
+        if save_raw:
+            options["save_raw"] = True
         return await ingest(
             DataSource(
                 kind="file",
                 path=paths[0],
                 name=name,
-                options=build_file_options(hint, vision_cfg, multi_table),
+                options=options,
             )
         )
 
@@ -466,7 +518,9 @@ async def ingest_files(
             )
             all_raw.extend(raws)
 
-        profile = await asyncio.to_thread(_assemble_profile, all_raw, session_dir)
+        profile = await asyncio.to_thread(
+            _assemble_profile, all_raw, session_dir, save_raw
+        )
         logger.info(
             "ingest_files assemble",
             related=len(profile.related_tables),

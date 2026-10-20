@@ -216,6 +216,15 @@ X-API-Key: <your_key>
         "axis_kind": "categorical_comparison",
         "csv_url": "/api/data-profile/export?session_id=ds_0123456789ab&series_id=sales.%E5%9F%8E%E5%B8%82"
       }
+    ],
+    "raw_tables": [
+      {
+        "index": 0,
+        "name": "sales",
+        "rows": 4,
+        "columns": ["城市", "销售额"],
+        "csv_url": "/api/data-profile/export?session_id=ds_0123456789ab&raw=0"
+      }
     ]
   },
   "file_count": 1
@@ -227,22 +236,26 @@ Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列�
 图片格式：png / jpg / jpeg / webp / gif / bmp / tif / tiff / avif / heic / heif（HEIC 需 `pillow-heif`）。
 
 预览产生的 series 会话目录会保留（超过 24 小时后由下一次 `allocate_session_dir` 清理），
-便于前端通过 `exports[].csv_url` 下载抽表结果。
+便于前端下载：
+- `raw_tables[]` 是**归一化后、拆分 series 前**的原始表（抽表结果），用于核对 OCR/表格识别；
+- `exports[]` 是拆分后的语义 series，适合直接拿去画图。
 
 ---
 
 ### GET /api/data-profile/export
 
-按会话导出 series 数据（CSV 带 UTF-8 BOM，Excel 打开中文不乱码）。
+按会话导出 series 或原始表（CSV 带 UTF-8 BOM，Excel 打开中文不乱码）。
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
 | `session_id` | 是 | `POST /api/data-profile` 返回的 `profile.session_id` |
 | `series_id` | 否 | 只导出指定系列；不传则把全部系列打包成 ZIP |
+| `raw` | 否 | 导出原始表：`raw=<index>` 单表；`raw=all` 或空值打包全部原始表 |
 
-- 单系列返回 `text/csv`；不传 `series_id` 返回 `application/zip`（每个系列一个 `.csv`）。
-- `series_id` 只从会话的 `manifest.json` 查找，且解析后的 parquet 路径必须位于会话目录内；
-  非法/过期会话返回 404，防止路径穿越。
+- 单系列 / 单原始表返回 `text/csv`；不传 id 返回 `application/zip`（每个表一个 `.csv`）。
+- `raw` 与 `series_id` 不能同时使用。
+- `series_id` 只从会话的 `manifest.json` 查找；原始表只接受 `raw/manifest.json` 里的序号，
+  解析后的 parquet 路径必须位于会话目录内；非法/过期会话返回 404，防止路径穿越。
 - 会话目录由 `TEMP_DATASETS_DIR` 决定，默认 `runtime/datasets/`。
 
 ---

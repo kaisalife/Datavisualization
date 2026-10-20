@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 153 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 156 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -243,15 +243,19 @@ $env:BACKEND_URL="http://localhost:5000"
 
 ## 预览数据导出
 
-`POST /api/data-profile` 的响应新增 `session_id` 与 `exports[]`（每个 series 的 `csv_url`）。
+`POST /api/data-profile` 的响应新增 `session_id`、`exports[]`（每个 series 的 `csv_url`）与
+`raw_tables[]`（归一化后、拆 series 前的原始表，用于核对 OCR/抽表结果）。
 预览不再立即删除 series 会话目录：保留到下一次 `allocate_session_dir` 时按 24 小时 TTL 清理。
 
+- `ingest(save_raw=True)` / `ingest_files(save_raw=True)` 会把原始表额外写成
+  `<session>/raw/raw_<i>.parquet` + `manifest.json`；图表任务默认不写，避免额外磁盘/耗时。
 - `GET /api/data-profile/export?session_id=...&series_id=...` 返回单系列 CSV（UTF-8 BOM，Excel 不乱码）；
   不传 `series_id` 时打包全部系列为 ZIP。
-- `session_id` 必须匹配 `ds_<12位hex>`；`series_id` 只从 `manifest.json` 查，解析后的 parquet
-  路径必须落在会话目录内，防路径穿越。
+- 原始表：`...&raw=<index>` 单表 CSV，`raw=all` 打包全部；`raw` 与 `series_id` 不能同时使用。
+- `session_id` 必须匹配 `ds_<12位hex>`；`series_id` 只从 `manifest.json` 查，原始表序号只从
+  `raw/manifest.json` 查，解析后的 parquet 路径必须落在会话目录内，防路径穿越。
 - 上传文件落盘前统一取 `Path(filename).name`（data / chart / code 三个接口一致），防止 `../` 越界。
-- 回归：`tests/test_data_profile_export.py`（单文件 / ZIP / 非法会话 / 越界路径 / 预览响应链接）。
+- 回归：`tests/test_data_profile_export.py`（series / 原始表 / ZIP / 非法序号 / 非法会话 / 越界路径）。
 
 ## 多模态输入（图片 / PDF → 表格）
 

@@ -174,8 +174,105 @@ def test_data_profile_returns_export_links_and_keeps_session(client, tmp_path: P
     assert profile["exports"]
     assert profile["exports"][0]["csv_url"].startswith("/api/data-profile/export?")
 
+    assert profile["raw_tables"]
+    raw = profile["raw_tables"][0]
+    assert raw["columns"] == ["城市", "销售额"]
+    assert raw["rows"] == 2
+    assert raw["csv_url"].startswith("/api/data-profile/export?")
+    raw_export = client.get(raw["csv_url"])
+    assert raw_export.status_code == 200
+    raw_text = raw_export.data.decode("utf-8-sig")
+    assert "城市,销售额" in raw_text
+    assert "北京,1200" in raw_text
+
     export = client.get(profile["exports"][0]["csv_url"])
     assert export.status_code == 200
     assert "北京,1200" in export.data.decode("utf-8-sig")
     # 预览结束后会话目录保留，供前端导出
     assert (tmp_path / "datasets" / session_id).is_dir()
+
+
+def _post_csv(client, tmp_path: Path, name: str, text: str) -> dict:
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    with open(path, "rb") as fh:
+        resp = client.post(
+            "/api/data-profile",
+            data={"files": (fh, name)},
+            content_type="multipart/form-data",
+        )
+    assert resp.status_code == 200, resp.data
+    return resp.get_json()["profile"]
+
+
+def test_export_all_raw_tables_as_zip(client, tmp_path: Path):
+    profile = _post_csv(
+        client, tmp_path, "sales.csv", '城市,销售额\n北京,"1,200"\n上海,"1,300"\n'
+    )
+
+    resp = client.get(
+        "/api/data-profile/export",
+        query_string={"session_id": profile["session_id"], "raw": "all"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(resp.data)) as archive:
+        assert "sales.csv" in archive.namelist()
+        text = archive.read("sales.csv").decode("utf-8-sig")
+    assert "城市,销售额" in text
+    assert "北京,1200" in text
+
+
+def test_raw_export_rejects_bad_index(client, tmp_path: Path):
+    profile = _post_csv(client, tmp_path, "sales.csv", "城市,销售额\n北京,1200\n")
+    session_id = profile["session_id"]
+
+    assert (
+        client.get(
+            "/api/data-profile/export",
+            query_string={"session_id": session_id, "raw": "abc"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.get(
+            "/api/data-profile/export",
+            query_string={"session_id": session_id, "raw": "99"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            "/api/data-profile/export",
+            query_string={
+                "session_id": session_id,
+                "raw": "0",
+                "series_id": profile["exports"][0]["series_id"],
+            },
+        ).status_code
+        == 400
+    )
+
+
+def test_multiple_files_export_second_raw_table(client, tmp_path: Path):
+    first = tmp_path / "a.csv"
+    second = tmp_path / "b.csv"
+    first.write_text("城市,销售额\n北京,100\n", encoding="utf-8")
+    second.write_text("城市,销售额\n上海,200\n", encoding="utf-8")
+
+    with open(first, "rb") as fh1, open(second, "rb") as fh2:
+        resp = client.post(
+            "/api/data-profile",
+            data={"files": [(fh1, "a.csv"), (fh2, "b.csv")]},
+            content_type="multipart/form-data",
+        )
+
+    assert resp.status_code == 200
+    profile = resp.get_json()["profile"]
+    assert [table["name"] for table in profile["raw_tables"]] == ["a", "b"]
+
+    export = client.get(profile["raw_tables"][1]["csv_url"])
+    assert export.status_code == 200
+    text = export.data.decode("utf-8-sig")
+    assert "上海,200" in text
