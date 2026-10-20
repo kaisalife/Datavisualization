@@ -87,6 +87,10 @@ impl MainModel {
             .and_then(|name| self.settings.db_configs.iter().find(|db| db.name == name))
             .map(|db| db.to_json_string());
         let api_config = data.get("apiConfig").map(|v| v.to_string());
+        let multi_table = data
+            .get("multiTable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         if prompt.trim().is_empty() {
             self.js_add_message("assistant", "请输入分析需求。");
@@ -132,6 +136,7 @@ impl MainModel {
                     model_api_key,
                     mcp_prompt,
                     skill_prompt,
+                    multi_table,
                 };
                 match client.generate_chart(&request).await {
                     Ok(resp) => {

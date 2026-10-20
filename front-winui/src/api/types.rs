@@ -44,6 +44,8 @@ pub struct GenerateChartRequest {
     pub mcp_prompt: Option<String>,
     /// 技能提示词
     pub skill_prompt: Option<String>,
+    /// 图片 / PDF 含多张表时是否全部抽取（默认只取主表）
+    pub multi_table: bool,
 }
 
 /// 可视化模式

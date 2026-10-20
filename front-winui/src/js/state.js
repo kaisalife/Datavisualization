@@ -10,6 +10,7 @@ const state = {
   projectName: null,
   conversations: [],
   isGenerating: false,
+  multiTable: false,
   selectedDb: null,
   dbConfigs: [],
   sidebarTab: 'conversations',

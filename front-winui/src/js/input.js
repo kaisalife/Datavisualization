@@ -8,9 +8,15 @@ function useSuggestion(type) {
 }
 
 function selectMode(el, mode) {
-  document.querySelectorAll('.mode-chip').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.mode-chip[data-mode]').forEach(c => c.classList.remove('active'));
   el.classList.add('active');
   state.vizMode = mode;
+}
+
+function toggleMultiTable() {
+  state.multiTable = !state.multiTable;
+  const chip = document.getElementById('multi-table-chip');
+  if (chip) chip.classList.toggle('active', state.multiTable);
 }
 
 function sendPrompt() {
@@ -47,7 +53,7 @@ function sendPrompt() {
   if (state.mode === 'code') {
     sendToRust('completeCode', { prompt: prompt, files: filesToSend });
   } else {
-    sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, dbConfig: state.selectedDb, apiConfig: state.apiConfig || null, config: state.config || null });
+    sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, multiTable: state.multiTable, dbConfig: state.selectedDb, apiConfig: state.apiConfig || null, config: state.config || null });
   }
   scrollToBottom();
 }

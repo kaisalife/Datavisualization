@@ -98,6 +98,10 @@ impl ApiClient {
         if let Some(skill_prompt) = &request.skill_prompt {
             form = form.text("skill_prompt", skill_prompt.clone());
         }
+        // 只在开启时下发：未设置时后端仍可回落到 VISION_MULTI_TABLE 环境变量
+        if request.multi_table {
+            form = form.text("multi_table", "1");
+        }
 
         for file_path in &request.file_paths {
             let path = Path::new(file_path);
