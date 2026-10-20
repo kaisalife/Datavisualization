@@ -38,18 +38,34 @@ class DatabaseReader:
         return (db_type or "").lower() in {"postgresql", "mysql", "sqlite"}
 
     @staticmethod
-    def _build_url(db_config: dict, db_type: str) -> str:
-        """构建 sqlalchemy 连接串（postgres/mysql 用）。"""
-        host = db_config.get("host", "localhost")
-        port = db_config.get("port", 5432 if db_type == "postgresql" else 3306)
-        database = db_config.get("database", "")
-        user = db_config.get("user", db_config.get("username", ""))
-        password = db_config.get("password", db_config.get("pwd", ""))
+    def _build_url(db_config: dict, db_type: str):
+        """构建 sqlalchemy URL（postgres/mysql 用），自动转义账号密码里的特殊字符。"""
+        from sqlalchemy.engine import URL
+
+        default_port = 5432 if db_type == "postgresql" else 3306
+        host = str(db_config.get("host") or "localhost")
+        try:
+            port = int(db_config.get("port") or default_port)
+        except (TypeError, ValueError):
+            port = default_port
+        database = str(db_config.get("database") or "") or None
+        user = str(db_config.get("user", db_config.get("username", "")) or "") or None
+        password = str(db_config.get("password", db_config.get("pwd", "")) or "") or None
+
         if db_type == "postgresql":
-            return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}"
-        if db_type == "mysql":
-            return f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
-        return ""
+            driver = "postgresql+psycopg2"
+        elif db_type == "mysql":
+            driver = "mysql+pymysql"
+        else:
+            raise ValueError(f"不支持的数据库类型: {db_type}")
+        return URL.create(
+            driver,
+            username=user,
+            password=password,
+            host=host,
+            port=port,
+            database=database,
+        )
 
     @staticmethod
     def _make_engine(db_config: dict, db_type: str):
@@ -63,9 +79,9 @@ class DatabaseReader:
                 raise ValueError("sqlite 数据库必须提供 database/path 配置")
             return sqlite3.connect(path)
 
-        url = DatabaseReader._build_url(db_config, db_type)
         try:
             from sqlalchemy import create_engine
+            url = DatabaseReader._build_url(db_config, db_type)
             return create_engine(url)
         except ImportError:
             raise ImportError(

@@ -73,6 +73,38 @@ def test_quote_identifier_escapes_by_dialect():
     assert _quote_identifier("a`b", "postgresql") == '"a`b"'
 
 
+def test_build_url_escapes_special_characters_in_credentials():
+    url = DatabaseReader._build_url(
+        {
+            "host": "db.example.com",
+            "port": "5433",
+            "database": "my db",
+            "user": "u@ser",
+            "password": "p@ss:word/?#",
+        },
+        "postgresql",
+    )
+
+    assert url.drivername == "postgresql+psycopg2"
+    assert url.username == "u@ser"
+    assert url.password == "p@ss:word/?#"
+    assert url.host == "db.example.com"
+    assert url.port == 5433
+    assert url.database == "my db"
+
+
+def test_build_url_uses_default_port_for_invalid_value():
+    url = DatabaseReader._build_url({"database": "d", "port": "not-a-port"}, "mysql")
+
+    assert url.drivername == "mysql+pymysql"
+    assert url.port == 3306
+
+
+def test_build_url_rejects_unknown_dialect():
+    with pytest.raises(ValueError, match="不支持的数据库类型"):
+        DatabaseReader._build_url({}, "oracle")
+
+
 def test_unsupported_database_type():
     with pytest.raises(ValueError, match="不支持的数据库类型"):
         DatabaseReader.read({}, "oracle", tables=["t"])
