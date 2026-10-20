@@ -88,7 +88,7 @@ function _dpRawTableList(profile, sessionId) {
     return '<div class="dp-item"><div><div class="dp-item-main">' + escHtml(name) + '</div>' +
       '<div class="dp-item-sub">' + escHtml(meta) + '</div></div>' + button + '</div>';
   }).join('');
-  if (!rows) return '<div class="dp-muted">没有原始表导出（图表任务默认不保存原始表）</div>';
+  if (!rows) return '<div class="dp-muted">没有可导出的原始表</div>';
 
   const zipUrl = sessionId
     ? '/api/data-profile/export?session_id=' + encodeURIComponent(sessionId) + '&raw=all'
