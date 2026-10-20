@@ -125,6 +125,54 @@ def test_time_column_with_measures_splits_per_measure():
     assert [spec["name"] for spec in specs] == ["销售额", "利润"]
 
 
+def test_time_series_sorted_naturally():
+    df = pd.DataFrame(
+        {"月份": ["10月", "2月", "1月"], "销售额": [10, 20, 30]}
+    )
+
+    spec = split_raw_table(df, "time")[0]
+
+    assert spec["axis_kind"] == "time_series"
+    assert spec["df"]["月份"].tolist() == ["1月", "2月", "10月"]
+    assert spec["df"]["销售额"].tolist() == [30, 20, 10]
+
+
+def test_duplicate_time_points_are_aggregated():
+    df = pd.DataFrame(
+        {"月份": ["1月", "1月", "2月"], "销售额": [10, 20, 30]}
+    )
+
+    spec = split_raw_table(df, "time")[0]
+
+    assert len(spec["df"]) == 2
+    assert spec["df"]["销售额"].tolist() == [30, 30]
+
+
+def test_duplicate_rate_time_points_use_mean():
+    df = pd.DataFrame(
+        {"月份": ["1月", "1月", "2月"], "增长率": [10.0, 20.0, 30.0]}
+    )
+
+    spec = split_raw_table(df, "time")[0]
+
+    assert spec["df"]["增长率"].tolist() == [15.0, 30.0]
+
+
+def test_wide_time_measures_are_sorted():
+    df = pd.DataFrame(
+        {
+            "年份": [2023, 2021, 2022],
+            "销售额": [300, 100, 200],
+            "利润": [30, 10, 20],
+        }
+    )
+
+    specs = split_raw_table(df, "wide")
+
+    assert len(specs) == 2
+    assert all(spec["df"]["年份"].tolist() == [2021, 2022, 2023] for spec in specs)
+
+
 def test_long_table_pivots_dimension_over_time():
     df = pd.DataFrame(
         {

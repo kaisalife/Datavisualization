@@ -190,6 +190,21 @@ def _split_wide_with_time(df: pd.DataFrame, table_name: str) -> list[tuple]:
     return out
 
 
+def _time_series_frame(
+    df: pd.DataFrame, time_col: str, measure_col: str
+) -> pd.DataFrame:
+    """取「时间 + 指标」两列：按自然时间排序，同一时间点按语义聚合。"""
+    sub = df[[time_col, measure_col]].dropna(subset=[time_col]).copy()
+    if sub.duplicated(subset=[time_col]).any():
+        sub = sub.groupby(
+            time_col, as_index=False, dropna=False
+        )[measure_col].agg(_measure_agg(measure_col))
+    return (
+        sub.sort_values(time_col, key=lambda s: s.map(_natural_key))
+        .reset_index(drop=True)
+    )
+
+
 def _split_wide_with_metrics(df: pd.DataFrame, column_semantics: dict[str, str]) -> list[tuple]:
     """启发式2：宽表含一时间列 + 多个指标列（时间×指标）。每指标一条时间序列。"""
     time_cols = [c for c, r in column_semantics.items() if r == "time"]
@@ -199,7 +214,7 @@ def _split_wide_with_metrics(df: pd.DataFrame, column_semantics: dict[str, str])
     time_col = time_cols[0]
     out: list[tuple] = []
     for m in measure_cols:
-        sub_df = df[[time_col, m]].copy()
+        sub_df = _time_series_frame(df, time_col, m)
         out.append((
             "time_series", time_col, [m], sub_df,
             _sanitize_series_name(m), f"{m} 随 {time_col} 的变化",
@@ -216,7 +231,7 @@ def _split_long_or_categorical(df: pd.DataFrame, column_semantics: dict[str, str
     # 3. 长表：一个轴 + 一个值
     if time_cols and measure_cols:
         tc, mc = time_cols[0], measure_cols[0]
-        sub = df[[tc, mc]].copy()
+        sub = _time_series_frame(df, tc, mc)
         return [(
             "time_series", tc, [mc], sub,
             _sanitize_series_name(mc), f"{mc} 随 {tc} 的变化",
