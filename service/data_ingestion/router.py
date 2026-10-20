@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 
 from service.data_ingestion.models import DataProfile, DataSource, RawTable
+from service.data_ingestion.normalize import coerce_numeric_columns
 from service.data_ingestion.profiler import build_profile_from_df
 from service.data_ingestion.readers.archive_reader import ArchiveReader
 from service.data_ingestion.readers.document_reader import DocumentReader
@@ -64,6 +65,12 @@ def _assemble_profile(
     Returns:
         主 DataProfile（series_catalog 含全部 series，related_tables 含其余表）
     """
+    # 先把 "1,200" / "12.5%" / "(1,200)" 这类数值文本转成真正的数值，
+    # 否则会被 profiler 当成维度，series 拆分和图表都会退化。
+    for rt in raw_tables:
+        if getattr(rt, "df", None) is not None and not rt.df.empty:
+            rt.df = coerce_numeric_columns(rt.df)
+
     catalog = build_series_catalog(raw_tables, session_dir)
 
     # 主 profile 用第一个 raw table 的画像

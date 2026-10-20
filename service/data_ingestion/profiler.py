@@ -6,20 +6,84 @@ v4: 使用 pandas 直接对 DataFrame 生成 DataProfile（不再经过 DuckDB�
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import Any
 
 from service.data_ingestion.models import DataProfile
 
 # 语义角色推断的关键词
-_TIME_KEYWORDS = ("date", "time", "year", "month", "day", "hour", "日期", "时间", "年", "月", "日")
+_TIME_KEYWORDS = ("date", "time", "year", "month", "day", "hour", "日期", "时间", "年", "月", "日", "季度", "周")
 _ID_KEYWORDS = ("id", "编号", "code", "uuid", "guid")
 _MEASURE_KEYWORDS = ("amount", "sales", "price", "count", "sum", "total", "value", "qty", "quantity",
                      "金额", "数量", "总计", "销售额", "价格")
 _NUMERIC_TYPES = ("INT", "DOUBLE", "FLOAT", "DECIMAL", "REAL", "NUMERIC", "BIGINT", "SMALLINT")
 _STRING_TYPES = ("VARCHAR", "TEXT", "CHAR", "STRING")
 _TIME_TYPES = ("DATE", "TIMESTAMP", "TIME", "DATETIME")
+
+# 中文时间词（按长度倒序替换，避免 "日期" 被 "日" 先拆掉）
+_CN_TIME_WORDS = ("日期", "时间戳", "时间", "年份", "月份", "年度", "季度", "年", "月", "日", "周")
+# 英文时间词：date/time 出现在任意位置都算；year/month 等只在末尾算
+_EN_TIME_ANY = {"date", "time", "timestamp", "datetime"}
+_EN_TIME_SUFFIX = {"year", "month", "day", "hour", "quarter", "week"}
+
+_EN_ID_WORDS = {"id", "uuid", "guid", "code"}
+_CN_ID_WORDS = ("编号", "代码", "编码")
+
+
+def _is_id_label(name: str) -> bool:
+    """判断列名是否像 id / 编号（按英文整词匹配，避免 width 命中 id）。"""
+    low = str(name).lower()
+    if any(word in low for word in _CN_ID_WORDS):
+        return True
+    tokens = [t for t in re.split(r"[^a-z]+", low) if t]
+    return any(t in _EN_ID_WORDS for t in tokens)
+
+
+def _is_time_label(name: str) -> bool:
+    """判断列名是不是一个「时间标签」，而不是带时间词的指标名。
+
+    这条规则用来区分两种列：
+    - ``2023 年`` / ``1 月`` / ``年份`` / ``order_date`` -> 时间列；
+    - ``2023 年_销售额`` / ``销售额_2023`` -> 指标列（含时间词但不是时间轴）。
+
+    只看列名；真正的日期 dtype 由调用方另行判断。
+    """
+    text = str(name).strip()
+    if not text:
+        return False
+    low = text.lower()
+
+    tokens = [t for t in re.split(r"[^a-z]+", low) if t]
+    if any(t in _EN_TIME_ANY for t in tokens):
+        return True
+    if tokens and tokens[-1] in _EN_TIME_SUFFIX:
+        return True
+
+    # 纯年份 / 年月 / 季度
+    if re.fullmatch(r"(19|20)\d{2}", low):
+        return True
+    if re.fullmatch(r"(19|20)\d{2}\s*[-/.年]?\s*(0?[1-9]|1[0-2])\s*月?", low):
+        return True
+    if re.fullmatch(r"q[1-4](\s*[-/]?\s*(19|20)\d{2})?", low):
+        return True
+
+    if not any(word in low for word in _CN_TIME_WORDS):
+        return False
+
+    # 去掉时间词、数字和分隔符后还有内容 -> 更像「指标名里带时间词」
+    residual = low
+    for word in sorted(_CN_TIME_WORDS, key=len, reverse=True):
+        residual = residual.replace(word, "")
+    residual = re.sub(r"\d+", "", residual)
+    residual = re.sub(r"[\s_\-/:.()\[\]{}第号]+", "", residual)
+    if not residual:
+        return True
+    # 「统计时间」「销售日期」这类以时间词结尾的仍算时间列
+    return any(low.endswith(word) for word in _CN_TIME_WORDS)
+
 
 
 def _infer_column_semantics(
@@ -40,12 +104,11 @@ def _infer_column_semantics(
     semantics: dict[str, str] = {}
     for col in schema:
         name = col["name"]
-        lname = name.lower()
         ctype = col["type"].upper()
 
-        if any(k in lname for k in _TIME_KEYWORDS) or any(t in ctype for t in _TIME_TYPES):
+        if any(t in ctype for t in _TIME_TYPES) or _is_time_label(name):
             role = "time"
-        elif any(k in lname for k in _ID_KEYWORDS):
+        elif _is_id_label(name):
             # id: 名字含 id 且唯一性接近行数
             approx_unique = stats.get(name, {}).get("approx_unique")
             try:

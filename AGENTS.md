@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 108 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 122 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -201,6 +201,22 @@ $env:BACKEND_URL="http://localhost:5000"
 
 实现：`service/data_ingestion/readers/excel_reader.py`；回归 `tests/test_excel_reader.py`
 （两行表头、标题行、空白格表头、正常表、数据区合并、多 sheet、xlsm、ingest 全链路）。
+
+## 数值文本与列语义
+
+`service/data_ingestion/normalize.py` 在 profiling / series 拆分前统一跑一遍：
+
+- 整列都是 `1,200` / `12.5%` / `(1,200)` / `¥1,200` / `1.234,56` / 全角数字时转成数值；
+  **任何一个值解析失败就整列保留原样**，不做部分转换；
+- 列名像编号（`编号`/`order_id`/`phone`…）不转；`00123`、无分隔符的 12 位以上长数字保留字符串；
+- 带单位（`1,200 万元`）不转，避免丢失量纲；
+- 空值占位符（`—`/`暂无`/`N/A`）在其余值都是数字时变成 NaN。
+
+`profiler._is_time_label()` 只把 `2023 年` / `1 月` / `年份` / `order_date` 这类列名当时间轴；
+`2023 年_销售额`、`销售额_2023`、`year_sales` 是指标（否则宽表会被错误拆成「指标×时间」）。
+`_is_id_label()` 按英文整词匹配，`width` 不会因为含 `id` 被当成编号。
+
+回归：`tests/test_numeric_coercion.py`、`tests/test_series_split.py`。
 
 ## 多模态输入（图片 / PDF → 表格）
 

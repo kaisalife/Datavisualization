@@ -252,4 +252,15 @@ async def test_merged_header_reaches_data_profile(tmp_path: Path):
         "2024 年_利润",
     ]
     assert profile.row_count == 3
-    assert len(profile.series_catalog.series) == 3
+    # 4 个「年份_指标」列是测量值，不再被误当成时间点
+    assert profile.column_semantics["2023 年_销售额"] == "measure"
+    assert len(profile.series_catalog.series) == 1
+    series = profile.series_catalog.series[0]
+    assert series.axis_kind == "categorical_comparison"
+    assert series.row_label_column == "城市"
+    assert series.column_label_columns == [
+        "2023 年_销售额",
+        "2023 年_利润",
+        "2024 年_销售额",
+        "2024 年_利润",
+    ]

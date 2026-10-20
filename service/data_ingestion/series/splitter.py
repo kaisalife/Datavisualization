@@ -21,22 +21,26 @@ from typing import Any
 import pandas as pd
 
 from service.data_ingestion.models import RawTable
-from service.data_ingestion.profiler import _TIME_KEYWORDS, _infer_column_semantics
+from service.data_ingestion.profiler import _infer_column_semantics, _is_time_label
 from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
 
 # 时间列构造的 melt 产物用固定的行/值列名（避免与业务列冲突）
 _TIME_LABEL_COL = "时间"
 _VALUE_LABEL_COL = "值"
 
-# 列名匹配时间关键词时，排除明显是"值载体"列（如 年份_总量 这类以量词结尾的）
+# 宽表-时间列 判定参数（时间列头由 _is_time_label 识别）
 _WIDE_TIME_HINT_MAX_ROWS = 60     # 宽表-时间列 判定：行数上限
 _WIDE_TIME_MIN_TIME_HEADS = 3     # 宽表-时间列 判定：最少时间列头数
 _WIDE_TIME_TIME_FRACTION = 0.5    # 时间列头占比下限
 
 
 def _time_header_cols(df: pd.DataFrame) -> list[str]:
-    """列名中命中时间关键词的列（用于判定 指标×时间 宽表）。"""
-    return [c for c in df.columns for _ in [None] if any(k in str(c).lower() for k in _TIME_KEYWORDS)]
+    """列名是「时间标签」的列（用于判定 指标×时间 宽表）。
+
+    只看列名：``2020 年`` / ``1 月`` / ``order_date`` 算，``2023 年_销售额``
+    这种「时间词 + 指标名」不算，否则会把不同指标误当成时间点。
+    """
+    return [c for c in df.columns if _is_time_label(c)]
 
 
 def _safe_filename(name: str) -> str:
