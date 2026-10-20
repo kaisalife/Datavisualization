@@ -229,9 +229,18 @@ class TestRouterMultimodal:
     def test_image_routes_to_multimodal(self, png: Path, monkeypatch):
         calls = {}
 
-        def fake_read(path, table_name=None, llm=None, hint="", max_pages=None, vision_cfg=None):
+        def fake_read(
+            path,
+            table_name=None,
+            llm=None,
+            hint="",
+            max_pages=None,
+            vision_cfg=None,
+            multi_table=None,
+        ):
             calls["hint"] = hint
             calls["table_name"] = table_name
+            calls["multi_table"] = multi_table
             return [RawTable(name="t", df=pd.DataFrame({"a": [1]}), source_kind="document", source_path=path)]
 
         monkeypatch.setattr(MultimodalReader, "read", staticmethod(fake_read))
@@ -240,7 +249,34 @@ class TestRouterMultimodal:
         tables = _route_file(source)
 
         assert calls["hint"] == "按年份对比"
+        assert calls["table_name"] == "mytable"
+        assert calls["multi_table"] is None
         assert tables[0].name == "t"
+
+    def test_multi_table_option_is_forwarded(self, png: Path, monkeypatch):
+        calls = {}
+
+        def fake_read(path, **kwargs):
+            calls.update(kwargs)
+            return [RawTable(name="t", df=pd.DataFrame({"a": [1]}), source_kind="document", source_path=path)]
+
+        monkeypatch.setattr(MultimodalReader, "read", staticmethod(fake_read))
+
+        _route_file(
+            DataSource(
+                kind="file",
+                path=str(png),
+                options={"vision_multi_table": True},
+            )
+        )
+
+        assert calls["multi_table"] is True
+
+    def test_build_file_options_multi_table_flag(self):
+        from service.data_ingestion.router import build_file_options
+
+        assert "vision_multi_table" not in build_file_options()
+        assert build_file_options(multi_table=True)["vision_multi_table"] is True
 
     def test_degenerate_detection(self):
         degen = [RawTable(name="a", df=pd.DataFrame({"content": ["x"]}), source_kind="document", source_path="p")]

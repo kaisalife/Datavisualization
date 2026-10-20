@@ -16,6 +16,7 @@ class GenerateChartWithPromptRequest(BaseModel):
     mcp_prompt: Optional[str] = ""  # MCP提示词
     skill_prompt: Optional[str] = ""  # 技能提示词
     viz_mode: Optional[str] = "auto"  # "auto" | "chart" | "scientific"
+    multi_table: Optional[bool] = False  # True = 抽出图片/PDF/Office 内嵌图片中的所有表
 
 
 class CompleteVizCodeRequest(BaseModel):

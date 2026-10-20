@@ -30,6 +30,7 @@ def data_profile():
 
     请求: multipart files（一个或多个数据文件，CSV/Excel/JSON/Parquet/图片/PDF）
           hint（可选）：用户分析意图，帮助多模态抽表选主表
+          multi_table（可选）：1/true 时抽出图片、PDF 页面、Office 内嵌图片里的所有表
           model_url / model_api_key（可选）：多模态抽表用的模型凭证
     响应: {"profile": {...}, "file_count": N}
     """
@@ -38,6 +39,12 @@ def data_profile():
         return auth_error
 
     hint = (request.form.get("hint") or "").strip()
+    multi_table = (request.form.get("multi_table") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     vision_cfg = {
         "base_url": (request.form.get("model_url") or "").strip(),
         "api_key": (request.form.get("model_api_key") or "").strip(),
@@ -62,12 +69,14 @@ def data_profile():
 
         async def _run():
             if len(saved_paths) > 1:
-                return await ingest_files(saved_paths, hint=hint, vision_cfg=vision_cfg)
+                return await ingest_files(
+                    saved_paths, hint=hint, vision_cfg=vision_cfg, multi_table=multi_table
+                )
             return await ingest(
                 DataSource(
                     kind="file",
                     path=saved_paths[0],
-                    options=build_file_options(hint, vision_cfg),
+                    options=build_file_options(hint, vision_cfg, multi_table),
                 )
             )
 

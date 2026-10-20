@@ -184,6 +184,8 @@ def _route_file(source: DataSource) -> list[RawTable]:
 
     hint = str(source.options.get("vision_hint", "") or "")
     vision_cfg = source.options.get("vision") or None
+    # None = 交给 VISION_MULTI_TABLE 环境变量；True = 本次请求强制多表
+    multi_table = bool(source.options.get("vision_multi_table")) or None
 
     # 优先级: 专用格式 > 多模态 > 文档格式 > 通用格式
     if FileReader.can_handle(path):
@@ -197,7 +199,11 @@ def _route_file(source: DataSource) -> list[RawTable]:
                 logger.info("表格解析失败，尝试内嵌图片抽表", path=path, error=str(e))
                 try:
                     return OfficeImageReader.read(
-                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                        path,
+                        table_name=source.name,
+                        hint=hint,
+                        vision_cfg=vision_cfg,
+                        multi_table=multi_table,
                     )
                 except Exception as img_error:
                     logger.warning(
@@ -208,7 +214,11 @@ def _route_file(source: DataSource) -> list[RawTable]:
         # 图片：视觉模型优先，失败回退 Unstructured OCR
         try:
             return MultimodalReader.read(
-                path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                path,
+                table_name=source.name,
+                hint=hint,
+                vision_cfg=vision_cfg,
+                multi_table=multi_table,
             )
         except Exception as e:
             logger.warning("多模态识别失败，回退 OCR", path=path, error=str(e))
@@ -244,7 +254,11 @@ def _route_file(source: DataSource) -> list[RawTable]:
                 logger.info("文档解析失败，尝试内嵌图片抽表", path=path, error=str(e))
                 try:
                     return OfficeImageReader.read(
-                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                        path,
+                        table_name=source.name,
+                        hint=hint,
+                        vision_cfg=vision_cfg,
+                        multi_table=multi_table,
                     )
                 except Exception as img_error:
                     logger.warning(
@@ -258,11 +272,19 @@ def _route_file(source: DataSource) -> list[RawTable]:
             try:
                 if MultimodalReader.is_pdf(path):
                     return MultimodalReader.read(
-                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                        path,
+                        table_name=source.name,
+                        hint=hint,
+                        vision_cfg=vision_cfg,
+                        multi_table=multi_table,
                     )
                 if OfficeImageReader.can_handle(path):
                     return OfficeImageReader.read(
-                        path, table_name=source.name, hint=hint, vision_cfg=vision_cfg
+                        path,
+                        table_name=source.name,
+                        hint=hint,
+                        vision_cfg=vision_cfg,
+                        multi_table=multi_table,
                     )
             except NoEmbeddedImages:
                 # 纯文字文档没有图片：保留文字解析结果，不算降级
@@ -350,13 +372,24 @@ def _route_document(source: DataSource) -> list[RawTable]:
 # ------------------------------------------------------------------
 
 @trace(category="ingest")
-def build_file_options(hint: str = "", vision_cfg: dict | None = None) -> dict:
-    """构造 file 类型 DataSource 的 options（多模态提示 + 模型凭证）。"""
+def build_file_options(
+    hint: str = "", vision_cfg: dict | None = None, multi_table: bool = False
+) -> dict:
+    """构造 file 类型 DataSource 的 options（多模态提示 + 模型凭证 + 多表开关）。
+
+    Args:
+        hint: 用户分析意图（多模态选主表）
+        vision_cfg: 视觉模型凭证
+        multi_table: True 时把图片/PDF/Office 内嵌图片里的每张表都抽出来；
+            不设置则交给 ``VISION_MULTI_TABLE`` 环境变量决定
+    """
     options: dict = {}
     if hint:
         options["vision_hint"] = hint
     if vision_cfg:
         options["vision"] = vision_cfg
+    if multi_table:
+        options["vision_multi_table"] = True
     return options
 
 
@@ -365,6 +398,7 @@ async def ingest_files(
     names: list[str] | None = None,
     hint: str = "",
     vision_cfg: dict | None = None,
+    multi_table: bool = False,
 ) -> DataProfile:
     """接入多个文件到同一个会话目录。
 
@@ -376,6 +410,7 @@ async def ingest_files(
         names: 对应的表名列表 (可选，默认从文件名推导)
         hint: 用户分析意图（透传给多模态 reader，帮助选主表）
         vision_cfg: 视觉模型凭证 {"base_url","api_key"}（透传给多模态 reader）
+        multi_table: True 时抽出每张表（一图多表 / PDF 多表 / Office 内嵌图多表）
 
     Returns:
         主 DataProfile (related_tables 包含其余文件)
@@ -402,7 +437,10 @@ async def ingest_files(
             t_file_start = time.perf_counter()
             name = names[i] if names else None
             source = DataSource(
-                kind="file", path=path, name=name, options=build_file_options(hint, vision_cfg)
+                kind="file",
+                path=path,
+                name=name,
+                options=build_file_options(hint, vision_cfg, multi_table),
             )
             raws = await asyncio.to_thread(_route_file, source)
             t_file_end = time.perf_counter()

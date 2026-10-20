@@ -207,6 +207,8 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   一图/一页可产出多条 RawTable（命名 `_t1`/`_t2`，PDF 再叠 `_p1`），每页最多
   `VISION_MAX_TABLES`(5) 张。默认关闭（只取主表），避免把页眉/键值对误当表；
   单表模式即使模型返回 `tables` 数组也只取第一张。真机验过左右两张列结构不同的表全部抽出、5/5。
+  请求级开关：`/api/data-profile` 表单 `multi_table=1` 或 `GenerateChartWithPromptRequest.multi_table=true`，
+  经 `build_file_options(..., multi_table=True)` 变成 `vision_multi_table` option；未设置时回落到环境变量。
 - **用户意图**：`ingest_data_source` 把 `user_prompt` 作为 `vision_hint` 透传，帮助模型在多张表中选主表；
   单文件用 `build_file_options()`，多文件用 `ingest_files(..., hint=..., vision_cfg=...)`。
 - `/api/data-profile` 也能直接传图片/PDF（多模态这一步会调用 LLM），可用于抽表预览。

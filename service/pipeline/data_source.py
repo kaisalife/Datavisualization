@@ -45,6 +45,7 @@ async def ingest_data_source(model_, first_file_stem: str, agent_logs: list):
         if model_.file_paths:
             # user_prompt 透传给多模态 reader：图片/PDF 抽取表格时据此选主表
             vision_hint = (model_.user_prompt or "").strip()
+            multi_table = bool(getattr(model_, "multi_table", False))
             # 模型凭证来自请求（前端 settings.json 下发），.env 仅作兜底
             vision_cfg = {
                 "base_url": getattr(model_, "model_url", None) or "",
@@ -54,14 +55,17 @@ async def ingest_data_source(model_, first_file_stem: str, agent_logs: list):
                 vision_cfg = None
             if len(model_.file_paths) > 1:
                 profile = await ingest_files(
-                    model_.file_paths, hint=vision_hint, vision_cfg=vision_cfg
+                    model_.file_paths,
+                    hint=vision_hint,
+                    vision_cfg=vision_cfg,
+                    multi_table=multi_table,
                 )
             else:
                 source = DataSource(
                     kind="file",
                     path=model_.file_paths[0],
                     name=first_file_stem,
-                    options=build_file_options(vision_hint, vision_cfg),
+                    options=build_file_options(vision_hint, vision_cfg, multi_table),
                 )
                 profile = await ingest(source)
         elif model_.db_config:

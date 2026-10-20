@@ -67,6 +67,7 @@ api/
 | `mcp_prompt` | 可选 | string | MCP 工具提示 |
 | `skill_prompt` | 可选 | string | Skill 提示 |
 | `viz_mode` | 可选 | string | `agent` / `auto`（默认，自主流水线）、`legacy` / `chart` / `scientific`（固定 plan 流水线） |
+| `multi_table` | 可选 | bool | `true` 时抽出图片 / PDF / Office 内嵌图片里的所有表（默认只取主表） |
 
 > 图片 / PDF 会先经视觉模型抽成表格，再进入后续 series 拆分与图表生成。
 > Word / PPT / Excel 里的表格截图（内嵌图片）在文字层解析失败或退化时也会走视觉模型。
@@ -193,6 +194,7 @@ X-API-Key: <your_key>
 | `files` | 是 | 一个或多个文件（表格 / 文档 / 图片 / PDF；docx/pptx/xlsx 的内嵌图片也会抽表） |
 | `hint` | 否 | 用户分析意图；图片/PDF/Office 内嵌图片抽表时用于选择主表 |
 | `model_url` / `model_api_key` | 否 | 视觉模型凭证（仅多模态抽表需要） |
+| `multi_table` | 否 | `1` / `true` 时抽出图片、PDF 页面、Office 内嵌图片中的所有表 |
 
 #### 响应
 
