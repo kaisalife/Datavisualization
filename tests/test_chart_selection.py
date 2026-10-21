@@ -139,7 +139,9 @@ def _plan(plan_id: str, chart_type: str, series_id: str, x: str, y: list[str],
 
 
 def test_explicit_chart_types_and_count():
+    assert chart_family("Candlestick") == "trend"
     assert explicit_chart_types("画两个柱状图和折线图") == ["bar", "line"]
+    assert explicit_chart_types("画K线图") == ["candlestick"]
     assert explicit_chart_types("用饼图看占比") == ["pie"]
     assert requested_chart_count("画两个图") == 2
     assert requested_chart_count("生成 3 张图表") == 3
@@ -239,6 +241,31 @@ def test_requested_trend_works_with_two_time_points(
     assert len(result) == 2
     assert any(chart_family(plan["chart_type"]) == "trend" for plan in result)
     assert any(chart_family(plan["chart_type"]) == "comparison" for plan in result)
+
+
+def test_candlestick_plan_is_preserved(tmp_path: Path):
+    df = pd.DataFrame({
+        "时间": ["09:30", "09:31", "09:32", "09:33", "09:34"],
+        "开盘": [10.0, 10.2, 10.1, 10.4, 10.3],
+        "收盘": [10.2, 10.1, 10.4, 10.3, 10.6],
+        "最低": [9.9, 10.0, 10.0, 10.1, 10.2],
+        "最高": [10.3, 10.3, 10.5, 10.5, 10.7],
+    })
+    series = _series(
+        tmp_path, df, "time_series", "时间", ["开盘", "收盘", "最低", "最高"], "stock.分钟"
+    )
+    catalog = _catalog(tmp_path, series)
+    plans = [
+        _plan(
+            "1", "Candlestick", series.series_id, "时间",
+            ["开盘", "收盘", "最低", "最高"], "分钟 K 线",
+        )
+    ]
+
+    result = diversify_plans(plans, catalog, "看K线走势")
+
+    assert [normalize_chart_type(p["chart_type"]) for p in result] == ["candlestick"]
+    assert chart_family(result[0]["chart_type"]) == "trend"
 
 
 def test_existing_relationship_plan_is_preserved(tmp_path: Path):

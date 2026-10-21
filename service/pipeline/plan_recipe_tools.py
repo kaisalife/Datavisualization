@@ -65,6 +65,46 @@ class ListSeriesTool(Tool):
         return ToolOutput(success=True, output=f"可用数据系列 {len(series)} 条:\n" + "\n".join(lines))
 
 
+class LoadSkillInput(BaseModel):
+    """load_skill 输入。"""
+
+    name: str = Field(..., description="技能名，如 high-frequency-timeseries")
+
+
+class LoadSkillTool(Tool):
+    """按名称加载技能全文（渐进式披露，避免主 prompt 塞满特殊场景规则）。"""
+
+    def __init__(self, auto_confirm: bool = True):
+        super().__init__(
+            name="load_skill",
+            description="加载某个技能的完整指南。先查看规划 prompt 中的技能索引，"
+                        "只在数据/需求匹配时调用；普通图表不需要加载。",
+            args_schema=LoadSkillInput,
+            is_read_only=True, is_destructive=False, is_concurrency_safe=True,
+            auto_confirm=auto_confirm,
+        )
+
+    def check_permissions(self, ctx: ToolContext) -> Decision:
+        return Decision(PermissionDecision.ALLOW)
+
+    async def call(self, input_data: Dict[str, Any], ctx: ToolContext) -> ToolOutput:
+        from service.skills import get_skill_registry
+
+        name = str(input_data.get("name", "")).strip()
+        registry = get_skill_registry()
+        skill = registry.get(name)
+        if skill is None:
+            names = ", ".join(s.name for s in registry.skills) or "(无)"
+            return ToolOutput(
+                success=False,
+                error=f"技能不存在: {name}；可用技能: {names}",
+            )
+        return ToolOutput(
+            success=True,
+            output=f"# {skill.title}\n\n{skill.body}",
+        )
+
+
 class GetSeriesInput(BaseModel):
     """get_series 输入。"""
 

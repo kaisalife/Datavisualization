@@ -19,6 +19,7 @@ from service.pipeline.chart_recommend import (
 )
 from service.pipeline.plan_state import PlanSessionState
 from service.pipeline.plan_toolpool import build_plan_tool_pool
+from service.skills import get_skill_registry
 
 logger = get_logger(__name__)
 
@@ -142,6 +143,7 @@ async def run_plan_stage(
             "user_prompt": model_.user_prompt,
             "profile_str": profile.to_prompt_str() if profile else "(未提供)",
             "series_index": catalog.to_index_prompt(),
+            "skill_index": get_skill_registry().index_text(),
         })
         with stage_timer.stage(task_id, "plan", "图表规划(agent)"):
             result = await chat.arun_with_tools(

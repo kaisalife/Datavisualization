@@ -450,7 +450,13 @@ def build_series_catalog(
                 data_path=str(data_path.as_posix()),
                 source_table=rt.name,
                 description=spec["description"],
-                extra_semantics={"shape": shape},
+                # source_kind/source_path 让技能选择能区分图片/PDF/Office 抽表与普通表格，
+                # 不在图表代码里硬编码“图片就怎样”，只作为可检索的上下文。
+                extra_semantics={
+                    "shape": shape,
+                    "source_kind": rt.source_kind,
+                    "source_path": rt.source_path,
+                },
                 dtype_info={c: str(t) for c, t in sub_df.dtypes.items()},
             ))
 

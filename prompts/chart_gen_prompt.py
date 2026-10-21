@@ -30,6 +30,9 @@ agent_generate_chart_prompt = """
 ## 参考文档
 参考 {{reference_docs}} 中的 pyecharts 示例，复用其导入/结构/API。
 
+## 按需技能指南（可能为“无”）
+{skill_context}
+
 ## 保存图表
 - 只调 `chart.render()`，不传 path、不拼目录、不 os.makedirs（框架自动注入路径）
 
@@ -121,6 +124,9 @@ series 模式（read_recipe_hint 非空时）：
 - 读取代码由框架在代码开头提供（df 已从 series 加载），修复时禁止自己写 duckdb/read_parquet 重新加载/重新定义 df
 - read_recipe_hint 中的 df 真实预览即你要用的数据，直接基于它修变换与绘图
 
+## 按需技能指南（可能为“无”）
+{skill_context}
+
 常见错误：
 - KeyError: 列名与 dataset_summary 不匹配，用原始列名
 - TypeError/ValueError: NaN 未清洗，加 df.fillna(0) 或 pd.to_numeric(errors='coerce')
@@ -140,11 +146,21 @@ def get_agent_generate_chart_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate([
         ("system", agent_generate_chart_prompt),
         ("human", "数据文件: {data_file_path}\n数据预览: {data_preview}\n数据列 schema:\n{dataset_summary}\n计划: {plan_details}\nread_recipe_hint: {read_recipe_hint}\n参考文档: {reference_docs}\n用户自定义图表配置: {user_config}")
-    ]).partial(dataset_summary="(未提供)", user_config="(未提供)", read_recipe_hint="(无)")
+    ]).partial(
+        dataset_summary="(未提供)",
+        user_config="(未提供)",
+        read_recipe_hint="(无)",
+        skill_context="(无)",
+    )
 
 
 def get_agent_debug_chart_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate([
         ("system", agent_debug_chart_prompt),
         ("human", "计划: {plan_details}\n失败代码:\n{failed_code}\n错误:\n{error_message}\n数据预览:\n{data_preview}\n数据列 schema:\n{dataset_summary}\nread_recipe_hint: {read_recipe_hint}\n用户自定义图表配置: {user_config}")
-    ]).partial(dataset_summary="(未提供)", user_config="(未提供)", read_recipe_hint="(无)")
+    ]).partial(
+        dataset_summary="(未提供)",
+        user_config="(未提供)",
+        read_recipe_hint="(无)",
+        skill_context="(无)",
+    )

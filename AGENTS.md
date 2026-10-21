@@ -162,6 +162,8 @@ $env:BACKEND_URL="http://localhost:5000"
 | `service/monitoring/`、`service/observability/` | trace / 耗时 / 错误监控、structlog 日志 |
 | `agent/`、`agent_tools/` | `BaseAgent`（LangChain + MCP）、`run_code` 沙箱工具 |
 | `RAG/` | Chroma 知识库；`RAG/basic_author_knowleage/` 是第三方参考代码，**不要改** |
+| `skills/` | 场景技能 Markdown（YAML frontmatter + 正文），按需加载 |
+| `service/skills/` | 技能注册表：索引、`load_skill` 数据源、生成期按计划选择 |
 | `front-winui/src/` | Rust 外壳（`component.rs` / `handlers.rs` / `api/client.rs`）+ 内嵌前端资源 |
 
 新增 API 的固定步骤：路由写进 `api/xxx_api.py` → 在 `api/__init__.py` 导出 Blueprint →
@@ -196,6 +198,26 @@ $env:BACKEND_URL="http://localhost:5000"
   **不拼业务标题**（会稀释 embedding）；未知类型回退到 `<类型> 图表示例`。回归 `tests/test_chart_rag.py`。
 - 检索器用 `get_default_retriever()` 进程内复用（模型约 2.4 GB、加载约 8 秒）；`agent_pipeline` 与
   `chart_executor` 都走它，不要再直接 `RAGRetriever()`，并发任务会把内存吃满。
+
+## 技能渐进式披露（skills/）
+
+特殊场景不要硬编码进 Python 或主 prompt，而是写成 `skills/<name>/SKILL.md`：
+
+- YAML frontmatter 声明 `name` / `description` / `chart_types` / `analysis_tasks` /
+  `time_like` / `min_rows` / `min_series` / `user_keywords`；正文才是完整指南。
+- 规划主 prompt 只注入**技能索引**（名称 + 一句话用途）；LLM 认为匹配时调用
+  `load_skill(name)` 读取正文，普通图表不加载。
+- 生成阶段由 `service/skills/registry.py:SkillRegistry.select()` 按 plan.chart_type、
+  analysis_task 和 series 形态自动选择，只把命中的正文注入 `{skill_context}`。
+- 当前技能：`high-frequency-timeseries`（股票秒级/传感器高频：聚合/采样）、
+  `financial-candlestick`（OHLC/K 线）、`many-series-timeseries`（多设备 Top-N）、
+  `multimodal-extracted-table`（图片/PDF/Office 抽表：保真表头/单位，不臆造缺失值）。
+- series 的 `extra_semantics` 带 `source_kind` / `source_path`，技能可按数据来源选择；
+  不要把“图片/PDF 就特殊处理”写进图表代码。
+- 技能是场景工作流，RAG 是 pyecharts API 示例，两者互补：技能告诉你“怎么处理这类数据”，
+  RAG 告诉你“这个 API 怎么写”。新增场景优先加 skill/RAG 文档，不要在代码里堆
+  `if 列名 == "开盘"` 之类特判。
+- `SKILLS_DIR` 可覆盖技能目录。回归：`tests/test_skill_registry.py`。
 
 ## 图表生成规范
 

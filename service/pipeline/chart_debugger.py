@@ -58,6 +58,7 @@ def _build_debug_tools(
 def _build_debug_message(
     *, plan_details: str, failed_code: str, error: str,
     dataset_summary: str, read_recipe_hint: str,
+    skill_context: str = "(无)",
 ) -> str:
     """构建 debug agent 初始消息（任务 + 证据 + 工具说明 + 输出契约）。"""
     return f"""修复下面这段图表生成代码。你有两个工具可用：
@@ -86,7 +87,10 @@ def _build_debug_message(
 {dataset_summary}
 
 ## read_recipe_hint
-{read_recipe_hint}"""
+{read_recipe_hint}
+
+## 按需技能指南（可能为“无”）
+{skill_context}"""
 
 
 async def debug_with_agent(
@@ -117,6 +121,7 @@ async def debug_code(
     plan_details: str, code: str, last_error: str,
     dataset_summary: str, read_recipe_hint: str,
     output_folder: Path, catalog, read_code: str,
+    skill_context: str = "(无)",
 ) -> str:
     """统一 debug 入口：agent 工具循环优先，prompt 重试兜底。
 
@@ -134,6 +139,7 @@ async def debug_code(
             plan_details=plan_details, failed_code=code, error=last_error,
             dataset_summary=dataset_summary,
             read_recipe_hint=read_recipe_hint,
+            skill_context=skill_context,
         )
         new_code, logs = await debug_with_agent(chat, tools=tools, message=message)
         for line in logs:
@@ -154,5 +160,6 @@ async def debug_code(
         "dataset_summary": dataset_summary,
         "user_config": "(未提供)",
         "read_recipe_hint": read_recipe_hint,
+        "skill_context": skill_context,
     })
     return extract_code_from_response(content)

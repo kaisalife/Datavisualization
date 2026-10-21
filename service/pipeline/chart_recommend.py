@@ -53,6 +53,7 @@ _DISPLAY = {
 _FAMILY = {
     "line": "trend",
     "area": "trend",
+    "candlestick": "trend",
     "bar": "comparison",
     "pie": "composition",
     "treemap": "composition",
@@ -106,6 +107,7 @@ _TYPE_WORDS = {
     "bar": ("柱状图", "柱形图", "条形图"),
     "line": ("折线图", "曲线图", "趋势图"),
     "area": ("面积图",),
+    "candlestick": ("K线图", "K线", "蜡烛图"),
     "pie": ("饼图", "环形图"),
     "scatter": ("散点图",),
     "histogram": ("直方图",),
@@ -182,7 +184,7 @@ def explicit_chart_types(user_prompt: str) -> list[str]:
                 if re.search(rf"(?<![a-z]){re.escape(alias)}(?![a-z])", text):
                     found.append(chart_type)
                     break
-            elif alias in prompt:
+            elif alias.lower() in text:
                 found.append(chart_type)
                 break
     return found

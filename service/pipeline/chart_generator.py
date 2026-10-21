@@ -21,6 +21,7 @@ from service.pipeline import generation_validation as gv
 from service.pipeline.chart_rag import retrieve_reference_docs
 from service.pipeline.chart_sandbox import _RENDER_HEADER, execute_chart_code  # noqa: F401  向后兼容旧 import
 from service.runtime.utils import extract_code_from_response
+from service.skills import get_skill_registry
 
 try:
     from Entity.plan_models import plan_get
@@ -159,6 +160,8 @@ async def generate_single_chart(
             logger.warning("series 预览失败", series_id=series_id, error=str(e))
     series_hint = _build_series_hint(series_id, df_preview)
     reference_docs = retrieve_reference_docs(retriever, plan)
+    # 技能按计划类型 + series 形态选择；只有命中时才把完整正文放进 prompt
+    skill_context = get_skill_registry().context_for_plan(plan=plan, series=series)
 
     final_code = ""
     code = ""
@@ -180,6 +183,7 @@ async def generate_single_chart(
                 "dataset_summary": dataset_summary or "(未提供)",
                 "user_config": user_config,
                 "read_recipe_hint": series_hint,
+                "skill_context": skill_context,
             })
             code = extract_code_from_response(content)
         else:
@@ -197,6 +201,7 @@ async def generate_single_chart(
                 output_folder=output_folder,
                 catalog=catalog,
                 read_code=read_code,
+                skill_context=skill_context,
             )
         final_code = code
 
