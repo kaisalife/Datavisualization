@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from pyecharts import options as opts
-from pyecharts.charts import Bar, Grid, Line, Pie, TreeMap
+from pyecharts.charts import Bar, Boxplot, Grid, Line, Pie, Scatter, TreeMap
 
 from service.pipeline.chart_polish import PALETTE, polish_options
 from service.pipeline.chart_sandbox import execute_chart_code
@@ -349,6 +349,51 @@ def test_grid_layout_is_not_forced_for_multi_chart():
     assert [item["top"] for item in grids] == ["12%", "60%"]
     assert all(item["containLabel"] is True for item in grids)
     assert grid.options["legend"][0].get("bottom") is None
+
+
+def test_overlay_grid_merges_duplicate_axes_and_legend():
+    values = [98, 102, 97, 105, 110, 99, 101, 108]
+    box = (
+        Boxplot()
+        .add_xaxis(["销售额"])
+        .add_yaxis("销售额", Boxplot.prepare_data([[94, 97, 102, 108, 113]]))
+    )
+    scatter = (
+        Scatter()
+        .add_xaxis(["销售额"] * len(values))
+        .add_yaxis("观测值", values)
+    )
+    grid_opts = opts.GridOpts(
+        pos_top="12%", pos_bottom="18%", pos_left="8%", pos_right="5%"
+    )
+    chart = Grid().add(box, grid_opts=grid_opts).add(scatter, grid_opts=grid_opts)
+    polish_options(chart.options, width=900)
+
+    series = chart.options["series"]
+    assert series[1]["xAxisIndex"] == 0
+    assert series[1]["yAxisIndex"] == 0
+    assert _dict(chart.options["xAxis"][1])["show"] is False
+    assert _dict(chart.options["yAxis"][1])["show"] is False
+
+    legends = [_dict(item) for item in chart.options["legend"]]
+    assert legends[0]["show"] is True
+    assert legends[0]["data"] == ["销售额", "观测值"]
+    assert legends[1]["show"] is False
+
+
+def test_non_overlay_grid_keeps_separate_axes():
+    top = Bar().add_xaxis(["A", "B"]).add_yaxis("销售额", [1, 2])
+    bottom = Line().add_xaxis(["A", "B"]).add_yaxis("访问量", [2, 3])
+    chart = (
+        Grid()
+        .add(top, grid_opts=opts.GridOpts(pos_top="12%", pos_bottom="55%"))
+        .add(bottom, grid_opts=opts.GridOpts(pos_top="58%", pos_bottom="12%"))
+    )
+    polish_options(chart.options, width=900)
+
+    assert chart.options["series"][1]["xAxisIndex"] == 1
+    assert chart.options["series"][1]["yAxisIndex"] == 1
+    assert _dict(chart.options["xAxis"][1])["show"] is not False
 
 
 def test_polish_is_idempotent():

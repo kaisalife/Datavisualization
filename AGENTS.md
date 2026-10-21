@@ -231,6 +231,10 @@ $env:BACKEND_URL="http://localhost:5000"
 - 单层矩形树图隐藏冗余的 breadcrumb / upperLabel / 单 series 图例（否则会压住标题），
   并补 `top=14%`、`bottom=4%`；标签默认深色 + 浅色描边，显式白字则补深色描边，
   黄/粉块也能读清
+- **同位置叠加的 Grid 子图会合并坐标轴**：pyecharts 的 `Grid.add` 给每个子图各建
+  xAxis/yAxis，箱线图叠加散点时会出现重复类目标签、双份 y 轴刻度和两组图例。
+  `chart_polish` 只在 Grid 位置完全相同、轴类型/轴名称兼容时，把 series 重映射到
+  第 0 套轴并隐藏多余轴、合并图例；真正的上下多图或双轴图不动
 - **`polish_options` 内部先深拷贝**：pyecharts 的默认 `LabelOpts` / `SplitLineOpts` 等可能被
   多张图共享，直接改会让上一张图的颜色/位置泄漏到下一张图；深拷贝后再写回原 `chart.options`
 - 回归：`tests/test_chart_polish.py`（含渲染链路 HTML 断言）；改规则要同时改 prompt 和该测试
@@ -246,8 +250,9 @@ $env:BACKEND_URL="http://localhost:5000"
   触发 debug 重试，不会静默产出空图）；
 - 过半数据点为空 -> `CHART_DATA_MOSTLY_EMPTY`（警告）；
 - 所有数值都等于 0 -> `CHART_DATA_ALL_ZERO`（警告，不阻断）；
-- 实际 series 类型偏离 `plan.chart_type` -> `CHART_TYPE_MISMATCH`（警告；Histogram→bar、
-  Area→line、Scatter→effectscatter 等别名不算偏离）；
+- 实际 series 类型完全不含 `plan.chart_type` -> `CHART_TYPE_MISMATCH`（警告；Histogram→bar、
+  Area→line、Scatter→effectscatter 等别名不算偏离；Boxplot+Scatter 叠加观测值、Bar+Line
+  双轴等辅助层只要包含计划类型就不算偏离）；
 - 使用 `dataset` 的图表跳过空数据判断，避免误伤。
 
 统计摘要写入 `report["data"]`。回归：`tests/test_chart_data_check.py`、

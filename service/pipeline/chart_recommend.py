@@ -902,6 +902,27 @@ def _diversify(
     return selected
 
 
+def build_deterministic_plans(
+    catalog: SeriesCatalog | None,
+    user_prompt: str = "",
+    agent_logs: list | None = None,
+    max_plans: int = _DEFAULT_MAX_PLANS,
+) -> list[dict]:
+    """在没有 LLM plan 时，完全按数据形态生成保守计划。
+
+    用于规划阶段彻底失败（网关 429/超时）的兜底：仍然绑定真实 series，
+    避免生成阶段拿到没有 series_id 的“自主图表”而缺少注入的 df。
+    """
+    logs = agent_logs if agent_logs is not None else []
+    if catalog is None or not catalog.series:
+        return []
+    try:
+        return _diversify([], catalog, user_prompt, max_plans, logs)
+    except Exception as exc:  # 兜底失败不能影响主流程
+        logs.append(f"⚠️ 确定性计划生成失败: {exc}")
+        return []
+
+
 def diversify_plans(
     plans: list[dict],
     catalog: SeriesCatalog | None,

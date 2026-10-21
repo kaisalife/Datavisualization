@@ -75,3 +75,54 @@ async def test_many_categories_generate_bar_and_treemap(
         data = (generation.get("validation") or {}).get("data") or {}
         if normalize_chart_type((chart.get("plan") or {}).get("chart_type", "")) == "treemap":
             assert data.get("types") == ["treemap"], data
+
+
+@pytest.fixture
+def single_numeric_csv(tmp_path: Path) -> Path:
+    """没有行标签的单列观测值：应走分布，而不是类别柱状图。"""
+    values = [
+        98, 102, 97, 105, 110, 99, 101, 108, 95, 112,
+        100, 104, 96, 107, 103, 109, 94, 111, 106, 113,
+        99, 102, 98, 250,
+    ]
+    path = tmp_path / "单列销售额.csv"
+    lines = ["销售额"] + [str(value) for value in values]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+async def test_single_numeric_generates_distribution_chart(
+    real_agent, single_numeric_csv: Path, tmp_path: Path
+):
+    profile = await ingest(
+        DataSource(kind="file", path=str(single_numeric_csv), name="单列销售额")
+    )
+    model_ = SimpleNamespace(
+        user_prompt="分析这批销售额的分布，重点看集中趋势和异常值，画一张最合适的图",
+        file_paths=[str(single_numeric_csv)],
+        config=None,
+        mcp_prompt="",
+        skill_prompt="",
+        model_type="deepseek",
+    )
+
+    result = await run_agent_pipeline(
+        real_agent, model_, profile, tmp_path, task_id=None, max_iterations=16
+    )
+    logs = result["agent_logs"]
+
+    assert result["successful_charts"], "未产出任何图表:\n" + "\n".join(logs[-8:])
+    chart_types = [
+        normalize_chart_type((chart.get("plan") or {}).get("chart_type", ""))
+        for chart in result["successful_charts"]
+    ]
+    assert any(t in {"histogram", "boxplot"} for t in chart_types), chart_types
+
+    for chart in result["successful_charts"]:
+        html = Path(chart["chart_path"])
+        assert html.exists() and html.stat().st_size > 0
+        generation = chart.get("generation") or {}
+        assert generation.get("ok") is True
+        data = (generation.get("validation") or {}).get("data") or {}
+        assert data.get("total_points", 0) > 0, data
+

@@ -385,6 +385,78 @@ def _polish_legend(options: dict[str, Any], *, dark: bool) -> None:
             _set_missing(text_style, "color", "#4b5563")
 
 
+def _grid_signature(grid: dict[str, Any]) -> tuple:
+    """比较 Grid 子图是否完全重叠（pyecharts 会把同一 GridOpts 复制成多份）。"""
+    return tuple(
+        str(grid.get(key))
+        for key in ("top", "bottom", "left", "right", "width", "height", "containLabel")
+    )
+
+
+def _axis_family(axis: dict[str, Any], key: str) -> str:
+    axis_type = str(axis.get("type") or "").lower()
+    if not axis_type:
+        return "category" if key == "xAxis" else "value"
+    return axis_type
+
+
+def _axis_names_compatible(axes: list[dict[str, Any]]) -> bool:
+    names = {
+        str(axis.get("name") or "").strip()
+        for axis in axes
+        if str(axis.get("name") or "").strip()
+    }
+    return len(names) <= 1
+
+
+def _polish_overlay_grid(options: dict[str, Any]) -> None:
+    """把“同一位置叠加的多个子图”合并回一套坐标轴。
+
+    pyecharts 的 ``Grid.add`` 会为每个子图各建一套 xAxis/yAxis。箱线图叠加散点时，
+    散点图常被添加 24 个重复类目，最终 x 轴出现一长串重复标签、y 轴刻度也会重影。
+    只有在 Grid 位置完全相同、轴类型和轴名称兼容时才合并，避免破坏真正的多图布局
+    或双轴图。
+    """
+    grids = list(_iter_dicts(options.get("grid")))
+    x_axes = list(_iter_dicts(options.get("xAxis")))
+    y_axes = list(_iter_dicts(options.get("yAxis")))
+    series_nodes = _series(options)
+    if len(grids) < 2 or len(x_axes) < 2 or len(y_axes) < 2 or len(series_nodes) < 2:
+        return
+    if len({_grid_signature(grid) for grid in grids}) != 1:
+        return
+    if len({_axis_family(axis, "xAxis") for axis in x_axes}) != 1:
+        return
+    if len({_axis_family(axis, "yAxis") for axis in y_axes}) != 1:
+        return
+    if not _axis_names_compatible(x_axes) or not _axis_names_compatible(y_axes):
+        return
+
+    for node in series_nodes:
+        node["xAxisIndex"] = 0
+        node["yAxisIndex"] = 0
+        node["gridIndex"] = 0
+    for axis in x_axes[1:]:
+        axis["show"] = False
+    for axis in y_axes[1:]:
+        axis["show"] = False
+
+    # 合并重复图例，只保留一份，避免底部出现两组重叠图例
+    legends = list(_iter_dicts(options.get("legend")))
+    if len(legends) > 1:
+        merged: list[str] = []
+        for legend in legends:
+            for name in legend.get("data") or []:
+                text = str(name)
+                if text and text not in merged:
+                    merged.append(text)
+        if merged:
+            legends[0]["data"] = merged
+        legends[0]["show"] = True
+        for legend in legends[1:]:
+            legend["show"] = False
+
+
 def _polish_grid(options: dict[str, Any]) -> None:
     if not _is_cartesian(options):
         return
@@ -889,6 +961,8 @@ def polish_options(
             legend["orient"] = "horizontal"
 
     # 3. 坐标轴 / 布局 / tooltip / series
+    # 先把同位置叠加的 Grid 子图合并成一套坐标轴，再计算标签旋转/边距
+    _polish_overlay_grid(options)
     # 先把类目标签旋转和 x 轴名称定下来，_polish_grid 才能据此预留底部空间
     _polish_axes(options, dark=dark, width=width_px)
     _polish_grid(options)

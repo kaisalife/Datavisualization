@@ -84,6 +84,7 @@ def test_generate_prompt_explains_boxplot_api():
     """推荐会落到 Boxplot，prompt 必须说明 prepare_data，避免把原始值直接传给 add_yaxis。"""
     assert "from pyecharts.charts import Boxplot" in agent_generate_chart_prompt
     assert "Boxplot.prepare_data" in agent_generate_chart_prompt
+    assert "同一个 x 类目" in agent_generate_chart_prompt
 
 
 def test_generate_prompt_uses_real_treemap_class_name():

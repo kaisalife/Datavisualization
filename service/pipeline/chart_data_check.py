@@ -192,8 +192,9 @@ def chart_type_mismatch(
     }
     if not expected or not actual:
         return None
-    unexpected = sorted(actual - expected)
-    if not unexpected:
+    # 计划类型只要出现在实际 series 中就不算偏离；允许叠加辅助层
+    # （如箱线图 + 散点展示原始观测值、柱状图 + 折线做双轴）。
+    if actual & expected:
         return None
     return {
         "code": "CHART_TYPE_MISMATCH",

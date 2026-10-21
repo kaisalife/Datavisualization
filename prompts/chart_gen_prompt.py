@@ -88,7 +88,8 @@ agent_generate_chart_prompt = """
   用 `Bar` 绘制（标题仍按 plan 写"分布/直方图"），不要写 `from pyecharts.charts import Histogram`。
 - `Boxplot`：用 `from pyecharts.charts import Boxplot`；单指标分布时
   `add_xaxis([指标名])`，`add_yaxis(指标名, Boxplot.prepare_data([数值列表]))`，
-  不要把原始数值直接塞进 `add_yaxis`。
+  不要把原始数值直接塞进 `add_yaxis`。叠加散点时所有观测值共用**同一个 x 类目**，
+  不要写 `add_xaxis([指标名] * n)`，否则 x 轴会出现一长串重复标签。
 - `Treemap`：pyecharts 的类名是 `TreeMap`（大写 M），用
   `from pyecharts.charts import TreeMap`；数据传 `[{{"value": 数值, "name": 类别}}]`；
   类名不要写成 `Treemap`（会 ImportError），也不要在类别很多时改用看不清的饼图。

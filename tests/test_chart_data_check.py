@@ -88,9 +88,18 @@ def test_chart_type_mismatch_allows_documented_aliases():
     line = summarize_chart_options({"series": [{"type": "line", "data": [1]}]})
     treemap = summarize_chart_options({"series": [{"type": "treemap", "data": [1]}]})
 
+    box_with_points = summarize_chart_options({
+        "series": [
+            {"type": "boxplot", "data": [[1, 2, 3, 4, 5]]},
+            {"type": "scatter", "data": [[0, 1], [0, 2]]},
+        ]
+    })
+
     assert chart_type_mismatch(bar, "Histogram") is None
     assert chart_type_mismatch(line, "Area") is None
     assert chart_type_mismatch(treemap, "Treemap") is None
+    # 箱线图叠加原始观测散点是增强，不是偏离计划
+    assert chart_type_mismatch(box_with_points, "Boxplot") is None
 
     mismatch = chart_type_mismatch(bar, "Line")
     assert mismatch["code"] == "CHART_TYPE_MISMATCH"

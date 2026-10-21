@@ -13,7 +13,10 @@ from typing import Any
 from prompts.agent_planning_prompt import build_planning_prompt
 from service.monitoring.stage_timer import stage_timer
 from service.observability import get_logger
-from service.pipeline.chart_recommend import diversify_plans
+from service.pipeline.chart_recommend import (
+    build_deterministic_plans,
+    diversify_plans,
+)
 from service.pipeline.plan_state import PlanSessionState
 from service.pipeline.plan_toolpool import build_plan_tool_pool
 
@@ -60,6 +63,28 @@ async def _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs: li
     if not plans:
         return []
     return validate_plans(plans, catalog, profile, agent_logs)
+
+
+def _deterministic_fallback(
+    plans: list,
+    catalog,
+    user_prompt: str,
+    agent_logs: list,
+) -> list:
+    """LLM 规划完全失败时，用数据形态生成保守的确定性计划。
+
+    这比“无 series 的自主图表”可靠：计划仍绑定真实 series，生成阶段能正常
+    注入 df；单列数值会得到 Histogram/Boxplot，多类别会得到 Bar/Treemap。
+    """
+    if plans or catalog is None or not getattr(catalog, "series", None):
+        return plans
+    agent_logs.append("⚠️ LLM 规划无产出，使用数据驱动的确定性计划")
+    generated = build_deterministic_plans(catalog, user_prompt, agent_logs)
+    if not generated:
+        return plans
+    from service.pipeline.plan_validator import validate_plans
+
+    return validate_plans(generated, catalog, None, agent_logs)
 
 
 def _persist_plans(plans: list, output_folder: Path, agent_logs: list) -> None:
@@ -129,6 +154,9 @@ async def run_plan_stage(
         logger.warning("plan agent 会话异常，回退旧路径", error=str(e))
         agent_logs.append(f"⚠️ plan agent 会话失败({e})，回退旧规划路径")
         plans = await _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs)
+        plans = _deterministic_fallback(
+            plans, catalog, model_.user_prompt, agent_logs
+        )
         plans = diversify_plans(plans, catalog, model_.user_prompt, agent_logs)
         _persist_plans(plans, output_folder, agent_logs)
         return plans
@@ -140,6 +168,9 @@ async def run_plan_stage(
     if not plans:
         agent_logs.append("⚠️ agent 未提交有效 plan，回退旧规划路径")
         plans = await _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs)
+        plans = _deterministic_fallback(
+            plans, catalog, model_.user_prompt, agent_logs
+        )
 
     plans = diversify_plans(plans, catalog, model_.user_prompt, agent_logs)
     _persist_plans(plans, output_folder, agent_logs)
