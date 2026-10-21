@@ -544,9 +544,68 @@ def _center_x_axis_name(axis: dict[str, Any]) -> None:
         axis["nameGap"] = gap
 
 
+def _normalize_mixed_area(options: dict[str, Any]) -> None:
+    """多折线里只有部分系列带面积填充时，统一去掉填充。
+
+    单条折线用面积强调量级没问题；多条折线里一条填充、一条不填充会让图例和
+    视觉重量失衡（真实模型生成过这种代码）。全部系列都填充或都不填充则保留。
+    """
+    line_nodes = [
+        node for node in _series(options)
+        if str(node.get("type") or "").lower() == "line"
+    ]
+    if len(line_nodes) < 2:
+        return
+
+    def _visible(node: dict[str, Any]) -> bool:
+        area = _opts_dict(node.get("areaStyle"))
+        if not area:
+            return False
+        opacity = area.get("opacity")
+        try:
+            return opacity is None or float(opacity) > 0
+        except (TypeError, ValueError):
+            return True
+
+    visible = [node for node in line_nodes if _visible(node)]
+    if not visible or len(visible) == len(line_nodes):
+        return
+    for node in visible:
+        area = _opts_dict(node.get("areaStyle"))
+        if area is not None:
+            area["opacity"] = 0
+
+
 def _polish_axes(options: dict[str, Any], *, dark: bool, width: int) -> None:
     if not _is_cartesian(options):
         return
+
+    # 折线（无面积）且没有柱状系列时，让数值轴贴合数据范围。
+    # 传感器温度 70–80℃、股票价格等从 0 开始会把真实波动压成一条平线；
+    # 柱状图必须保留 0 基线，面积图的填充也从基线开始，因此这两类不自动改。
+    series_nodes = _series(options)
+    series_types = {str(node.get("type") or "").lower() for node in series_nodes}
+    line_only = bool(series_types) and series_types <= {"line", "scatter", "effectscatter"}
+    has_line = "line" in series_types
+
+    def _area_is_visible(node: dict[str, Any]) -> bool:
+        area = _opts_dict(node.get("areaStyle"))
+        if not area:
+            return False
+        opacity = area.get("opacity")
+        try:
+            return opacity is None or float(opacity) > 0
+        except (TypeError, ValueError):
+            return True
+
+    has_area = any(_area_is_visible(node) for node in series_nodes)
+    if line_only and has_line and not has_area:
+        for y_axis in _iter_dicts(options.get("yAxis")):
+            if _axis_is_value(y_axis):
+                # pyecharts 默认 scale=False，会把 70–80℃ 的波动压平；
+                # 折线没有面积填充，贴合数据范围不会误导面积大小。
+                y_axis["scale"] = True
+
     for axis_key in ("xAxis", "yAxis"):
         for axis in _iter_dicts(options.get(axis_key)):
             axis_label = _ensure_dict(axis, "axisLabel")
@@ -976,6 +1035,8 @@ def polish_options(
     # 3. 坐标轴 / 布局 / tooltip / series
     # 先把同位置叠加的 Grid 子图合并成一套坐标轴，再计算标签旋转/边距
     _polish_overlay_grid(options)
+    # 多折线只给部分系列加面积会失衡；先统一，再决定数值轴是否贴合数据范围
+    _normalize_mixed_area(options)
     # 先把类目标签旋转和 x 轴名称定下来，_polish_grid 才能据此预留底部空间
     _polish_axes(options, dark=dark, width=width_px)
     _polish_grid(options)

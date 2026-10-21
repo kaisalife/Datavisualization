@@ -132,6 +132,9 @@ _TREEMAP_MAX_CATEGORIES = 20
 _MAX_PER_FAMILY = 2
 # 用户没指定数量时最多生成的图
 _DEFAULT_MAX_PLANS = 4
+# 仅用于 LLM 规划失败后的保守 fallback：避免把上千个设备列塞进 plan/prompt。
+# 正常 planning 路径不做这个截断，由 many-series 技能按业务重要性选 Top-N。
+_FALLBACK_MAX_SERIES = 8
 
 
 # ---------------------------------------------------------------------------
@@ -634,11 +637,20 @@ def _new_plan_for_style(
     elif style == "trend":
         if not row_label or not measure:
             return None
-        x_axis, y_axis = row_label, [measure]
+        # 多指标时间序列（多设备/多传感器）要保留同一系列的全部指标，
+        # 否则用户要求“同图比较”时 fallback 只会画第一个指标。
+        # 上千列时只保守取前 N 列，避免 plan/prompt 爆炸；正常路径由技能选 Top-N。
+        y_axis = [str(c) for c in numeric] or [measure]
+        y_axis = y_axis[:_FALLBACK_MAX_SERIES]
+        x_axis = row_label
         chart_type = chart_type or "line"
         n = int(shape.get("row_labels") or info["n"])
-        title = f"{measure}随{row_label}变化趋势"
-        reason = f"数据含 {n} 个时间点，折线/面积图比柱状图更能表达连续变化"
+        shown = "、".join(y_axis[:2]) + ("等" if len(y_axis) > 2 else "")
+        title = f"{shown}随{row_label}变化趋势"
+        reason = (
+            f"数据含 {n} 个时间点、{len(y_axis)} 个指标，"
+            "折线/面积图比柱状图更能表达连续变化"
+        )
     elif style == "comparison":
         if not row_label or not measure:
             return None

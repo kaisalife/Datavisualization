@@ -259,6 +259,10 @@ $env:BACKEND_URL="http://localhost:5000"
   标签 `{b}: {d}%`、`avoidLabelOverlap=True`
 - 类目点过多时自动隐藏标签（折线/柱 >20、饼 >15；多系列总点数 >20），折线 >30 点关闭
   `showSymbol`；长 x 轴类目按宽度估算旋转 30/45/60°，横向柱状图长类目截断到 140px
+- 纯折线（无可见面积、无柱状系列）的数值轴自动 `scale=True`，让 70–80℃、股价等远离 0 的
+  指标显示真实波动；柱状图必须保留 0 基线，面积图的填充也从基线开始，不自动改
+- 多折线里只有部分系列带面积填充时（真实模型生成过这种不一致代码），统一把面积透明度设为 0，
+  再按纯折线处理；全部系列都填充或都不填充则保留
 - 单层矩形树图隐藏冗余的 breadcrumb / upperLabel / 单 series 图例（否则会压住标题），
   并补 `top=14%`、`bottom=4%`；标签默认深色 + 浅色描边，显式白字则补深色描边，
   黄/粉块也能读清
@@ -307,6 +311,8 @@ $env:BACKEND_URL="http://localhost:5000"
   - 没有行标签、只有一列数值的 generic series 按“一组观测值”处理，推荐并为分布补 Histogram/Boxplot，
     不再强行当类别柱状图；
   - 用户明确点名类型（“柱状图”“饼图”…）不自动改；用户说“画两个图”是硬上限；数据只支持一个角度时宁可少画。
+  - 宽表多指标保留在同一条 series；LLM 规划失败时 trend fallback 最多取前 8 个指标
+    （`_FALLBACK_MAX_SERIES`），避免上千个设备列塞进 plan/prompt；正常路径由 many-series 技能选 Top-N。
 - prompt 同步：`agent_planning_prompt`（默认路径）、`chart_designer_prompt`（回退）、
   `chart_gen_prompt` 的类型实现约定（Area / Histogram / Boxplot / Treemap / Heatmap）。
 - **ChatPromptTemplate 花括号坑**：prompt 里的 JSON 示例、`formatter="{b}: {d}%"` 必须写成
@@ -394,7 +400,8 @@ DDL、多语句（`select 1; drop table x`）在 `validate_source_configs` 阶�
 
 - 维度类别 ≤12：透视成 `时间 × 类别` 宽表，一条 series 多列（多折线）；
 - 类别 >12：按维度聚合排行（率/均价取平均，其余求和），最多 20 行；
-- 多个指标每个一条 series；多个维度选基数最小且 ≥2 的维度；
+- **宽表「时间 + 多个指标」保留在同一条 series**（如多设备温度），planner 才能在同一张图
+  比较多条指标；只有长表透视时多个指标才各一条 series；多个维度选基数最小且 ≥2 的维度；
 - 只有一个类别时回退到普通「时间 + 指标」序列；
 - 普通时间序列按自然时间排序（`1月 < 2月 < 10月`），同一时间点多行按指标语义聚合
   （率/均价取平均，其余求和），避免折线来回折、x 轴重复；

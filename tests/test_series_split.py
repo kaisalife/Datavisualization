@@ -104,7 +104,7 @@ def test_bare_year_columns_are_time_headers():
     assert specs[0]["df"]["时间"].tolist() == ["2020", "2021", "2022"]
 
 
-def test_time_column_with_measures_splits_per_measure():
+def test_time_column_with_measures_kept_together():
     df = pd.DataFrame(
         {
             "年份": [2021, 2022, 2023],
@@ -119,10 +119,14 @@ def test_time_column_with_measures_splits_per_measure():
 
     specs = split_raw_table(df, "yearly")
 
-    assert len(specs) == 2
-    assert all(spec["axis_kind"] == "time_series" for spec in specs)
-    assert {spec["row_label_column"] for spec in specs} == {"年份"}
-    assert [spec["name"] for spec in specs] == ["销售额", "利润"]
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec["axis_kind"] == "time_series"
+    assert spec["row_label_column"] == "年份"
+    assert spec["column_label_columns"] == ["销售额", "利润"]
+    assert spec["name"] == "销售额、利润"
+    assert spec["df"]["销售额"].tolist() == [100, 120, 150]
+    assert spec["df"]["利润"].tolist() == [10, 12, 15]
 
 
 def test_time_series_sorted_naturally():
@@ -158,7 +162,7 @@ def test_duplicate_rate_time_points_use_mean():
     assert spec["df"]["增长率"].tolist() == [15.0, 30.0]
 
 
-def test_wide_time_measures_are_sorted():
+def test_wide_time_measures_are_sorted_and_kept_together():
     df = pd.DataFrame(
         {
             "年份": [2023, 2021, 2022],
@@ -169,8 +173,13 @@ def test_wide_time_measures_are_sorted():
 
     specs = split_raw_table(df, "wide")
 
-    assert len(specs) == 2
-    assert all(spec["df"]["年份"].tolist() == [2021, 2022, 2023] for spec in specs)
+    # 多指标保留在同一条 series，planner 才能在同一张图里比较销售额和利润
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec["column_label_columns"] == ["销售额", "利润"]
+    assert spec["df"]["年份"].tolist() == [2021, 2022, 2023]
+    assert spec["df"]["销售额"].tolist() == [100, 200, 300]
+    assert spec["df"]["利润"].tolist() == [10, 20, 30]
 
 
 def test_long_table_pivots_dimension_over_time():

@@ -123,6 +123,60 @@ def test_horizontal_bar_labels_are_on_the_right():
     assert _label(chart.options["series"][0])["position"] == "right"
 
 
+def test_line_value_axis_scales_to_data_range():
+    chart = (
+        Line()
+        .add_xaxis(["00:00", "00:01", "00:02"])
+        .add_yaxis("温度", [70.1, 70.3, 70.2])
+        .set_global_opts(yaxis_opts=opts.AxisOpts(type_="value", name="温度（℃）"))
+    )
+    polish_options(chart.options, width=900)
+
+    y_axis = _dict(chart.options["yAxis"][0])
+    assert y_axis["scale"] is True
+
+
+def test_bar_and_area_keep_zero_baseline():
+    bar = (
+        Bar()
+        .add_xaxis(["A", "B"])
+        .add_yaxis("销量", [10, 12])
+        .set_global_opts(yaxis_opts=opts.AxisOpts(type_="value"))
+    )
+    polish_options(bar.options, width=900)
+    assert _dict(bar.options["yAxis"][0]).get("scale") is not True
+
+    area = (
+        Line()
+        .add_xaxis(["A", "B"])
+        .add_yaxis("销量", [10, 12], areastyle_opts=opts.AreaStyleOpts(opacity=0.12))
+        .set_global_opts(yaxis_opts=opts.AxisOpts(type_="value"))
+    )
+    polish_options(area.options, width=900)
+    assert _dict(area.options["yAxis"][0]).get("scale") is not True
+
+
+def test_mixed_area_fill_on_multi_line_is_removed():
+    chart = (
+        Line()
+        .add_xaxis(["A", "B", "C"])
+        .add_yaxis(
+            "设备A", [70, 72, 74],
+            areastyle_opts=opts.AreaStyleOpts(opacity=0.12),
+        )
+        .add_yaxis("设备B", [65, 66, 68])
+        .set_global_opts(yaxis_opts=opts.AxisOpts(type_="value"))
+    )
+    polish_options(chart.options, width=900)
+
+    first = _dict(chart.options["series"][0]).get("areaStyle") or {}
+    second = _dict(chart.options["series"][1]).get("areaStyle") or {}
+    assert _dict(first).get("opacity") == 0
+    assert _dict(second).get("opacity", 0) == 0
+    # 去掉填充后是纯折线，数值轴应贴合 65–74，而不是从 0 开始
+    assert _dict(chart.options["yAxis"][0])["scale"] is True
+
+
 def test_line_with_many_points_hides_symbols_and_labels():
     chart = Line().add_xaxis([str(i) for i in range(40)]).add_yaxis(
         "访问量", [i * 10 for i in range(40)]

@@ -78,6 +78,63 @@ async def test_many_categories_generate_bar_and_treemap(
 
 
 @pytest.fixture
+def high_frequency_sensor_csv(tmp_path: Path) -> Path:
+    """3000 行、每秒一条的双设备温度数据，模拟车间高频时序。"""
+    path = tmp_path / "车间温度.csv"
+    lines = ["时间,设备A温度,设备B温度"]
+    for i in range(3000):
+        minute, second = divmod(i, 60)
+        hour, minute = divmod(minute, 60)
+        a = 70 + 8 * (i / 3000) + (i % 17) * 0.08
+        b = 65 + 5 * (i / 3000) + (i % 23) * 0.06
+        lines.append(
+            f"2026-01-01 {hour:02d}:{minute:02d}:{second:02d},"
+            f"{a:.2f},{b:.2f}"
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+async def test_high_frequency_sensor_chart_stays_readable(
+    real_agent, high_frequency_sensor_csv: Path, tmp_path: Path
+):
+    profile = await ingest(
+        DataSource(
+            kind="file", path=str(high_frequency_sensor_csv), name="车间温度"
+        )
+    )
+    model_ = SimpleNamespace(
+        user_prompt="分析两台设备最近一小时的温度趋势，注意数据量很大，画一张可读的折线图",
+        file_paths=[str(high_frequency_sensor_csv)],
+        config=None,
+        mcp_prompt="",
+        skill_prompt="",
+        model_type="deepseek",
+    )
+
+    result = await run_agent_pipeline(
+        real_agent, model_, profile, tmp_path, task_id=None, max_iterations=16
+    )
+    logs = result["agent_logs"]
+
+    assert result["successful_charts"], "未产出任何图表:\n" + "\n".join(logs[-8:])
+    chart = result["successful_charts"][0]
+    plan = chart.get("plan") or {}
+    assert normalize_chart_type(plan.get("chart_type", "")) in {"line", "area"}
+    # 用户明确说“两台设备”，同一张图必须同时包含 A/B，而不是只画第一列
+    assert {"设备A温度", "设备B温度"} <= set(plan.get("y_axis") or []), plan
+    html = Path(chart["chart_path"])
+    assert html.exists() and html.stat().st_size > 0
+
+    generation = chart.get("generation") or {}
+    assert generation.get("ok") is True
+    data = (generation.get("validation") or {}).get("data") or {}
+    assert 0 < int(data.get("total_points") or 0) <= 1500, data
+    names = {item.get("name") for item in data.get("series") or []}
+    assert {"设备A温度", "设备B温度"} <= names, data
+
+
+@pytest.fixture
 def single_numeric_csv(tmp_path: Path) -> Path:
     """没有行标签的单列观测值：应走分布，而不是类别柱状图。"""
     values = [

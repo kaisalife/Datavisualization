@@ -272,20 +272,36 @@ def _time_series_frame(
 
 
 def _split_wide_with_metrics(df: pd.DataFrame, column_semantics: dict[str, str]) -> list[tuple]:
-    """启发式2：宽表含一时间列 + 多个指标列（时间×指标）。每指标一条时间序列。"""
+    """启发式2：宽表含一时间列 + 多个指标列（时间×指标）。
+
+    多个指标保留在同一条 series 里，规划阶段才能画“多设备/多传感器”折线；
+    如果拆成每指标一条 series，用户要求同图比较时 planner 只能选到其中一个。
+    每个指标按自身语义聚合（率取均值、计数求和等），并共享同一时间轴。
+    """
     time_cols = [c for c, r in column_semantics.items() if r == "time"]
     measure_cols = [c for c, r in column_semantics.items() if r == "measure"]
-    if not time_cols or len(measure_cols) < 1:
+    if not time_cols or not measure_cols:
         return []
+
     time_col = time_cols[0]
-    out: list[tuple] = []
-    for m in measure_cols:
-        sub_df = _time_series_frame(df, time_col, m)
-        out.append((
-            "time_series", time_col, [m], sub_df,
-            _sanitize_series_name(m), f"{m} 随 {time_col} 的变化",
-        ))
-    return out
+    sub_df = df[[time_col, *measure_cols]].dropna(subset=[time_col]).copy()
+    if sub_df.duplicated(subset=[time_col]).any():
+        agg_map = {m: _measure_agg(m) for m in measure_cols}
+        sub_df = sub_df.groupby(
+            time_col, as_index=False, dropna=False
+        )[measure_cols].agg(agg_map)
+    sub_df = (
+        sub_df.sort_values(time_col, key=lambda s: s.map(_natural_key))
+        .reset_index(drop=True)
+    )
+    shown = "、".join(measure_cols[:3])
+    if len(measure_cols) > 3:
+        shown += f" 等{len(measure_cols)}项"
+    return [(
+        "time_series", time_col, list(measure_cols), sub_df,
+        _sanitize_series_name(shown),
+        f"{shown} 随 {time_col} 的变化",
+    )]
 
 
 def _split_long_or_categorical(df: pd.DataFrame, column_semantics: dict[str, str]) -> list[tuple]:

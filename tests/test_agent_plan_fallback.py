@@ -38,6 +38,52 @@ def _series(tmp_path: Path) -> SemanticSeries:
     )
 
 
+def _multi_measure_series(tmp_path: Path) -> SemanticSeries:
+    df = pd.DataFrame({
+        "时间": pd.date_range("2026-01-01", periods=20, freq="s"),
+        "设备A温度": [70 + i * 0.1 for i in range(20)],
+        "设备B温度": [65 + i * 0.08 for i in range(20)],
+    })
+    path = tmp_path / "sensor.parquet"
+    df.to_parquet(path, index=False)
+    shape = compute_series_shape(
+        df, "time_series", "时间", ["设备A温度", "设备B温度"]
+    )
+    return SemanticSeries(
+        series_id="factory.设备A温度、设备B温度",
+        name="factory.设备A温度、设备B温度",
+        axis_kind="time_series",
+        row_label_column="时间",
+        column_label_columns=["设备A温度", "设备B温度"],
+        data_path=str(path),
+        source_table="factory",
+        description="两台设备温度",
+        extra_semantics={"shape": shape},
+    )
+
+
+def _many_measure_series(tmp_path: Path) -> SemanticSeries:
+    cols = [f"设备{i:02d}温度" for i in range(1, 21)]
+    data = {"时间": pd.date_range("2026-01-01", periods=10, freq="s")}
+    for i, col in enumerate(cols):
+        data[col] = [60 + i + j * 0.1 for j in range(10)]
+    df = pd.DataFrame(data)
+    path = tmp_path / "many_sensors.parquet"
+    df.to_parquet(path, index=False)
+    shape = compute_series_shape(df, "time_series", "时间", cols)
+    return SemanticSeries(
+        series_id="factory.多设备温度",
+        name="factory.多设备温度",
+        axis_kind="time_series",
+        row_label_column="时间",
+        column_label_columns=cols,
+        data_path=str(path),
+        source_table="factory",
+        description="20 台设备温度",
+        extra_semantics={"shape": shape},
+    )
+
+
 def _profile() -> SimpleNamespace:
     return SimpleNamespace(
         to_prompt_dict=lambda: {"table_name": "单列数值"},
@@ -84,3 +130,61 @@ async def test_plan_stage_falls_back_to_deterministic_catalog_plans(
     assert all(plan.get("validation", {}).get("ok") for plan in plans)
     assert any("确定性计划" in line for line in logs)
     assert (tmp_path / "all_plans.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_fallback_trend_keeps_all_measures_in_one_series(tmp_path: Path):
+    series = _multi_measure_series(tmp_path)
+    catalog = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])
+    model_ = SimpleNamespace(
+        user_prompt="分析两台设备最近一段时间的温度趋势，画一张折线图",
+        file_paths=[],
+        config=None,
+        mcp_prompt="",
+        skill_prompt="",
+    )
+    logs: list[str] = []
+
+    plans = await run_plan_stage(
+        _FailingChat(),
+        model_=model_,
+        profile=_profile(),
+        output_folder=tmp_path,
+        task_id=None,
+        catalog=catalog,
+        agent_logs=logs,
+    )
+
+    trend_plans = [p for p in plans if chart_family(p["chart_type"]) == "trend"]
+    assert trend_plans, plans
+    assert any(
+        {"设备A温度", "设备B温度"} <= set(p.get("y_axis") or [])
+        for p in trend_plans
+    ), trend_plans
+
+
+@pytest.mark.asyncio
+async def test_fallback_caps_many_measure_trend_to_readable_columns(tmp_path: Path):
+    series = _many_measure_series(tmp_path)
+    catalog = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])
+    model_ = SimpleNamespace(
+        user_prompt="分析所有设备温度趋势",
+        file_paths=[],
+        config=None,
+        mcp_prompt="",
+        skill_prompt="",
+    )
+
+    plans = await run_plan_stage(
+        _FailingChat(),
+        model_=model_,
+        profile=_profile(),
+        output_folder=tmp_path,
+        task_id=None,
+        catalog=catalog,
+        agent_logs=[],
+    )
+
+    trend_plans = [p for p in plans if chart_family(p["chart_type"]) == "trend"]
+    assert trend_plans, plans
+    assert all(0 < len(p.get("y_axis") or []) <= 8 for p in trend_plans), trend_plans
