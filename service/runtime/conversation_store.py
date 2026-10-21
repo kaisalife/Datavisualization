@@ -42,6 +42,7 @@ def init_db():
                 charts TEXT,
                 html_file_paths TEXT,
                 codes TEXT,
+                context_cards TEXT,
                 error TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT
@@ -50,6 +51,10 @@ def init_db():
         # migration: 旧库无 codes 列时补上
         try:
             conn.execute("ALTER TABLE conversation_logs ADD COLUMN codes TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE conversation_logs ADD COLUMN context_cards TEXT")
         except sqlite3.OperationalError:
             pass
         conn.execute("CREATE INDEX IF NOT EXISTS idx_conversation_id ON conversation_logs(conversation_id)")
@@ -106,6 +111,7 @@ def complete_conversation(
     charts: list[str] | None = None,
     html_file_paths: list[str] | None = None,
     codes: list[str] | None = None,
+    context_cards: list[dict] | None = None,
     error: str | None = None,
 ):
     """对话完成时更新结果"""
@@ -115,13 +121,14 @@ def complete_conversation(
         conn.execute(
             """UPDATE conversation_logs
                SET status = ?, agent_logs = ?, charts = ?, html_file_paths = ?,
-                   codes = ?, error = ?, updated_at = ?
+                   codes = ?, context_cards = ?, error = ?, updated_at = ?
                WHERE conversation_id = ?""",
             (status,
              json.dumps(agent_logs or [], ensure_ascii=False),
              json.dumps(charts or [], ensure_ascii=False),
              json.dumps(html_file_paths or [], ensure_ascii=False),
              json.dumps(codes or [], ensure_ascii=False),
+             json.dumps(context_cards or [], ensure_ascii=False),
              error, now, conversation_id),
         )
         conn.commit()
@@ -160,7 +167,9 @@ def get_conversation(conversation_id: str) -> Optional[dict]:
             return None
         result = dict(row)
         # 解析 JSON 字段
-        for field in ["file_paths", "agent_logs", "charts", "html_file_paths", "codes"]:
+        for field in [
+            "file_paths", "agent_logs", "charts", "html_file_paths", "codes", "context_cards",
+        ]:
             if result.get(field):
                 try:
                     result[field] = json.loads(result[field])

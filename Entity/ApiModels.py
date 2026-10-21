@@ -36,6 +36,7 @@ class GenerateChartWithPromptResponse(BaseModel):
     HtmlFilePaths: List[str]  # HTML文件路径列表
     AgentLogs: List[str]  # 代理日志列表
     Codes: List[str] = []  # 生成代码列表（与 HtmlFilePaths 一一对应）
+    ContextCards: List[Dict[str, Any]] = []  # 结构化上下文卡片（需求/数据/计划/校验/产物）
 
 
 class GetChartRequest(BaseModel):

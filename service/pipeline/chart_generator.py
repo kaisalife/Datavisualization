@@ -92,7 +92,13 @@ def _finalize_generation(
         html_path=html_path,
         report=report,
     )
-    plan["generation"] = result
+    if isinstance(plan, dict):
+        plan["generation"] = result
+    else:
+        try:
+            setattr(plan, "generation", result)
+        except Exception:
+            logger.warning("plan 不支持写回 generation", plan_id=plan_id)
     try:
         gv.write_generation_result(output_folder, result)
     except Exception as e:

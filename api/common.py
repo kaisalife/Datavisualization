@@ -299,6 +299,7 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                     HtmlFilePaths=charts,
                     AgentLogs=agent_logs,
                     Codes=codes,
+                    ContextCards=result.get("context_cards", []),
                 )
                 if is_cancelled(task_id):
                     with lock:
@@ -325,6 +326,7 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                         charts=chart_types,
                         html_file_paths=charts,
                         codes=codes,
+                        context_cards=result.get("context_cards", []),
                     )
                 logger.info("task_success", task_id=task_id,
                             charts_count=len(charts), failed_count=len(result.get("failed_plans", [])))

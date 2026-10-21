@@ -36,6 +36,7 @@ from service.pipeline.chart_executor import execute_chart_plans, log_execution_s
 from service.monitoring import trace
 from service.monitoring.stage_timer import stage_timer
 from service.observability import get_logger
+from service.runtime.context_card import build_context_cards, write_context_cards
 
 logger = get_logger(__name__)
 
@@ -183,8 +184,18 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
     _ensure_not_cancelled(task_id, agent_logs)
     log_execution_summary(successful_charts, failed_plans, agent_logs)
 
+    context_cards = build_context_cards(
+        model_.user_prompt,
+        profile,
+        plans,
+        successful_charts,
+        failed_plans,
+    )
+    write_context_cards(output_folder, context_cards)
+
     return {
         "successful_charts": successful_charts,
         "failed_plans": failed_plans,
         "agent_logs": agent_logs,
+        "context_cards": context_cards,
     }

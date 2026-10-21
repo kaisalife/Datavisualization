@@ -124,6 +124,8 @@ async def generate_chart_plans(
         snippet = (plans_content or "").strip()[:500]
         raise ConfigError(f"计划 schema 不匹配: {e}; LLM 响应前 500 字符: {snippet}") from e
 
+    # 后续执行/校验/上下文卡片统一使用 dict；ChartPlan 只在 schema 校验层存在
+    plans = [p.model_dump() if hasattr(p, "model_dump") else p for p in plans]
     logger.info("共找到 N 个计划", count=len(plans))
 
     all_plans_file = output_folder / "all_plans.json"

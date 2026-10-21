@@ -12,8 +12,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from Entity.plan_models import plan_get
 from service.monitoring import trace
 from service.monitoring.stage_timer import stage_timer
+from service.runtime.context_card import build_context_cards, write_context_cards
 
 
 def _check_cancelled(task_id):
@@ -126,7 +128,7 @@ async def run_agent_pipeline(
             agent_logs.append("❌ 任务已被用户取消")
             raise RuntimeError("Task cancelled by user")
 
-        plan_name = plan_item.get("plan_name", f"图表{idx + 1}")
+        plan_name = plan_get(plan_item, "plan_name", f"图表{idx + 1}")
         agent_logs.append(f"📊 执行 plan {idx + 1}/{len(plans)}: {plan_name}")
 
         try:
@@ -151,7 +153,7 @@ async def run_agent_pipeline(
         except Exception as e:
             success, chart_path, code, error = False, "", "", f"generate_single_chart 异常: {e}"
 
-        generation = plan_item.get("generation", {}) if isinstance(plan_item, dict) else {}
+        generation = plan_get(plan_item, "generation", {}) or {}
         validation = generation.get("validation", {}) if isinstance(generation, dict) else {}
         if success and chart_path:
             successful_charts.append({
@@ -173,8 +175,18 @@ async def run_agent_pipeline(
             code_text = f" [{', '.join(codes)}]" if codes else ""
             agent_logs.append(f"❌ plan {idx + 1} 失败{code_text}: {(error or '未知')[:100]}")
 
+    context_cards = build_context_cards(
+        getattr(model_, "user_prompt", ""),
+        profile,
+        plans,
+        successful_charts,
+        failed_plans,
+    )
+    write_context_cards(output_folder, context_cards)
+
     return {
         "successful_charts": successful_charts,
         "failed_plans": failed_plans,
         "agent_logs": agent_logs,
+        "context_cards": context_cards,
     }

@@ -165,7 +165,7 @@ async def execute_chart_plans(
             failed_plans.append({"plan": {}, "error": f"gather 异常: {res}"})
             continue
         plan_item, success, chart_path, code, error = res
-        generation = plan_item.get("generation", {}) if isinstance(plan_item, dict) else {}
+        generation = plan_get(plan_item, "generation", {}) or {}
         validation = generation.get("validation", {}) if isinstance(generation, dict) else {}
         if success and chart_path:
             successful_charts.append({
