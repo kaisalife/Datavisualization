@@ -41,9 +41,22 @@ _os.makedirs(_CHART_OUTPUT_DIR, exist_ok=True)
 
 try:
     from pyecharts.charts.base import Base as _PyBase
+
+    try:
+        from service.pipeline.chart_polish import polish_chart as _polish_chart
+    except Exception as _pe:
+        _polish_chart = None
+        print(f"[chart_sandbox header] chart polish skipped: {_pe}")
+
     _orig_render = _PyBase.render
 
     def _patched_render(self, *args, **kwargs):
+        # 落盘前统一润色（配色/标签/千分位/边距/tooltip），不覆盖显式配置
+        if _polish_chart is not None:
+            try:
+                _polish_chart(self)
+            except Exception as _e:
+                print(f"[chart_sandbox header] chart polish failed: {_e}")
         target = _Path(_CHART_OUTPUT_DIR) / _CHART_OUTPUT_NAME
         # 丢弃 path 参数，统一改写为目标路径
         if args:

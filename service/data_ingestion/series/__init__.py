@@ -8,6 +8,11 @@
 """
 from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
 from service.data_ingestion.series.runner import load_series_df
+from service.data_ingestion.series.shape import (
+    compute_series_shape,
+    format_shape_summary,
+    suggest_chart_types,
+)
 from service.data_ingestion.series.snippet import series_snippet
 from service.data_ingestion.series.splitter import build_series_catalog, split_raw_table, write_manifest
 
@@ -19,4 +24,7 @@ __all__ = [
     "write_manifest",
     "load_series_df",
     "series_snippet",
+    "compute_series_shape",
+    "format_shape_summary",
+    "suggest_chart_types",
 ]

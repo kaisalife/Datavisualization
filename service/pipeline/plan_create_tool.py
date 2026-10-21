@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field
 
 from agent.tools.base import Decision, PermissionDecision, Tool, ToolContext, ToolOutput
 from agent.tools.read_table_sample_tool import ReadSeriesSampleTool
+from service.pipeline.chart_recommend import (
+    chart_family,
+    normalize_chart_type,
+    recommend_chart_types,
+)
 from service.pipeline.plan_state import PlanSessionState
 from service.pipeline.plan_validator import validate_one_plan
 
@@ -61,10 +66,42 @@ class CreatePlanTool(Tool):
             # 禁止把读取代码塞进 plan：plan_details 会进入阶段 3 prompt。
             self._state.plans.append(plan)
             degraded = "（自动降级，仍会执行）" if plan.get("degraded") else ""
+
+            # 即时给出数据形态建议：agent 可当场修正，最终守护层还会再校正一次。
+            advice_note = ""
+            series = self._state.catalog.by_id(plan.get("series_id", ""))
+            if series is not None:
+                advice = recommend_chart_types(
+                    series, self._state.user_prompt, load_if_missing=False
+                )
+                current = normalize_chart_type(plan.get("chart_type"))
+                recommended_list = advice.get("recommended", [])
+                recommended = {
+                    normalize_chart_type(item) for item in recommended_list
+                }
+                accepted = recommended | {
+                    normalize_chart_type(item) for item in advice.get("alternatives", [])
+                }
+                explicit = {
+                    normalize_chart_type(item) for item in advice.get("explicit_types", [])
+                }
+                primary_family = chart_family(recommended_list[0]) if recommended_list else ""
+                # 时间序列画柱/饼即使落在"备选"里也要提醒；其他备选类型是合理的
+                mismatch = current not in accepted or (
+                    primary_family == "trend" and chart_family(current) != "trend"
+                )
+                if current and mismatch and current not in explicit:
+                    shape = advice.get("shape_summary") or "数据形态"
+                    suggested = "/".join(advice.get("recommended", []))
+                    advice_note = (
+                        f"\n💡 {shape}：建议 {suggested}。若当前类型不是用户明确要求，"
+                        "最终守护层会按数据形态校正。"
+                    )
+
             return ToolOutput(
                 success=True,
                 output=f"plan {plan.get('plan_id', '?')} {plan.get('plan_name', '')} 已提交{degraded}。"
-                       f"\n当前进度:\n{self._state.summary()}",
+                       f"{advice_note}\n当前进度:\n{self._state.summary()}",
             )
         self._state.dropped.append(plan)
         return ToolOutput(

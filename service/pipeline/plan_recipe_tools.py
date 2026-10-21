@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 
 from agent.tools.base import Decision, PermissionDecision, Tool, ToolContext, ToolOutput
 from service.data_ingestion.series import load_series_df
+from service.data_ingestion.series.shape import format_shape_summary
+from service.pipeline.chart_recommend import recommend_chart_types
 
 
 class ListSeriesInput(BaseModel):
@@ -45,10 +47,21 @@ class ListSeriesTool(Tool):
             series = self._catalog.series
         if not series:
             return ToolOutput(success=False, error="series 目录为空或该来源无系列")
-        lines = [
-            f"{s.series_id} [{s.axis_kind}]: {s.description}（行标签={s.row_label_column}, 列标签={s.column_label_columns}）"
-            for s in series
-        ]
+        lines = []
+        for s in series:
+            advice = recommend_chart_types(s, load_if_missing=False)
+            shape = format_shape_summary(advice.get("shape"))
+            shape_text = f"；{shape}" if shape else ""
+            suggested = "/".join(advice.get("recommended", []))
+            alternatives = "/".join(advice.get("alternatives", []))
+            advice_text = f"；建议 {suggested}" if suggested else ""
+            if alternatives:
+                advice_text += f"（备选 {alternatives}）"
+            lines.append(
+                f"{s.series_id} [{s.axis_kind}{shape_text}]: {s.description}"
+                f"（行标签={s.row_label_column}, 列标签={s.column_label_columns}）"
+                f"{advice_text}"
+            )
         return ToolOutput(success=True, output=f"可用数据系列 {len(series)} 条:\n" + "\n".join(lines))
 
 
@@ -84,12 +97,20 @@ class GetSeriesTool(Tool):
             preview = df.to_dict(orient="records")
         except Exception as e:
             return ToolOutput(success=False, error=f"series 加载失败: {e}")
+
+        advice = recommend_chart_types(series, load_if_missing=True)
+        shape = advice.get("shape") or {}
+        examples = shape.get("row_label_examples") or []
         return ToolOutput(
             success=True,
             output=(
                 f"{series.series_id} [{series.axis_kind}]\n"
                 f"说明: {series.description}\n"
+                f"数据形态: {format_shape_summary(shape) or '(未知)'}\n"
                 f"行标签列: {series.row_label_column}\n列标签列: {series.column_label_columns}\n"
+                f"行标签示例: {examples}\n"
+                f"建议图表: {'/'.join(advice.get('recommended', [])) or '(无)'}"
+                f"（{advice.get('reason', '')}）\n"
                 f"真实样例(前5行): {preview}"
             ),
         )

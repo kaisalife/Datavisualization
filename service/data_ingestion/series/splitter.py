@@ -23,6 +23,7 @@ import pandas as pd
 from service.data_ingestion.models import RawTable
 from service.data_ingestion.profiler import _infer_column_semantics, _is_time_label
 from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
+from service.data_ingestion.series.shape import compute_series_shape
 
 # 时间列构造的 melt 产物用固定的行/值列名（避免与业务列冲突）
 _TIME_LABEL_COL = "时间"
@@ -431,6 +432,14 @@ def build_series_catalog(
             # 存 2-D DataFrame（索引 reset 为真实列，保 read_parquet 无损往返）
             sub_df = sub_df.reset_index(drop=True)
             sub_df.to_parquet(data_path, index=False)
+            # 数据形态随 manifest 持久化：规划阶段不用再读 parquet 就能知道
+            # 时间点/类别数、指标数、是否含负值，从而按数据选图表类型。
+            shape = compute_series_shape(
+                sub_df,
+                spec["axis_kind"],
+                spec["row_label_column"],
+                spec["column_label_columns"],
+            )
 
             all_series.append(SemanticSeries(
                 series_id=series_id,
@@ -441,6 +450,7 @@ def build_series_catalog(
                 data_path=str(data_path.as_posix()),
                 source_table=rt.name,
                 description=spec["description"],
+                extra_semantics={"shape": shape},
                 dtype_info={c: str(t) for c, t in sub_df.dtypes.items()},
             ))
 

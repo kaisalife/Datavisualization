@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 258 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 341 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -201,6 +201,52 @@ $env:BACKEND_URL="http://localhost:5000"
   `Grid(...).add(chart, grid_opts=opts.GridOpts(...))`，`set_global_opts()` 没有 `grid_opts`
   （以上三条都是真机 debug 循环里踩出来的）
 - 这些规则写在 `prompts/chart_gen_prompt.py`，改规则要同时改 prompt 和该测试
+- **pyecharts 2.1 没有 `BarOpts` / `LineOpts`**：柱宽用 `add_yaxis(..., bar_max_width=42)`，
+  折线点标记用 `add_yaxis(..., is_symbol_show=False)`；`tests/test_chart_prompt_rules.py`
+  会扫描 prompt 中所有 `opts.XxxOpts` 并确认在当前版本真实存在，别写不存在的选项类
+
+### 图表视觉质量后处理
+
+`service/pipeline/chart_polish.py` 在 `chart_sandbox` 的 render monkey-patch 中、落盘前
+统一润色 `chart.options`，只补缺失项/修正明显不合理的默认值，不覆盖用户显式配色、标签位置和
+自定义 tooltip。规则：
+
+- 统一 Tableau 10 调色板（`set_colors` 显式配置优先）；中文无衬线字体；标题居中 + 2% 顶距
+- 默认顶部居中图例与标题必然重叠时移到下方，并按标题/图例宽度估算右上角是否撞车；单图
+  `grid.containLabel=True`，补 top/bottom 边距，避免轴标签被裁切
+- 数值轴/数据标签/tooltip 用 `toLocaleString('zh-CN')` 加千分位；tooltip 默认柱/折线用
+  `axis` 联动（自定义 formatter 时保留 `item`）
+- 柱状图标签默认 `top`（横向 `right`、堆叠 `inside`），柱宽上限 42；饼图默认半径 32%–58%、
+  标签 `{b}: {d}%`、`avoidLabelOverlap=True`
+- 类目点过多时自动隐藏标签（折线/柱 >20、饼 >15；多系列总点数 >20），折线 >30 点关闭
+  `showSymbol`；长 x 轴类目按宽度估算旋转 30/45/60°，横向柱状图长类目截断到 140px
+- **`polish_options` 内部先深拷贝**：pyecharts 的默认 `LabelOpts` / `SplitLineOpts` 等可能被
+  多张图共享，直接改会让上一张图的颜色/位置泄漏到下一张图；深拷贝后再写回原 `chart.options`
+- 回归：`tests/test_chart_polish.py`（含渲染链路 HTML 断言）；改规则要同时改 prompt 和该测试
+
+## 图表类型选择（数据驱动，避免每回柱状图）
+
+默认 `viz_mode=agent/auto` 走 `prompts/agent_planning_prompt.py`。图表类型不再只靠模型自由发挥：
+
+- `service/data_ingestion/series/shape.py` 在 series 落盘时计算 `extra_semantics.shape`
+  （`rows` / `row_labels` / `measure_count` / `numeric_columns` / `time_like` / `non_negative` /
+  `row_label_examples` 等），`SeriesCatalog.to_index_prompt()` 直接带
+  `12 个时间点 × 2 个指标；建议 Line/Area（备选 Bar）`，规划阶段不用再读 parquet。
+- `service/pipeline/chart_recommend.py`：
+  - `recommend_chart_types()` 结合数据形态 + 用户意图给出首选/备选；`list_series` / `get_series`
+    工具输出直接展示；`create_plan` 对明显不匹配（如 12 个点的时间序列画 Bar）当场提示；
+  - `diversify_plans()` 在规划完成后做确定性守护：时间序列（≥3 个点；用户明确要“趋势”时 ≥2 个点）
+    的 Bar/Pie 安全改成 Line/Area；≤6 个非负类别且没有构成图时补 Pie；同一 series + 同一指标不重复；
+    同一分析角度最多 2 张；**保留 LLM 已规划的有效图**（如 Bar+Scatter 不会为了凑构成图被硬改成 Pie）；
+  - 用户明确点名类型（“柱状图”“饼图”…）不自动改；用户说“画两个图”是硬上限；数据只支持一个角度时宁可少画。
+- prompt 同步：`agent_planning_prompt`（默认路径）、`chart_designer_prompt`（回退）、
+  `chart_gen_prompt` 的类型实现约定（Area / Histogram / Treemap / Heatmap）。
+- **ChatPromptTemplate 花括号坑**：prompt 里的 JSON 示例、`formatter="{b}: {d}%"` 必须写成
+  `{{...}}`，否则模板把 `b/d` 当变量，生成阶段直接 `KeyError`。回归
+  `tests/test_chart_prompt_rules.py::test_generate_prompt_template_can_be_formatted`。
+- 真机规划验过：12 个月月度数据产出 Area / Line / Scatter / Histogram；6 城市数据产出 Bar + Pie，
+  不再全是柱状图。Area / Histogram 单图生成均成功（约 44–65 秒）。
+- 回归：`tests/test_series_shape.py`、`tests/test_chart_selection.py`、`tests/test_chart_prompt_rules.py`。
 
 ## Excel 合并表头 / 标题行
 

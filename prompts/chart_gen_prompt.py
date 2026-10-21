@@ -58,6 +58,39 @@ agent_generate_chart_prompt = """
 - Pie：center=["50%","55%"], radius=["30%","60%"]
 - 多 series：set_series_opts(label_opts=opts.LabelOpts(is_show=False))
 
+## 视觉质量（必须遵守，框架还会做确定性兜底）
+- **数据标签**：只有数据点 ≤20 且系列 ≤2 时显示数值；超过就
+  `set_series_opts(label_opts=opts.LabelOpts(is_show=False))`，不要用密密麻麻的标签填满画布。
+  显示时位置必须写清楚：柱状图 `position="top"`，横向柱状图 `position="right"`，
+  折线图 `position="top"`，散点 `position="right"`，饼图 `position="outside"`；
+  堆叠柱状图用 `position="inside"`。
+- **数值可读性**：大数字用千分位，百分比保留 1 位小数；金额等带量纲的指标必须把单位写进
+  轴名或副标题（如「销售额（万元）」），不要只写「数值」或「金额」。
+- **轴名**：数值轴写清指标 + 单位；分类轴含义不直观时写轴名。轴名不是图例的替代品。
+- **类目排序**：类别对比按指标从高到低排序；时间序列按时间升序；用户明确指定顺序时以用户为准。
+- **柱宽**：柱状图调用 `add_yaxis(..., bar_max_width=42)`，类目很少时也不要出现占满画布的宽柱子。
+  **pyecharts 2.1 没有 `BarOpts` / `LineOpts` 选项类**，柱宽、折线点标记都用 `add_yaxis` 参数。
+- **长标签**：类目名较长或类目数 >12 时用
+  `opts.AxisOpts(axislabel_opts=opts.LabelOpts(rotate=45))`；≤20 类可 `interval=0`，
+  更多时交给 ECharts 自动间隔，避免标签叠在一起。
+- **折线**：数据点 >30 时 `add_yaxis(..., is_symbol_show=False)`，避免点标记糊成一片；
+  单系列可加淡色面积（`areastyle_opts=opts.AreaStyleOpts(opacity=0.12)`）。
+- **饼图**：`Pie().add(..., radius=["32%","58%"], center=["50%","55%"],
+  is_avoid_label_overlap=True, label_opts=opts.LabelOpts(position="outside", formatter="{{b}}: {{d}}%"))`；
+  类别 >15 时隐藏标签、保留图例和 tooltip。
+- **图例**：横向图例不得与标题重叠；标题长或系列多时优先放底部居中。
+- **配色**：同一批图表里同类指标使用同一颜色，不要每个图换一套主题色。
+
+## 类型实现约定
+- `Area`：用 `Line` 绘制，并给每个 `add_yaxis` 传
+  `areastyle_opts=opts.AreaStyleOpts(opacity=0.15)`；不要 import 不存在的 Area 类。
+- `Histogram`：pyecharts 2.1 没有 Histogram 类。用 `pd.cut` 对指标分箱、统计频数后，
+  用 `Bar` 绘制（标题仍按 plan 写"分布/直方图"），不要写 `from pyecharts.charts import Histogram`。
+- `Treemap`：用 `from pyecharts.charts import Treemap`，数据传
+  `[{{"value": 数值, "name": 类别}}]`；不要在类别很多时改用看不清的饼图。
+- `Heatmap`：用 `HeatMap`，数据传 `[x_index, y_index, value]`，并设置 visualmap。
+- 其他类型严格按 RAG 参考文档的真实 API 写，拿不准时优先用 Bar/Line/Pie/Scatter。
+
 ## 输出
 仅返回 Python 代码，完整可执行，含所有 import。
 """
@@ -74,7 +107,7 @@ agent_debug_chart_prompt = """
 1. 分析错误（traceback 最后一行异常类型 + 行号）
 2. 修复代码，保持计划要求（chart_type/chart_title/数据列）
 3. 只调 chart.render()（不传 path，框架自动注入）
-4. 遵守布局规范（标题/图例防重叠，与生成阶段一致）
+4. 遵守布局与视觉质量规范（标题/图例防重叠、标签位置、轴名单位、排序、柱宽，与生成阶段一致）
 5. 仅返回 Python 代码
 
 series 模式（read_recipe_hint 非空时）：

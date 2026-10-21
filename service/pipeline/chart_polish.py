@@ -1,0 +1,813 @@
+"""图表渲染前的视觉质量后处理。
+
+LLM 生成的 pyecharts 代码通常能出图，但常见问题很一致：柱状图标签默认落在柱子里、
+大数字没有千分位、类目标签相互遮挡、饼图半径过大、柱宽失控、tooltip 触发方式不合适。
+这些问题不适合全部交给 prompt（模型会漏），也不适合失败重试（代码本身没报错）。
+
+本模块在 ``chart_sandbox`` 的 render monkey-patch 中、真正落盘前调用，
+只补缺失项或修正明显不合理的默认值；用户显式设置的配色、标签位置、tooltip
+触发方式等一律保留。``polish_options`` 是纯函数，便于单测。
+"""
+from __future__ import annotations
+
+import copy
+import re
+from typing import Any, Iterator
+
+try:
+    from pyecharts.commons.utils import JsCode
+    from pyecharts.options.series_options import BasicOpts
+except ImportError:  # pragma: no cover - pyecharts 是运行期硬依赖
+    JsCode = None  # type: ignore[assignment]
+    BasicOpts = ()  # type: ignore[assignment]
+
+# Tableau 10：色相区分度高，浅色/深色主题下都能保持可读性
+PALETTE = [
+    "#4E79A7",
+    "#F28E2B",
+    "#E15759",
+    "#76B7B2",
+    "#59A14F",
+    "#EDC948",
+    "#B07AA1",
+    "#FF9DA7",
+    "#9C755F",
+    "#BAB0AC",
+]
+
+FONT_FAMILY = "Microsoft YaHei, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif"
+
+# 坐标轴 / 数据标签的大数字统一加千分位；数值型之外的值原样返回
+_THOUSANDS_JS = (
+    "function (value) {"
+    " if (typeof value !== 'number') { return value; }"
+    " return value.toLocaleString('zh-CN');"
+    "}"
+)
+_LABEL_VALUE_JS = (
+    "function (p) {"
+    " var v = p && p.value;"
+    " if (v === null || v === undefined) { return ''; }"
+    " if (typeof v === 'number') {"
+    " return v.toLocaleString('zh-CN', { maximumFractionDigits: 2 });"
+    " }"
+    " return v;"
+    "}"
+)
+_TOOLTIP_VALUE_JS = (
+    "function (value) {"
+    " if (Array.isArray(value)) {"
+    " return value.map(function (item) {"
+    " return typeof item === 'number'"
+    " ? item.toLocaleString('zh-CN', { maximumFractionDigits: 2 })"
+    " : item;"
+    " }).join(' / ');"
+    " }"
+    " if (typeof value !== 'number') { return value; }"
+    " return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 });"
+    "}"
+)
+
+_CARTESIAN_SERIES = {
+    "bar",
+    "line",
+    "scatter",
+    "effectscatter",
+    "candlestick",
+    "boxplot",
+    "heatmap",
+}
+_ITEM_TRIGGER_SERIES = {
+    "pie",
+    "funnel",
+    "gauge",
+    "radar",
+    "heatmap",
+    "wordcloud",
+    "graph",
+    "treemap",
+    "sankey",
+}
+
+
+def _opts_dict(node: Any) -> dict[str, Any] | None:
+    """把 pyecharts 的 BasicOpts / dict 统一成可写 dict。"""
+    if isinstance(node, dict):
+        return node
+    if BasicOpts and isinstance(node, BasicOpts):
+        raw = getattr(node, "opts", None)
+        if isinstance(raw, dict):
+            return raw
+    return None
+
+
+def _iter_dicts(value: Any) -> Iterator[dict[str, Any]]:
+    """遍历选项对象/选项列表，展开 BasicOpts.opts（可能是 dict 或 list）。"""
+    if value is None:
+        return
+    items = value if isinstance(value, (list, tuple)) else [value]
+    for item in items:
+        if isinstance(item, dict):
+            yield item
+            continue
+        if BasicOpts and isinstance(item, BasicOpts):
+            raw = getattr(item, "opts", None)
+            if isinstance(raw, dict):
+                yield raw
+            elif isinstance(raw, (list, tuple)):
+                for sub_item in raw:
+                    if isinstance(sub_item, dict):
+                        yield sub_item
+
+
+def _ensure_dict(container: dict[str, Any], key: str) -> dict[str, Any] | None:
+    """取得 container[key] 的可写 dict；缺失时创建普通 dict。"""
+    value = container.get(key)
+    node = _opts_dict(value)
+    if node is not None:
+        return node
+    if value is None:
+        node = {}
+        container[key] = node
+        return node
+    # 列表等复杂结构不在这里处理
+    return None
+
+
+def _set_missing(target: dict[str, Any], key: str, value: Any) -> None:
+    """仅在字段缺失（None）时写入，保留显式配置。"""
+    if target.get(key) is None:
+        target[key] = value
+
+
+def _display_width(text: Any) -> int:
+    """估算显示宽度：中文/全角字符按 2 个西文单位计算。"""
+    return sum(2 if ord(ch) > 127 else 1 for ch in str(text or ""))
+
+
+def _parse_width(width: Any, default: int = 900) -> int:
+    """从 ``900px`` / 900 这类值里取出像素宽度。"""
+    if isinstance(width, (int, float)):
+        return int(width)
+    match = re.search(r"(\d+(?:\.\d+)?)", str(width or ""))
+    return int(float(match.group(1))) if match else default
+
+
+def _series(options: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(_iter_dicts(options.get("series")))
+
+
+def _series_types(options: dict[str, Any]) -> set[str]:
+    return {
+        str(node.get("type") or "").lower()
+        for node in _series(options)
+        if node.get("type")
+    }
+
+
+def _axis_nodes(options: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    for key in ("xAxis", "yAxis"):
+        nodes.extend(_iter_dicts(options.get(key)))
+    return nodes
+
+
+def _axis_is_category(axis: dict[str, Any] | None) -> bool:
+    if axis is None:
+        return False
+    axis_type = str(axis.get("type") or "").lower()
+    if axis_type == "category":
+        return True
+    if axis_type:
+        return False
+    data = axis.get("data")
+    return isinstance(data, (list, tuple)) and len(data) > 0
+
+
+def _axis_is_value(axis: dict[str, Any] | None) -> bool:
+    if axis is None:
+        return False
+    axis_type = str(axis.get("type") or "").lower()
+    if axis_type in {"value", "log"}:
+        return True
+    if axis_type:
+        return False
+    data = axis.get("data")
+    return not isinstance(data, (list, tuple)) or len(data) == 0
+
+
+def _is_cartesian(options: dict[str, Any]) -> bool:
+    if not (_series_types(options) & _CARTESIAN_SERIES):
+        return False
+    return bool(_axis_nodes(options))
+
+
+def _is_horizontal_bar(options: dict[str, Any]) -> bool:
+    x_axis = next(iter(_iter_dicts(options.get("xAxis"))), None)
+    y_axis = next(iter(_iter_dicts(options.get("yAxis"))), None)
+    return _axis_is_value(x_axis) and _axis_is_category(y_axis)
+
+
+def _position_pct(value: Any) -> float | None:
+    """解析 top/bottom 的百分比或像素值。"""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().lower()
+    if text in {"auto", "top"}:
+        return 0.0
+    if text in {"bottom"}:
+        return 100.0
+    match = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*%", text)
+    if match:
+        return float(match.group(1))
+    match = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*(?:px)?", text)
+    if match:
+        return float(match.group(1)) / 9.0  # 约等于 900px 画布的百分比
+    return None
+
+
+def _position_px(value: Any, total: int, default: float = 0.0) -> float:
+    """把 left/right 的百分比或像素值换算成像素。"""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().lower()
+    match = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*%", text)
+    if match:
+        return float(match.group(1)) * total / 100.0
+    match = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*(?:px)?", text)
+    if match:
+        return float(match.group(1))
+    return default
+
+
+def _legend_at_top(legend: dict[str, Any]) -> bool:
+    if legend.get("bottom") is not None:
+        return False
+    top = _position_pct(legend.get("top"))
+    return top is None or top <= 12
+
+
+def _legend_at_bottom(legend: dict[str, Any]) -> bool:
+    if legend.get("top") is not None:
+        return False
+    bottom = _position_pct(legend.get("bottom"))
+    # bottom 是"距底部"的距离，2% 表示贴底
+    return bottom is not None and bottom <= 12
+
+
+def _legend_names(legend: dict[str, Any], series: list[dict[str, Any]]) -> list[str]:
+    data = legend.get("data")
+    names = [str(item) for item in data if item] if isinstance(data, list) else []
+    if not names:
+        names = [str(node.get("name")) for node in series if node.get("name")]
+    return names
+
+
+def _should_move_legend_bottom(
+    options: dict[str, Any],
+    *,
+    width: int,
+    series: list[dict[str, Any]],
+) -> bool:
+    """标题与水平顶部图例宽度相加会撞车时，把图例移到下方。"""
+    legends = list(_iter_dicts(options.get("legend")))
+    if len(legends) != 1:
+        return False
+    legend = legends[0]
+    if legend.get("show") is False:
+        return False
+    if str(legend.get("orient") or "horizontal").lower() != "horizontal":
+        return False
+    if not _legend_at_top(legend):
+        return False
+
+    titles = [node for node in _iter_dicts(options.get("title")) if str(node.get("text") or "").strip()]
+    if not titles:
+        return False
+    # Grid 多图布局各自有标题/图例，移动会破坏版式
+    grids = list(_iter_dicts(options.get("grid")))
+    if len(grids) > 1:
+        return False
+
+    title_left = str(titles[0].get("left") or "").lower()
+    legend_left = str(legend.get("left") or "").lower()
+    if title_left in {"left", "0", "0%"} and (
+        legend.get("right") is not None or legend_left in {"right", "90%"}
+    ):
+        return False
+
+    # 默认图例在顶部居中，与居中标题必然重叠；直接移到底部
+    legend_centered = legend.get("right") is None and legend_left in {"", "center", "50%"}
+    if legend_centered:
+        return True
+
+    title_width = max(_display_width(node.get("text")) for node in titles) * 9
+    legend_width = sum(
+        25 + 6 + _display_width(name) * 6 + 10
+        for name in _legend_names(legend, series)
+    )
+
+    # 图例在右上角：按标题实际占位判断右侧是否还有空间
+    if legend.get("right") is not None or legend_left in {"right", "90%"}:
+        right_px = _position_px(legend.get("right"), width, default=10.0)
+        legend_left_px = width - right_px - legend_width
+        if title_left in {"left", "0", "0%"}:
+            title_right_px = 10 + title_width
+        elif title_left in {"right", "90%"}:
+            title_right_px = width - 10
+        else:
+            title_right_px = width / 2 + title_width / 2
+        return title_right_px + 16 > legend_left_px
+
+    # 图例在左上角/自定义左侧位置
+    legend_left_px = _position_px(legend.get("left"), width, default=10.0)
+    if title_left in {"left", "0", "0%"}:
+        title_left_px = 10
+    elif title_left in {"right", "90%"}:
+        title_left_px = width - 10 - title_width
+    else:
+        title_left_px = width / 2 - title_width / 2
+    return title_left_px < legend_left_px + legend_width + 16
+
+
+def _polish_title(options: dict[str, Any], *, dark: bool, width: int, multi_grid: bool) -> None:
+    for title in _iter_dicts(options.get("title")):
+        if title.get("left") is None and title.get("right") is None:
+            title["left"] = "center"
+        if not multi_grid and title.get("top") is None and title.get("bottom") is None:
+            title["top"] = "2%"
+
+        text = str(title.get("text") or "")
+        text_style = _ensure_dict(title, "textStyle")
+        if text_style is not None:
+            _set_missing(text_style, "fontFamily", FONT_FAMILY)
+            font_size = 16 if _display_width(text) * 9 > width * 0.9 else 18
+            _set_missing(text_style, "fontSize", font_size)
+            _set_missing(text_style, "fontWeight", "bold")
+            if not dark:
+                _set_missing(text_style, "color", "#1f2937")
+            else:
+                _set_missing(text_style, "color", "#f8fafc")
+
+        if title.get("subtext"):
+            sub_style = _ensure_dict(title, "subtextStyle")
+            if sub_style is not None:
+                _set_missing(sub_style, "fontFamily", FONT_FAMILY)
+                _set_missing(sub_style, "fontSize", 12)
+                _set_missing(sub_style, "color", "#cbd5e1" if dark else "#6b7280")
+
+
+def _polish_legend(options: dict[str, Any], *, dark: bool) -> None:
+    for legend in _iter_dicts(options.get("legend")):
+        text_style = _ensure_dict(legend, "textStyle")
+        if text_style is None:
+            continue
+        _set_missing(text_style, "fontFamily", FONT_FAMILY)
+        _set_missing(text_style, "fontSize", 12)
+        if not dark:
+            _set_missing(text_style, "color", "#4b5563")
+
+
+def _polish_grid(options: dict[str, Any]) -> None:
+    if not _is_cartesian(options):
+        return
+
+    series = _series(options)
+    legends = list(_iter_dicts(options.get("legend")))
+    legend_top = any(_legend_at_top(node) and node.get("show") is not False for node in legends)
+    legend_bottom = any(_legend_at_bottom(node) and node.get("show") is not False for node in legends)
+    has_title = any(str(node.get("text") or "").strip() for node in _iter_dicts(options.get("title")))
+    has_data_zoom = bool(options.get("dataZoom"))
+
+    if has_title and legend_top:
+        default_top = "18%"
+    elif has_title:
+        default_top = "13%"
+    else:
+        default_top = "10%"
+    default_bottom = "18%" if has_data_zoom else ("14%" if legend_bottom else "10%")
+
+    grids = list(_iter_dicts(options.get("grid")))
+    if not grids:
+        grid = {
+            "containLabel": True,
+            "top": default_top,
+            "bottom": default_bottom,
+            "left": "8%",
+            "right": "4%",
+        }
+        options["grid"] = [grid]
+        return
+
+    for grid in grids:
+        # containLabel 让 ECharts 把轴标签算进边距，显著减少左侧/底部裁切
+        grid["containLabel"] = True
+        if len(grids) == 1:
+            _set_missing(grid, "top", default_top)
+            _set_missing(grid, "bottom", default_bottom)
+            _set_missing(grid, "left", "8%")
+            _set_missing(grid, "right", "4%")
+    # 多图 Grid 的间距由调用方控制，这里只补 containLabel，避免破坏布局
+
+
+def _polish_axes(options: dict[str, Any], *, dark: bool, width: int) -> None:
+    if not _is_cartesian(options):
+        return
+    for axis_key in ("xAxis", "yAxis"):
+        for axis in _iter_dicts(options.get(axis_key)):
+            axis_label = _ensure_dict(axis, "axisLabel")
+            if axis_label is not None:
+                _set_missing(axis_label, "fontFamily", FONT_FAMILY)
+                _set_missing(axis_label, "fontSize", 12)
+                if not dark:
+                    _set_missing(axis_label, "color", "#4b5563")
+
+            name_style = _ensure_dict(axis, "nameTextStyle")
+            if name_style is not None:
+                _set_missing(name_style, "fontFamily", FONT_FAMILY)
+                _set_missing(name_style, "fontSize", 12)
+                if not dark:
+                    _set_missing(name_style, "color", "#374151")
+
+            if _axis_is_category(axis):
+                if axis_key == "xAxis":
+                    _rotate_category_labels(axis, axis_label, width=width)
+                else:
+                    _truncate_y_category_labels(axis, axis_label)
+            elif _axis_is_value(axis):
+                if axis_label is not None and axis_label.get("formatter") is None and JsCode is not None:
+                    axis_label["formatter"] = JsCode(_THOUSANDS_JS)
+                split_line = _ensure_dict(axis, "splitLine")
+                if split_line is not None and split_line.get("show") is not False:
+                    line_style = _ensure_dict(split_line, "lineStyle")
+                    if line_style is not None:
+                        _set_missing(line_style, "type", "dashed")
+                        _set_missing(line_style, "opacity", 0.45)
+
+
+def _rotate_category_labels(
+    axis: dict[str, Any],
+    axis_label: dict[str, Any] | None,
+    *,
+    width: int,
+) -> None:
+    if axis_label is None or axis_label.get("rotate") is not None:
+        return
+    data = axis.get("data")
+    if not isinstance(data, (list, tuple)) or len(data) < 2:
+        return
+
+    count = len(data)
+    max_width = max(_display_width(item) for item in data)
+    # 粗略估算：每 1 个显示单位约 6px，画布 75% 用于类目标签
+    ratio = count * max_width * 6.0 / max(width * 0.75, 1.0)
+    rotate = 0
+    if ratio >= 1.15:
+        rotate = 30
+    if ratio >= 1.7 or count > 24:
+        rotate = 45
+    if ratio >= 2.8 and max_width >= 16:
+        rotate = 60
+    if not rotate:
+        return
+
+    axis_label["rotate"] = rotate
+    if count <= 20:
+        _set_missing(axis_label, "interval", 0)
+
+
+def _truncate_y_category_labels(
+    axis: dict[str, Any],
+    axis_label: dict[str, Any] | None,
+) -> None:
+    """横向柱状图的类目名放不下时截断，完整值仍可在 tooltip 看到。"""
+    if axis_label is None or axis_label.get("width") is not None:
+        return
+    data = axis.get("data")
+    if not isinstance(data, (list, tuple)) or not data:
+        return
+    max_width = max(_display_width(item) for item in data)
+    if max_width <= 12:
+        return
+    axis_label["width"] = 140
+    _set_missing(axis_label, "overflow", "truncate")
+
+
+def _tooltip_has_custom_trigger(tooltip: dict[str, Any]) -> bool:
+    """判断用户是否明确定制了 trigger/内容；定制后不再改默认触发方式。"""
+    if tooltip.get("formatter"):
+        return True
+    if tooltip.get("triggerOn") not in (None, "mousemove|click"):
+        return True
+    if tooltip.get("position") is not None:
+        return True
+    axis_pointer = tooltip.get("axisPointer")
+    if isinstance(axis_pointer, dict) and axis_pointer.get("type") not in (None, "line"):
+        return True
+    return False
+
+
+def _tooltip_is_custom(tooltip: dict[str, Any]) -> bool:
+    """判断 tooltip 是否带用户自定义内容（用于决定能否补默认 confine 等）。"""
+    if _tooltip_has_custom_trigger(tooltip):
+        return True
+    if tooltip.get("confine") is True:
+        return True
+    if tooltip.get("valueFormatter") is not None:
+        return True
+    for key in ("backgroundColor", "borderColor", "extraCssText", "appendToBody"):
+        if tooltip.get(key) not in (None, False, ""):
+            return True
+    return False
+
+
+def _polish_tooltip(options: dict[str, Any], *, dark: bool) -> None:
+    tooltips = list(_iter_dicts(options.get("tooltip")))
+    if not tooltips:
+        options["tooltip"] = {}
+        tooltips = [options["tooltip"]]
+
+    series_types = _series_types(options)
+    default_trigger = "item" if series_types & _ITEM_TRIGGER_SERIES else "axis"
+    axis_pointer_type = "shadow" if "bar" in series_types or "heatmap" in series_types else "line"
+
+    for tooltip in tooltips:
+        trigger_custom = _tooltip_has_custom_trigger(tooltip)
+        custom = _tooltip_is_custom(tooltip)
+        trigger = str(tooltip.get("trigger") or "").lower()
+        if not trigger_custom and default_trigger == "axis" and trigger in {"", "item"}:
+            # 柱/折线默认 item 只能看到单点，改为 axis 联动整行/整列
+            tooltip["trigger"] = "axis"
+            trigger = "axis"
+        _set_missing(tooltip, "trigger", default_trigger)
+        if tooltip.get("show") is False:
+            continue
+        if not custom:
+            tooltip["confine"] = True
+        if tooltip.get("valueFormatter") is None and JsCode is not None:
+            tooltip["valueFormatter"] = JsCode(_TOOLTIP_VALUE_JS)
+
+        text_style = _ensure_dict(tooltip, "textStyle")
+        if text_style is not None:
+            _set_missing(text_style, "fontFamily", FONT_FAMILY)
+            _set_missing(text_style, "fontSize", 13)
+            if dark:
+                _set_missing(text_style, "color", "#f1f5f9")
+
+        if str(tooltip.get("trigger") or "").lower() == "axis":
+            axis_pointer = _ensure_dict(tooltip, "axisPointer")
+            if axis_pointer is not None:
+                if trigger_custom:
+                    _set_missing(axis_pointer, "type", axis_pointer_type)
+                else:
+                    axis_pointer["type"] = axis_pointer_type
+
+
+def _polish_label(
+    series: dict[str, Any],
+    *,
+    series_type: str,
+    point_count: int,
+    series_count: int,
+    dark: bool,
+    horizontal_bar: bool,
+    stacked: bool,
+) -> None:
+    label = _ensure_dict(series, "label")
+    if label is None:
+        return
+    if label.get("show") is not True:
+        if series_type == "pie" and label.get("show") is False:
+            label_line = _ensure_dict(series, "labelLine")
+            if label_line is not None:
+                _set_missing(label_line, "show", False)
+        return
+
+    # 点太多时标签必然重叠：宁可隐藏，靠 tooltip/图例读数
+    hide = False
+    if series_type == "line" and point_count > 20:
+        hide = True
+    elif series_type == "bar" and point_count > 20:
+        hide = True
+    elif series_type == "pie" and point_count > 15:
+        hide = True
+    elif (
+        series_type in {"bar", "line"}
+        and series_count > 2
+        and point_count > 0
+        and series_count * point_count > 20
+    ):
+        hide = True
+    if hide:
+        label["show"] = False
+        if series_type == "pie":
+            label_line = _ensure_dict(series, "labelLine")
+            if label_line is not None:
+                _set_missing(label_line, "show", False)
+        return
+
+    if label.get("position") is None:
+        if series_type == "bar":
+            if stacked:
+                position = "inside"
+            else:
+                position = "right" if horizontal_bar else "top"
+        elif series_type == "line":
+            position = "top"
+        elif series_type in {"scatter", "effectscatter"}:
+            position = "right"
+        elif series_type == "pie":
+            position = "outside"
+        else:
+            position = None
+        if position:
+            label["position"] = position
+
+    if label.get("formatter") is None:
+        if series_type == "pie":
+            label["formatter"] = "{b}: {d}%"
+        elif series_type in {"bar", "line"} and JsCode is not None:
+            label["formatter"] = JsCode(_LABEL_VALUE_JS)
+
+    _set_missing(label, "fontFamily", FONT_FAMILY)
+    _set_missing(label, "fontSize", 11)
+    position = str(label.get("position") or "").lower()
+    if position in {"top", "right", "outside", "bottom"} and label.get("color") is None:
+        label["color"] = "#e2e8f0" if dark else "#334155"
+
+    if series_type == "pie":
+        label_line = _ensure_dict(series, "labelLine")
+        if label_line is not None:
+            _set_missing(label_line, "show", True)
+
+
+def _polish_series(options: dict[str, Any], *, dark: bool) -> None:
+    series_nodes = _series(options)
+    series_count = sum(
+        1
+        for node in series_nodes
+        if str(node.get("type") or "").lower() in {"bar", "line", "scatter", "effectscatter"}
+    )
+    horizontal_bar = _is_horizontal_bar(options)
+
+    for node in series_nodes:
+        series_type = str(node.get("type") or "").lower()
+        data = node.get("data")
+        point_count = len(data) if isinstance(data, (list, tuple)) else 0
+
+        if series_type == "bar":
+            if node.get("barWidth") is None:
+                _set_missing(node, "barMaxWidth", 42)
+            _polish_label(
+                node,
+                series_type=series_type,
+                point_count=point_count,
+                series_count=series_count,
+                dark=dark,
+                horizontal_bar=horizontal_bar,
+                stacked=bool(node.get("stack")),
+            )
+        elif series_type == "line":
+            line_style = _ensure_dict(node, "lineStyle")
+            if line_style is not None:
+                _set_missing(line_style, "width", 2)
+            if point_count > 30:
+                # pyecharts 默认 showSymbol=True，点多时必须显式关掉
+                node["showSymbol"] = False
+            _polish_label(
+                node,
+                series_type=series_type,
+                point_count=point_count,
+                series_count=series_count,
+                dark=dark,
+                horizontal_bar=horizontal_bar,
+                stacked=False,
+            )
+        elif series_type in {"scatter", "effectscatter"}:
+            _set_missing(node, "symbolSize", 10)
+            _polish_label(
+                node,
+                series_type=series_type,
+                point_count=point_count,
+                series_count=series_count,
+                dark=dark,
+                horizontal_bar=horizontal_bar,
+                stacked=False,
+            )
+        elif series_type == "pie":
+            legends = list(_iter_dicts(options.get("legend")))
+            legend_on_right = any(
+                str(node_.get("orient") or "").lower() == "vertical"
+                and (
+                    node_.get("right") is not None
+                    or str(node_.get("left") or "").lower() in {"right", "90%"}
+                )
+                for node_ in legends
+            )
+            default_radius = ["0%", "75%"]
+            if node.get("radius") is None or node.get("radius") == default_radius:
+                node["radius"] = ["30%", "58%"] if legend_on_right else ["32%", "58%"]
+            default_center = ["50%", "50%"]
+            if node.get("center") is None or node.get("center") == default_center:
+                node["center"] = ["45%", "55%"] if legend_on_right else ["50%", "55%"]
+            _set_missing(node, "avoidLabelOverlap", True)
+            _polish_label(
+                node,
+                series_type=series_type,
+                point_count=point_count,
+                series_count=series_count,
+                dark=dark,
+                horizontal_bar=horizontal_bar,
+                stacked=False,
+            )
+
+
+def polish_options(
+    options: dict[str, Any],
+    *,
+    width: int | float | str | None = None,
+    dark: bool = False,
+) -> dict[str, Any]:
+    """对 pyecharts 的 options dict 做幂等的视觉润色。
+
+    内部先深拷贝（pyecharts 的默认 LabelOpts 等可能跨图共享），完成后写回原 dict，
+    因此调用方可以继续使用 ``chart.options``。
+
+    Args:
+        options: ``chart.options``（原地更新，但不会污染其他图表的共享默认值）
+        width: 图表宽度，支持 ``"900px"`` / 900；缺省按 900 估算
+        dark: 是否深色主题（影响文字颜色）
+
+    Returns:
+        同一个 options dict，便于链式调用
+    """
+    if not isinstance(options, dict):
+        return options
+
+    # pyecharts 的默认 LabelOpts / SplitLineOpts 等可能被多张图共享，
+    # 直接改 opts 会让上一张图的颜色/位置泄漏到下一张图。这里先深拷贝，
+    # 润色完再把唯一副本写回原 dict，既保持原地修改语义又不污染共享默认值。
+    original = options
+    options = copy.deepcopy(options)
+
+    width_px = _parse_width(width)
+
+    # 1. 统一调色板（用户显式 set_colors 时保留）
+    if not options.get("color"):
+        options["color"] = list(PALETTE)
+
+    series_nodes = _series(options)
+    grids = list(_iter_dicts(options.get("grid")))
+    multi_grid = len(grids) > 1
+
+    # 2. 标题 / 图例排版
+    _polish_title(options, dark=dark, width=width_px, multi_grid=multi_grid)
+    _polish_legend(options, dark=dark)
+    if _should_move_legend_bottom(options, width=width_px, series=series_nodes):
+        legends = list(_iter_dicts(options.get("legend")))
+        if legends:
+            legend = legends[0]
+            legend["top"] = None
+            legend["bottom"] = "2%"
+            legend["left"] = "center"
+            legend["right"] = None
+            legend["orient"] = "horizontal"
+
+    # 3. 布局 / 坐标轴 / tooltip / series
+    _polish_grid(options)
+    _polish_axes(options, dark=dark, width=width_px)
+    _polish_tooltip(options, dark=dark)
+    _polish_series(options, dark=dark)
+
+    original.clear()
+    original.update(options)
+    return original
+
+
+def polish_chart(chart: Any) -> bool:
+    """在 chart.render() 前润色 ``chart.options``。
+
+    Returns:
+        True 表示本次执行了润色；同一 chart 重复 render 时返回 False。
+    """
+    if getattr(chart, "_datavis_polished", False):
+        return False
+    options = getattr(chart, "options", None)
+    if not isinstance(options, dict):
+        return False
+
+    theme = str(getattr(chart, "theme", "") or "").lower()
+    polish_options(
+        options,
+        width=getattr(chart, "width", None),
+        dark="dark" in theme,
+    )
+    try:
+        setattr(chart, "_datavis_polished", True)
+    except Exception:
+        pass
+    return True

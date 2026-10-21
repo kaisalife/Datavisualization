@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from service.data_ingestion.series.shape import format_shape_summary, suggest_chart_types
+
 
 @dataclass
 class SemanticSeries:
@@ -68,24 +70,38 @@ class SeriesCatalog:
         return seen
 
     # ---- prompt 索引（给计划 agent 看的精简视图） ----
-    def to_index_list(self) -> list[dict[str, str]]:
-        """输出 [source_table, series_id, axis_kind, description] 索引。"""
-        return [
-            {
+    def to_index_list(self) -> list[dict[str, Any]]:
+        """输出 series 索引（含数据形态与建议图表类型）。
+
+        老 manifest 没有 shape 时只给 axis_kind 级建议；新 manifest 由
+        splitter 在落盘时写入 extra_semantics.shape，规划阶段无需再读 parquet。
+        """
+        items: list[dict[str, Any]] = []
+        for s in self.series:
+            shape = (s.extra_semantics or {}).get("shape") or {}
+            recommended, alternatives, _reason = suggest_chart_types(s.axis_kind, shape)
+            items.append({
                 "source_table": s.source_table,
                 "series_id": s.series_id,
                 "axis_kind": s.axis_kind,
                 "description": s.description,
-            }
-            for s in self.series
-        ]
+                "shape": format_shape_summary(shape) if shape else "",
+                "suggested": "/".join(recommended),
+                "alternatives": "/".join(alternatives),
+            })
+        return items
 
     def to_index_prompt(self) -> str:
         """索引的可读文本形式（注入 plan prompt 用）。"""
         lines = ["可用数据系列（series）:"]
         for item in self.to_index_list():
+            shape = f"；{item['shape']}" if item.get("shape") else ""
+            advice = f"；建议 {item['suggested']}" if item.get("suggested") else ""
+            if item.get("alternatives"):
+                advice += f"（备选 {item['alternatives']}）"
             lines.append(
-                f"  - {item['series_id']} [{item['axis_kind']}]: {item['description']}"
+                f"  - {item['series_id']} [{item['axis_kind']}{shape}]: "
+                f"{item['description']}{advice}"
             )
         return "\n".join(lines)
 

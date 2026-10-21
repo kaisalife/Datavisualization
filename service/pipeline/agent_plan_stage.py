@@ -13,6 +13,7 @@ from typing import Any
 from prompts.agent_planning_prompt import build_planning_prompt
 from service.monitoring.stage_timer import stage_timer
 from service.observability import get_logger
+from service.pipeline.chart_recommend import diversify_plans
 from service.pipeline.plan_state import PlanSessionState
 from service.pipeline.plan_toolpool import build_plan_tool_pool
 
@@ -100,10 +101,16 @@ async def run_plan_stage(
     if catalog is None or not catalog.series:
         agent_logs.append("⚠️ 无系列目录，回退旧规划路径")
         plans = await _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs)
+        plans = diversify_plans(plans, catalog, model_.user_prompt, agent_logs)
         _persist_plans(plans, output_folder, agent_logs)
         return plans
 
-    state = PlanSessionState(catalog=catalog, agent_logs=agent_logs, profile=profile)
+    state = PlanSessionState(
+        catalog=catalog,
+        agent_logs=agent_logs,
+        profile=profile,
+        user_prompt=model_.user_prompt,
+    )
     try:
         tools = build_plan_tool_pool(state)
         message = build_planning_prompt().invoke({
@@ -122,6 +129,7 @@ async def run_plan_stage(
         logger.warning("plan agent 会话异常，回退旧路径", error=str(e))
         agent_logs.append(f"⚠️ plan agent 会话失败({e})，回退旧规划路径")
         plans = await _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs)
+        plans = diversify_plans(plans, catalog, model_.user_prompt, agent_logs)
         _persist_plans(plans, output_folder, agent_logs)
         return plans
 
@@ -133,6 +141,7 @@ async def run_plan_stage(
         agent_logs.append("⚠️ agent 未提交有效 plan，回退旧规划路径")
         plans = await _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs)
 
+    plans = diversify_plans(plans, catalog, model_.user_prompt, agent_logs)
     _persist_plans(plans, output_folder, agent_logs)
     return plans
 

@@ -20,6 +20,7 @@ class PlanSessionState:
     catalog: SeriesCatalog
     agent_logs: list
     profile: Any = None
+    user_prompt: str = ""
     plans: list[dict] = field(default_factory=list)
     dropped: list[dict] = field(default_factory=list)
     tried: dict = field(default_factory=dict)
