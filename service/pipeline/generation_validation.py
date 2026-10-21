@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from service.observability import get_logger
-from service.pipeline.chart_data_check import chart_data_issues
+from service.pipeline.chart_data_check import chart_data_issues, chart_type_mismatch
 
 logger = get_logger(__name__)
 
@@ -36,6 +36,7 @@ _ERROR_HINTS = {
     "CHART_DATA_ALL_NULL": "检查 y_axis 列是否全为空值，必要时清洗或改用其他指标",
     "CHART_DATA_MOSTLY_EMPTY": "图表过半数据点为空，检查筛选条件或缺失值处理",
     "CHART_DATA_ALL_ZERO": "所有数值都是 0，确认筛选/聚合结果是否符合预期",
+    "CHART_TYPE_MISMATCH": "生成代码应严格使用 plan.chart_type；Histogram 用 Bar、Area 用 Line 是允许的",
     "CODE_RUNTIME_ERROR": "查看完整 traceback，定位失败步骤后修复",
 }
 
@@ -190,6 +191,7 @@ def runtime_report(
     chart_path: str | Path = "",
     warnings: list | None = None,
     data_stats: dict | None = None,
+    chart_type: str = "",
 ) -> dict[str, Any]:
     """构建一次运行/产物校验报告。"""
     report = new_report(stage="runtime", attempt=attempt)
@@ -218,6 +220,9 @@ def runtime_report(
                 )
             else:
                 add_warning(report, issue["code"], issue["message"])
+        mismatch = chart_type_mismatch(data_stats, chart_type)
+        if mismatch:
+            add_warning(report, mismatch["code"], mismatch["message"])
     for warning in warnings or []:
         add_warning(report, "GENERATION_WARNING", warning)
     return report

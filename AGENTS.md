@@ -239,6 +239,8 @@ $env:BACKEND_URL="http://localhost:5000"
   触发 debug 重试，不会静默产出空图）；
 - 过半数据点为空 -> `CHART_DATA_MOSTLY_EMPTY`（警告）；
 - 所有数值都等于 0 -> `CHART_DATA_ALL_ZERO`（警告，不阻断）；
+- 实际 series 类型偏离 `plan.chart_type` -> `CHART_TYPE_MISMATCH`（警告；Histogram→bar、
+  Area→line、Scatter→effectscatter 等别名不算偏离）；
 - 使用 `dataset` 的图表跳过空数据判断，避免误伤。
 
 统计摘要写入 `report["data"]`。回归：`tests/test_chart_data_check.py`、

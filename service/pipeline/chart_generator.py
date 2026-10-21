@@ -227,6 +227,7 @@ async def generate_single_chart(
             report = gv.runtime_report(
                 ok=True, attempt=attempts, chart_path=result.chart_path,
                 data_stats=getattr(result, "data_stats", None),
+                chart_type=plan_get(plan, "chart_type", ""),
             )
             if report["ok"]:
                 # 产物落盘：注入版自包含代码（拷走 py + 对应 series .parquet 即可独立运行）

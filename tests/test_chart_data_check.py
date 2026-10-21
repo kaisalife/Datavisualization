@@ -8,6 +8,7 @@ import pytest
 from service.pipeline import generation_validation as gv
 from service.pipeline.chart_data_check import (
     chart_data_issues,
+    chart_type_mismatch,
     summarize_chart_options,
 )
 from service.pipeline.chart_sandbox import execute_chart_code
@@ -82,6 +83,20 @@ def test_all_zero_and_mostly_empty_are_warnings():
     assert chart_data_issues(mostly_empty)[0]["code"] == "CHART_DATA_MOSTLY_EMPTY"
 
 
+def test_chart_type_mismatch_allows_documented_aliases():
+    bar = summarize_chart_options({"series": [{"type": "bar", "data": [1]}]})
+    line = summarize_chart_options({"series": [{"type": "line", "data": [1]}]})
+    treemap = summarize_chart_options({"series": [{"type": "treemap", "data": [1]}]})
+
+    assert chart_type_mismatch(bar, "Histogram") is None
+    assert chart_type_mismatch(line, "Area") is None
+    assert chart_type_mismatch(treemap, "Treemap") is None
+
+    mismatch = chart_type_mismatch(bar, "Line")
+    assert mismatch["code"] == "CHART_TYPE_MISMATCH"
+    assert "Line" in mismatch["message"]
+
+
 def test_dataset_charts_are_not_treated_as_empty():
     stats = summarize_chart_options({"dataset": {"source": []}, "series": []})
     assert stats["has_dataset"] is True
@@ -104,6 +119,19 @@ def test_runtime_report_adds_data_errors_and_warnings(tmp_path: Path):
     assert empty_report["data"]["total_points"] == 0
     assert zero_report["ok"] is True
     assert zero_report["warnings"][0]["code"] == "CHART_DATA_ALL_ZERO"
+
+
+def test_runtime_report_warns_on_chart_type_mismatch(tmp_path: Path):
+    html = tmp_path / "chart.html"
+    html.write_text("<html><script>echarts.init(el)</script></html>", encoding="utf-8")
+    stats = summarize_chart_options({"series": [{"type": "bar", "data": [1, 2]}]})
+
+    report = gv.runtime_report(
+        ok=True, attempt=1, chart_path=html, data_stats=stats, chart_type="Line"
+    )
+
+    assert report["ok"] is True
+    assert report["warnings"][0]["code"] == "CHART_TYPE_MISMATCH"
 
 
 def test_sandbox_captures_data_stats(tmp_path: Path):

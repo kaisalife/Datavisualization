@@ -13,6 +13,29 @@ from typing import Any, Iterator
 
 STATS_PREFIX = "__CHART_DATA_STATS__"
 
+# plan.chart_type -> 允许实际出现的 ECharts series 类型（大小写/分隔符已归一）
+_EXPECTED_SERIES_TYPES = {
+    "line": {"line"},
+    "area": {"line"},
+    "bar": {"bar", "pictorialbar"},
+    "histogram": {"bar"},
+    "pie": {"pie"},
+    "scatter": {"scatter", "effectscatter"},
+    "boxplot": {"boxplot"},
+    "heatmap": {"heatmap"},
+    "treemap": {"treemap"},
+    "radar": {"radar"},
+    "funnel": {"funnel"},
+    "gauge": {"gauge"},
+    "candlestick": {"candlestick", "kline"},
+    "wordcloud": {"wordcloud"},
+    "graph": {"graph"},
+    "parallel": {"parallel"},
+    "sankey": {"sankey"},
+    "themeriver": {"themeriver"},
+    "sunburst": {"sunburst"},
+}
+
 
 def _is_missing(value: Any) -> bool:
     """None / NaN / 空字符串视为空值；0 是有效数值。"""
@@ -148,3 +171,35 @@ def chart_data_issues(summary: dict[str, Any] | None) -> list[dict[str, Any]]:
             "message": "图表所有数值都是 0，请确认数据筛选或聚合是否正确",
         })
     return issues
+
+
+def normalize_series_type(value: Any) -> str:
+    """把 Line / themeRiver / theme_river 归一成小写无分隔形式。"""
+    return str(value or "").strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+
+
+def chart_type_mismatch(
+    summary: dict[str, Any] | None,
+    chart_type: str,
+) -> dict[str, Any] | None:
+    """计划类型与 HTML 中实际 series 类型不一致时给出警告。"""
+    if not isinstance(summary, dict):
+        return None
+    expected = _EXPECTED_SERIES_TYPES.get(normalize_series_type(chart_type))
+    actual = {
+        normalize_series_type(item) for item in (summary.get("types") or [])
+        if normalize_series_type(item)
+    }
+    if not expected or not actual:
+        return None
+    unexpected = sorted(actual - expected)
+    if not unexpected:
+        return None
+    return {
+        "code": "CHART_TYPE_MISMATCH",
+        "severity": "warning",
+        "message": (
+            f"计划类型为 {chart_type}，实际图表 series 为 "
+            f"{', '.join(sorted(actual))}；请确认是否偏离计划"
+        ),
+    }
