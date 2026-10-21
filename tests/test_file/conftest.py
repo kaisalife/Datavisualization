@@ -7,22 +7,43 @@
 """
 from __future__ import annotations
 
+import json
 import os
+import uuid
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
+
+
+def _llm_env() -> tuple[str, str, str, str]:
+    """读取真实模型配置：项目 .env 优先，tests/.env 的 TEST_LLM_* 兜底。"""
+    load_dotenv()
+    base_url = os.getenv("BASE_URL", "")
+    api_key = os.getenv("API_KEY", "")
+    model = os.getenv("MODEL_NAME", "")
+    session = ""
+    if not all((base_url, api_key, model)):
+        test_env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
+        base_url = base_url or (test_env.get("TEST_LLM_BASE_URL") or "")
+        api_key = api_key or (test_env.get("TEST_LLM_API_KEY") or "")
+        model = model or (test_env.get("TEST_LLM_MODEL") or "")
+        session = (test_env.get("TEST_LLM_SESSION") or "").strip()
+    if "opencode.ai" in base_url:
+        session = session or str(uuid.uuid4())
+    return base_url, api_key, model, session
 
 
 @pytest.fixture(scope="session")
 async def real_agent():
     """真实 BaseAgent（.env 模型，mcp_config 空跳过 MCP，本地工具池可用）。"""
-    load_dotenv()
-    base_url = os.getenv("BASE_URL", "")
-    api_key = os.getenv("API_KEY", "")
-    model = os.getenv("MODEL_NAME", "")
+    base_url, api_key, model, session = _llm_env()
     if not all((base_url, api_key, model)):
         pytest.skip(".env 未配置 BASE_URL/API_KEY/MODEL_NAME")
+
+    # opencode 网关要求每次请求带 x-opencode-session；BaseAgent 通过该环境变量注入
+    if session and not os.getenv("LLM_EXTRA_HEADERS"):
+        os.environ["LLM_EXTRA_HEADERS"] = json.dumps({"x-opencode-session": session})
 
     from agent import BaseAgent
 
@@ -47,14 +68,19 @@ class _ChatAdapter:
 @pytest.fixture(scope="session")
 def real_chat():
     """真实模型 chat（.env 未配置则跳过）。"""
-    base_url = os.getenv("BASE_URL", "")
-    api_key = os.getenv("API_KEY", "")
-    model = os.getenv("MODEL_NAME", "")
+    base_url, api_key, model, session = _llm_env()
     if not all((base_url, api_key, model)):
         pytest.skip(".env 未配置 BASE_URL/API_KEY/MODEL_NAME")
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(base_url=base_url, api_key=api_key, model=model, temperature=0)
+    headers = {"x-opencode-session": session} if session else None
+    llm = ChatOpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        temperature=0,
+        default_headers=headers,
+    )
     return _ChatAdapter(llm)
 
 

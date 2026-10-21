@@ -114,6 +114,16 @@ X-API-Key: <your_key>
 | `raw` | object | 完整 successful_charts / failed_plans 列表 |
 | `created_at` | string | ISO 时间戳（任务表回收依据） |
 
+`result` 中的主要字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `Charts` | string[] | 图表类型，与 `HtmlFilePaths` 一一对应 |
+| `HtmlFilePaths` | string[] | 生成的 HTML 文件名 |
+| `AgentLogs` | string[] | 执行日志 |
+| `Codes` | string[] | 自包含生成代码，与图表一一对应 |
+| `ContextCards` | object[] | 需求 / 数据 / 计划 / 校验 / 产物卡片；含 `assumptions`、`ambiguities` 与生成校验摘要 |
+
 任务表只保留终态任务一段时间，避免服务长期运行内存膨胀：
 
 | 环境变量 | 默认值 | 说明 |

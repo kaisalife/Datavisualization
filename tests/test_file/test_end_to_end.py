@@ -63,3 +63,14 @@ async def test_end_to_end(real_agent, normal_csv: Path, tmp_path: Path):
 
     # 4. manifest.json 落盘于会话目录（阶段1 产物）
     assert (Path(profile.session_dir) / "manifest.json").exists()
+
+    # 5. 上下文卡片与生成校验报告（本次设计新增契约）
+    cards = result.get("context_cards") or []
+    kinds = {card.get("kind") for card in cards}
+    assert {"request", "data", "plan", "validation", "artifact"} <= kinds
+    assert (tmp_path / "plans" / "context_cards.json").exists()
+    for chart in result["successful_charts"]:
+        generation = chart.get("generation") or {}
+        assert generation.get("ok") is True
+        assert generation.get("validation", {}).get("ok") is True
+        assert (tmp_path / "plans" / f"generation_{generation['plan_id']}.json").exists()
