@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from agent import BaseAgent
@@ -16,6 +17,7 @@ from service.data_ingestion.series import load_series_df, series_snippet
 from service.data_ingestion.series.models import SeriesCatalog
 from service.monitoring import trace
 from service.observability import get_logger
+from service.pipeline import generation_validation as gv
 from service.pipeline.chart_rag import retrieve_reference_docs
 from service.pipeline.chart_sandbox import _RENDER_HEADER, execute_chart_code  # noqa: F401  向后兼容旧 import
 from service.runtime.utils import extract_code_from_response
@@ -59,12 +61,44 @@ async def _invoke_llm(engine, chat: BaseAgent, prompt, input_data: dict) -> str:
     return response["content"] if isinstance(response, dict) else str(response)
 
 
-def _save_code(code_folder: Path, plan_id: str, suffix: str, code: str) -> None:
+def _save_code(code_folder: Path, plan_id: str, suffix: str, code: str) -> Path:
     """落盘代码文件（success/failed/rejected 命名契约）。"""
     code_file = code_folder / f"code_{plan_id}_{suffix}.py"
     with open(code_file, "w", encoding="utf-8") as f:
         f.write(code)
     logger.info("代码已保存", code_file=str(code_file), suffix=suffix)
+    return code_file
+
+
+def _finalize_generation(
+    plan: dict,
+    output_folder: Path,
+    *,
+    plan_id: str,
+    ok: bool,
+    attempts: int,
+    started_at: float,
+    code_path: str = "",
+    html_path: str = "",
+    report: dict | None = None,
+) -> dict:
+    """构建并落盘 GenerationResult，同时写回 plan["generation"]。"""
+    result = gv.build_generation_result(
+        plan_id=plan_id,
+        ok=ok,
+        attempts=attempts,
+        duration_ms=(time.perf_counter() - started_at) * 1000,
+        code_path=code_path,
+        html_path=html_path,
+        report=report,
+    )
+    plan["generation"] = result
+    try:
+        gv.write_generation_result(output_folder, result)
+    except Exception as e:
+        # 生成结果落盘失败不能掩盖图表本身的结果
+        logger.warning("GenerationResult 落盘失败", plan_id=plan_id, error=str(e))
+    return result
 
 
 @trace(category="chart_gen")
@@ -101,7 +135,7 @@ async def generate_single_chart(
     code_folder = output_folder / "code"
     charts_folder = output_folder / "charts"
     for folder in (plans_folder, code_folder, charts_folder):
-        folder.mkdir(exist_ok=True)
+        folder.mkdir(parents=True, exist_ok=True)
     with open(plans_folder / f"plan_{plan_id}.json", "w", encoding="utf-8") as f:
         json.dump(plan, f, ensure_ascii=False, indent=2)
 
@@ -123,8 +157,10 @@ async def generate_single_chart(
     final_code = ""
     code = ""
     last_error = ""
+    started_at = time.perf_counter()
 
     for attempt in range(max_retries):
+        attempts = attempt + 1
         if engine and engine.aborted:
             logger.warning("QueryEngine 已中止，停止生成")
             break
@@ -160,9 +196,16 @@ async def generate_single_chart(
 
         if not final_code.strip():
             last_error = "LLM 未返回有效代码（提取到空代码块）"
-            logger.warning("代码为空，跳过执行", attempt=attempt + 1)
+            logger.warning("代码为空，跳过执行", attempt=attempts)
+            code_path = ""
             if attempt >= max_retries - 1:
-                _save_code(code_folder, plan_id, "failed", final_code)
+                code_path = str(_save_code(code_folder, plan_id, "failed", final_code))
+            report = gv.runtime_report(ok=False, attempt=attempts, error=last_error)
+            _finalize_generation(
+                plan, output_folder,
+                plan_id=plan_id, ok=False, attempts=attempts, started_at=started_at,
+                code_path=code_path, report=report,
+            )
             continue
 
         # 守护层拼接：read_code（真实 series 加载代码）+ LLM 代码（变换+绘图）
@@ -175,19 +218,53 @@ async def generate_single_chart(
         )
 
         if result.success:
-            # 产物落盘：注入版自包含代码（拷走 py + 对应 series .parquet 即可独立运行）
-            _save_code(code_folder, plan_id, "success", body)
-            logger.info("计划执行成功", plan_id=plan_id, chart_path=result.chart_path)
-            return True, result.chart_path, body, ""
+            report = gv.runtime_report(
+                ok=True, attempt=attempts, chart_path=result.chart_path,
+            )
+            if report["ok"]:
+                # 产物落盘：注入版自包含代码（拷走 py + 对应 series .parquet 即可独立运行）
+                code_path = str(_save_code(code_folder, plan_id, "success", body))
+                _finalize_generation(
+                    plan, output_folder,
+                    plan_id=plan_id, ok=True, attempts=attempts, started_at=started_at,
+                    code_path=code_path, html_path=result.chart_path, report=report,
+                )
+                logger.info("计划执行成功", plan_id=plan_id, chart_path=result.chart_path)
+                return True, result.chart_path, body, ""
+
+            # 执行成功但 HTML 不完整：当作可修复失败回喂 debug
+            last_error = gv.format_report_errors(report)
+            logger.error("产物校验失败", error=last_error)
+            code_path = str(_save_code(code_folder, plan_id, "failed", final_code))
+            _finalize_generation(
+                plan, output_folder,
+                plan_id=plan_id, ok=False, attempts=attempts, started_at=started_at,
+                code_path=code_path, html_path=result.chart_path, report=report,
+            )
+            if attempt >= max_retries - 1:
+                return False, "", final_code, last_error
+            continue
 
         last_error = result.output
         logger.error("执行失败", error=last_error)
+        report = gv.runtime_report(ok=False, attempt=attempts, error=last_error)
+        code_path = ""
 
         # 沙箱静态拒绝（AST 安全检查）不适合走 debug，debug 也改不了规则
         if "安全检查失败" in last_error:
-            _save_code(code_folder, plan_id, "rejected", final_code)
+            code_path = str(_save_code(code_folder, plan_id, "rejected", final_code))
+            _finalize_generation(
+                plan, output_folder,
+                plan_id=plan_id, ok=False, attempts=attempts, started_at=started_at,
+                code_path=code_path, report=report,
+            )
             break
         if attempt >= max_retries - 1:
-            _save_code(code_folder, plan_id, "failed", final_code)
+            code_path = str(_save_code(code_folder, plan_id, "failed", final_code))
+        _finalize_generation(
+            plan, output_folder,
+            plan_id=plan_id, ok=False, attempts=attempts, started_at=started_at,
+            code_path=code_path, report=report,
+        )
 
     return False, "", final_code, last_error

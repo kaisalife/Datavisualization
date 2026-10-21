@@ -165,18 +165,30 @@ async def execute_chart_plans(
             failed_plans.append({"plan": {}, "error": f"gather 异常: {res}"})
             continue
         plan_item, success, chart_path, code, error = res
+        generation = plan_item.get("generation", {}) if isinstance(plan_item, dict) else {}
+        validation = generation.get("validation", {}) if isinstance(generation, dict) else {}
         if success and chart_path:
             successful_charts.append({
                 "plan": plan_item,
                 "chart_path": chart_path,
                 "code": code,
+                "generation": generation,
+                "validation": validation,
             })
         else:
             failed_plans.append({
                 "plan": plan_item,
                 "error": error,
+                "generation": generation,
+                "validation": validation,
             })
     return successful_charts, failed_plans
+
+
+def _validation_codes(item: dict) -> list[str]:
+    """从生成结果里提取错误码，用于日志和前端摘要。"""
+    report = item.get("validation") or {}
+    return [str(e.get("code")) for e in report.get("errors", []) if e.get("code")]
 
 
 def log_execution_summary(successful_charts: list, failed_plans: list, agent_logs: list):
@@ -199,5 +211,12 @@ def log_execution_summary(successful_charts: list, failed_plans: list, agent_log
         logger.warning("失败的计划列表", count=len(failed_plans))
         for idx, item in enumerate(failed_plans, 1):
             plan_name = plan_get(item["plan"], "plan_name", "unknown") if item["plan"] else "unknown"
-            logger.warning("失败计划", index=idx, plan_name=plan_name, error=str(item["error"])[:100])
-            agent_logs.append(f"  ❌ 计划 {idx}: {plan_name} 失败: {item['error'][:100]}")
+            codes = _validation_codes(item)
+            code_text = f" [{', '.join(codes)}]" if codes else ""
+            logger.warning(
+                "失败计划", index=idx, plan_name=plan_name,
+                error=str(item["error"])[:100], error_codes=codes,
+            )
+            agent_logs.append(
+                f"  ❌ 计划 {idx}: {plan_name} 失败{code_text}: {item['error'][:100]}"
+            )

@@ -151,12 +151,27 @@ async def run_agent_pipeline(
         except Exception as e:
             success, chart_path, code, error = False, "", "", f"generate_single_chart 异常: {e}"
 
+        generation = plan_item.get("generation", {}) if isinstance(plan_item, dict) else {}
+        validation = generation.get("validation", {}) if isinstance(generation, dict) else {}
         if success and chart_path:
-            successful_charts.append({"plan": plan_item, "chart_path": chart_path, "code": code})
+            successful_charts.append({
+                "plan": plan_item,
+                "chart_path": chart_path,
+                "code": code,
+                "generation": generation,
+                "validation": validation,
+            })
             agent_logs.append(f"✅ plan {idx + 1} 成功: {chart_path}")
         else:
-            failed_plans.append({"plan": plan_item, "error": error})
-            agent_logs.append(f"❌ plan {idx + 1} 失败: {(error or '未知')[:100]}")
+            failed_plans.append({
+                "plan": plan_item,
+                "error": error,
+                "generation": generation,
+                "validation": validation,
+            })
+            codes = [e.get("code") for e in validation.get("errors", []) if e.get("code")]
+            code_text = f" [{', '.join(codes)}]" if codes else ""
+            agent_logs.append(f"❌ plan {idx + 1} 失败{code_text}: {(error or '未知')[:100]}")
 
     return {
         "successful_charts": successful_charts,
