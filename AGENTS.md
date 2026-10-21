@@ -228,6 +228,22 @@ $env:BACKEND_URL="http://localhost:5000"
   多张图共享，直接改会让上一张图的颜色/位置泄漏到下一张图；深拷贝后再写回原 `chart.options`
 - 回归：`tests/test_chart_polish.py`（含渲染链路 HTML 断言）；改规则要同时改 prompt 和该测试
 
+### 图表数据检查（渲染后、成功前）
+
+`service/pipeline/chart_data_check.py` 在 `chart_sandbox` 的 render monkey-patch 中读取
+`chart.options`，统计每个 series 的数据点数/空值/数值/0 值，用 `__CHART_DATA_STATS__` 标记
+经 stdout 回传，父进程剥离标记后放进 `SandboxResult.data_stats`。`generation_validation.runtime_report`
+再据此判断：
+
+- series 缺失、0 个数据点、全部为空 -> `CHART_DATA_EMPTY` / `CHART_DATA_ALL_NULL`（可修复错误，
+  触发 debug 重试，不会静默产出空图）；
+- 过半数据点为空 -> `CHART_DATA_MOSTLY_EMPTY`（警告）；
+- 所有数值都等于 0 -> `CHART_DATA_ALL_ZERO`（警告，不阻断）；
+- 使用 `dataset` 的图表跳过空数据判断，避免误伤。
+
+统计摘要写入 `report["data"]`。回归：`tests/test_chart_data_check.py`、
+`tests/test_generation_validation.py`。**不要**在沙箱里用 HTML 正则猜数据，options 才是真相。
+
 ## 图表类型选择（数据驱动，避免每回柱状图）
 
 默认 `viz_mode=agent/auto` 走 `prompts/agent_planning_prompt.py`。图表类型不再只靠模型自由发挥：

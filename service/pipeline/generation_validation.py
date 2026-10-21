@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from service.observability import get_logger
+from service.pipeline.chart_data_check import chart_data_issues
 
 logger = get_logger(__name__)
 
@@ -31,6 +32,10 @@ _ERROR_HINTS = {
     "CODE_SECURITY_REJECTED": "移除文件写入/网络/危险调用；这是不可自动修复的静态拒绝",
     "CODE_HTML_MISSING": "确认代码调用了 render()，且 pyecharts 图表对象正确",
     "CODE_HTML_INVALID": "确认 render 产物是完整 HTML，包含 ECharts 容器",
+    "CHART_DATA_EMPTY": "检查数据筛选、聚合与列名，确认 series 至少有一个数据点",
+    "CHART_DATA_ALL_NULL": "检查 y_axis 列是否全为空值，必要时清洗或改用其他指标",
+    "CHART_DATA_MOSTLY_EMPTY": "图表过半数据点为空，检查筛选条件或缺失值处理",
+    "CHART_DATA_ALL_ZERO": "所有数值都是 0，确认筛选/聚合结果是否符合预期",
     "CODE_RUNTIME_ERROR": "查看完整 traceback，定位失败步骤后修复",
 }
 
@@ -184,6 +189,7 @@ def runtime_report(
     error: str = "",
     chart_path: str | Path = "",
     warnings: list | None = None,
+    data_stats: dict | None = None,
 ) -> dict[str, Any]:
     """构建一次运行/产物校验报告。"""
     report = new_report(stage="runtime", attempt=attempt)
@@ -199,6 +205,19 @@ def runtime_report(
                 hint=issue.get("hint", ""),
                 repairable=issue.get("repairable", True),
             )
+    if data_stats:
+        report["data"] = data_stats
+        for issue in chart_data_issues(data_stats):
+            if issue.get("severity") == "error":
+                add_error(
+                    report,
+                    issue["code"],
+                    issue["message"],
+                    hint=_ERROR_HINTS.get(issue["code"], ""),
+                    repairable=True,
+                )
+            else:
+                add_warning(report, issue["code"], issue["message"])
     for warning in warnings or []:
         add_warning(report, "GENERATION_WARNING", warning)
     return report

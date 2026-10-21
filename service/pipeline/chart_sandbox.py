@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import datetime
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from agent_tools.sandbox import run_python_safely
 from service.observability import get_logger
+from service.pipeline.chart_data_check import STATS_PREFIX
 
 try:
     from pydantic import BaseModel, ConfigDict
@@ -32,6 +34,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 # LLM 生成代码中 chart.render(...) 的 path 会被强制重定向到
 # 环境变量 CHART_OUTPUT_DIR / CHART_OUTPUT_NAME 指定的位置。
 _RENDER_HEADER = '''# --- auto-injected by chart_sandbox (unified render path) ---
+import json as _json
 import os as _os
 from pathlib import Path as _Path
 
@@ -48,6 +51,16 @@ try:
         _polish_chart = None
         print(f"[chart_sandbox header] chart polish skipped: {_pe}")
 
+    try:
+        from service.pipeline.chart_data_check import (
+            STATS_PREFIX as _STATS_PREFIX,
+            summarize_chart_options as _summarize_chart_options,
+        )
+    except Exception as _de:
+        _STATS_PREFIX = ""
+        _summarize_chart_options = None
+        print(f"[chart_sandbox header] chart data check skipped: {_de}")
+
     _orig_render = _PyBase.render
 
     def _patched_render(self, *args, **kwargs):
@@ -57,6 +70,12 @@ try:
                 _polish_chart(self)
             except Exception as _e:
                 print(f"[chart_sandbox header] chart polish failed: {_e}")
+        if _summarize_chart_options is not None:
+            try:
+                _stats = _summarize_chart_options(getattr(self, "options", {}))
+                print(_STATS_PREFIX + _json.dumps(_stats, ensure_ascii=False))
+            except Exception as _e:
+                print(f"[chart_sandbox header] chart data summary failed: {_e}")
         target = _Path(_CHART_OUTPUT_DIR) / _CHART_OUTPUT_NAME
         # 丢弃 path 参数，统一改写为目标路径
         if args:
@@ -87,6 +106,7 @@ if BaseModel is not None:
         chart_path: str
         chart_filename: str
         parse_seconds: float = 0.0
+        data_stats: dict | None = None
 
         def __init__(
             self,
@@ -95,6 +115,7 @@ if BaseModel is not None:
             chart_path: str,
             chart_filename: str,
             parse_seconds: float = 0.0,
+            data_stats: dict | None = None,
         ) -> None:
             super().__init__(
                 success=success,
@@ -102,16 +123,38 @@ if BaseModel is not None:
                 chart_path=chart_path,
                 chart_filename=chart_filename,
                 parse_seconds=parse_seconds,
+                data_stats=data_stats,
             )
 else:
     class SandboxResult:  # type: ignore[no-redef]
         """Pydantic 不可用时的回退实现（不推荐，结构不一致）。"""
-        def __init__(self, success, output, chart_path, chart_filename, parse_seconds=0.0):
+        def __init__(
+            self, success, output, chart_path, chart_filename,
+            parse_seconds=0.0, data_stats=None,
+        ):
             self.success = success
             self.output = output
             self.chart_path = chart_path
             self.chart_filename = chart_filename
             self.parse_seconds = parse_seconds
+            self.data_stats = data_stats or {}
+
+
+def _consume_stdout(stdout: str) -> tuple[str, dict | None]:
+    """从沙箱 stdout 中剥离数据统计标记，返回可见输出和统计摘要。"""
+    visible: list[str] = []
+    stats: dict | None = None
+    for line in str(stdout or "").splitlines():
+        if line.startswith(STATS_PREFIX):
+            try:
+                parsed = json.loads(line[len(STATS_PREFIX):])
+                if isinstance(parsed, dict):
+                    stats = parsed
+            except (TypeError, ValueError):
+                visible.append(line)
+            continue
+        visible.append(line)
+    return "\n".join(visible), stats
 
 
 def execute_chart_code(
@@ -152,7 +195,7 @@ def execute_chart_code(
             extra_pythonpath=str(PROJECT_ROOT),
         )
         if proc.success:
-            output = proc.stdout
+            output, data_stats = _consume_stdout(proc.stdout)
             logger.info("沙箱执行成功", output=output)
         else:
             output = f"Error: {proc.error}" if proc.error else f"Error:\nStderr: {proc.stderr}\nStdout: {proc.stdout}"
@@ -184,6 +227,8 @@ def execute_chart_code(
     if not Path(chart_path).exists() or Path(chart_path).stat().st_size == 0:
         return SandboxResult(
             False, f"{output}\nHTML 未生成或为空（{chart_path}，代码可能未调用 render）",
-            chart_path, chart_filename,
+            chart_path, chart_filename, data_stats=data_stats,
         )
-    return SandboxResult(True, output, chart_path, chart_filename)
+    return SandboxResult(
+        True, output, chart_path, chart_filename, data_stats=data_stats
+    )

@@ -30,14 +30,18 @@ def _plan() -> dict:
     }
 
 
-def _fake_execute_factory(*, ok: bool, html: str = "", error: str = ""):
+def _fake_execute_factory(
+    *, ok: bool, html: str = "", error: str = "", data_stats: dict | None = None,
+):
     def _fake(body, *, charts_folder: Path, plan_id: str):
         if not ok:
             return SandboxResult(False, error, "", f"chart_{plan_id}.html")
         charts_folder.mkdir(parents=True, exist_ok=True)
         path = charts_folder / f"chart_{plan_id}.html"
         path.write_text(html, encoding="utf-8")
-        return SandboxResult(True, "ok", str(path), path.name)
+        return SandboxResult(
+            True, "ok", str(path), path.name, data_stats=data_stats
+        )
 
     return _fake
 
@@ -134,6 +138,49 @@ async def test_generate_single_chart_rejects_empty_or_non_chart_html(
     assert success is False
     assert "CODE_HTML_INVALID" in error
     assert plan["generation"]["validation"]["errors"][0]["code"] == "CODE_HTML_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_generate_single_chart_fails_on_empty_chart_data(
+    tmp_path: Path, monkeypatch,
+):
+    monkeypatch.setattr(
+        "service.pipeline.chart_generator.execute_chart_code",
+        _fake_execute_factory(
+            ok=True,
+            html="<html><body><div id='c'></div><script>echarts.init(c)</script></body></html>",
+            data_stats={
+                "series_count": 1,
+                "types": ["bar"],
+                "total_points": 0,
+                "empty_points": 0,
+                "numeric_values": 0,
+                "zero_values": 0,
+                "has_dataset": False,
+                "series": [],
+            },
+        ),
+    )
+    plan = _plan()
+    output = tmp_path / "out"
+
+    success, chart_path, code, error = await generate_single_chart(
+        chat=_FakeChat(),
+        plan=plan,
+        data_file_path="",
+        data_preview="",
+        output_folder=output,
+        max_retries=1,
+    )
+
+    assert success is False
+    assert chart_path == ""
+    assert "CHART_DATA_EMPTY" in error
+    report = plan["generation"]["validation"]
+    assert report["ok"] is False
+    assert report["errors"][0]["code"] == "CHART_DATA_EMPTY"
+    assert report["errors"][0]["repairable"] is True
+    assert (output / "code" / "code_p1_failed.py").exists()
 
 
 def test_classify_runtime_error_has_stable_codes_and_repairability():
