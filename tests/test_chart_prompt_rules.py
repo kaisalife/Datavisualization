@@ -90,6 +90,7 @@ def test_designer_prompt_requires_varied_chart_types():
     """规划阶段要避免所有图都用 Bar，并给出图表选择口径。"""
     for keyword in (
         "时间序列且时间点 ≥3",
+        "7-20 个非负类别",
         "Top 10",
         "占比/构成",
         "同一 series",
@@ -104,6 +105,7 @@ def test_planning_agent_prompt_is_data_driven():
     for keyword in (
         "≥3 个时间点",
         "2-6 个非负类别",
+        "7-20 个非负类别",
         "同一 series + 同一指标",
         "画两个图",
         "趋势 / 对比 / 构成 / 分布 / 关系",
