@@ -64,7 +64,7 @@ function appendAiChartsMessage(parsed) {
   msg.innerHTML = '<div class="msg-avatar ai">📊</div>';
   msg.appendChild(content);
   area.appendChild(msg);
-  renderContextCards(msg.querySelector('.task-context'), parsed.contextCards || []);
+  renderContextCards(msg.querySelector('.task-context'), parsed.contextCards || [], { interactive: false });
   renderChartGrid(msg.querySelector('.task-charts'), parsed.items || []);
 }
 

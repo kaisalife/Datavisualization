@@ -75,7 +75,7 @@ window.app = {
     state.lastChartData = parsed;
     if (state.activeTaskEl) {
       const context = state.activeTaskEl.querySelector('.task-context');
-      if (context) renderContextCards(context, parsed.contextCards || []);
+      if (context) renderContextCards(context, parsed.contextCards || [], { interactive: true });
       const container = state.activeTaskEl.querySelector('.task-charts');
       if (container) renderChartGrid(container, parsed.items || []);
       const summary = state.activeTaskEl.querySelector('.task-summary');

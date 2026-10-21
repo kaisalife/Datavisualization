@@ -68,8 +68,9 @@ function contextKindMeta(kind) {
   return map[kind] || { icon: '•', label: '信息' };
 }
 
-function renderContextCards(container, cards) {
+function renderContextCards(container, cards, options) {
   if (!container) return;
+  const interactive = !options || options.interactive !== false;
   container.innerHTML = '';
   if (!cards || cards.length === 0) {
     container.style.display = 'none';
@@ -126,6 +127,7 @@ function renderContextCards(container, cards) {
       el.appendChild(list);
     }
     if (
+      interactive &&
       card.kind === 'plan' &&
       card.meta &&
       Array.isArray(card.meta.clarification) &&
