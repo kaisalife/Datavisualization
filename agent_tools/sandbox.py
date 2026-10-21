@@ -143,6 +143,10 @@ def run_python_safely(
         )
 
     run_env = dict(env) if env else dict(os.environ)
+    # 子进程 stdout 默认跟随系统 locale（Windows 常是 GBK），父进程按 UTF-8 解码，
+    # 中文日志/图表数据摘要会变成替换字符。统一让沙箱解释器用 UTF-8 输出。
+    run_env["PYTHONIOENCODING"] = "utf-8"
+    run_env["PYTHONUTF8"] = "1"
     if extra_pythonpath:
         existing = run_env.get("PYTHONPATH", "")
         run_env["PYTHONPATH"] = f"{extra_pythonpath}{os.pathsep}{existing}" if existing else extra_pythonpath

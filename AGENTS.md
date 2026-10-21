@@ -536,7 +536,9 @@ runtime/charts/<首个上传文件 stem>/          # 可用 CHARTS_DIR 覆盖
 - `SERVICE_API_KEY` 为空 = 不鉴权；非空时请求需带 `X-API-Key`
 - **stdout 可能是 GBK**：服务输出重定向到文件/管道时 Python 按系统 locale 编码，日志或异常里一旦出现
   emoji/生僻字就 `UnicodeEncodeError`，任务直接失败。`app.py` 启动即调 `_force_utf8_stdio()` 把
-  stdout/stderr 切 UTF-8；服务代码里不要 `print`（`BaseAgent` / `agent/retry.py` 已改 structlog）
+  stdout/stderr 切 UTF-8；服务代码里不要 `print`（`BaseAgent` / `agent/retry.py` 已改 structlog）。
+  `run_python_safely` 也给子进程注入 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1`，否则沙箱里
+  print 的中文会被父进程按 UTF-8 解码成替换字符，debug 反馈和图表数据摘要都会失真。
 
 ## 文档可信度
 

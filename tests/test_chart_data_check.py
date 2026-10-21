@@ -149,6 +149,7 @@ chart.render()
     assert result.data_stats is not None
     assert result.data_stats["total_points"] == 2
     assert result.data_stats["types"] == ["bar"]
+    assert result.data_stats["series"][0]["name"] == "销售额"
     assert "__CHART_DATA_STATS__" not in result.output
 
 
