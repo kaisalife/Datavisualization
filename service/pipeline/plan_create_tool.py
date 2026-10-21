@@ -20,6 +20,27 @@ from service.pipeline.plan_state import PlanSessionState
 from service.pipeline.plan_validator import validate_one_plan
 
 
+def _summarize_items(items) -> str:
+    """把 assumptions / clarification 里的字符串或对象压成一行提示。"""
+    if not isinstance(items, list):
+        return str(items or "")
+    parts = []
+    for item in items:
+        if isinstance(item, dict):
+            text = (
+                item.get("description")
+                or item.get("question")
+                or item.get("kind")
+                or item.get("text")
+                or ""
+            )
+        else:
+            text = str(item)
+        if text:
+            parts.append(str(text))
+    return "；".join(parts)
+
+
 class PreviewSeriesTool(ReadSeriesSampleTool):
     """只读采样 series（规划期验证数据/变换可行性）。"""
 
@@ -98,10 +119,22 @@ class CreatePlanTool(Tool):
                         "最终守护层会按数据形态校正。"
                     )
 
+            contract_note = ""
+            assumptions = plan.get("assumptions") or []
+            if assumptions:
+                contract_note += f"\n📝 假设: {_summarize_items(assumptions)}"
+            clarification = plan.get("clarification") or []
+            if clarification:
+                contract_note += f"\n❓ 待确认: {_summarize_items(clarification)}"
+            validation = plan.get("validation") or {}
+            warnings = validation.get("warnings") or []
+            if warnings:
+                contract_note += f"\n⚠️ 校验提示: {_summarize_items(warnings)}"
+
             return ToolOutput(
                 success=True,
                 output=f"plan {plan.get('plan_id', '?')} {plan.get('plan_name', '')} 已提交{degraded}。"
-                       f"{advice_note}\n当前进度:\n{self._state.summary()}",
+                       f"{advice_note}{contract_note}\n当前进度:\n{self._state.summary()}",
             )
         self._state.dropped.append(plan)
         return ToolOutput(

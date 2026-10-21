@@ -40,12 +40,69 @@ class ChartPlan(BaseModel):
     data_interface: str = Field("", description="（可选）数据接口代码片段")
     execution_order: int = Field(0, description="执行顺序")
     layout: dict | None = Field(None, description="布局配置（col/row 等）")
+    analysis_task: str = Field(
+        "", description="分析任务：trend/comparison/composition/distribution/relationship"
+    )
+    ambiguities: list[dict | str] = Field(
+        default_factory=list, description="会影响图表结果的歧义及候选解释"
+    )
+    assumptions: list[str] = Field(
+        default_factory=list, description="系统实际采用的假设"
+    )
+    confidence: float | None = Field(
+        None, ge=0.0, le=1.0, description="计划置信度，0-1"
+    )
+    clarification: list[dict | str] = Field(
+        default_factory=list, description="需要用户确认的问题及候选选项"
+    )
+    validation: dict | None = Field(
+        None, description="守护层写入的校验报告，不由 LLM 生成"
+    )
 
     @field_validator("series_id")
     @classmethod
     def series_id_must_be_nonempty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("series_id 不能为空（数据契约 v4）")
+        return v
+
+    @field_validator("analysis_task")
+    @classmethod
+    def normalize_analysis_task(cls, v: str) -> str:
+        return (v or "").strip().lower()
+
+    @field_validator("ambiguities", "clarification", mode="before")
+    @classmethod
+    def coerce_structured_list(cls, v):
+        """兼容 LLM 输出单个字符串/对象，统一成列表。"""
+        if v is None or v == "":
+            return []
+        if isinstance(v, (str, dict)):
+            return [v]
+        return v
+
+    @field_validator("assumptions", mode="before")
+    @classmethod
+    def coerce_assumptions(cls, v):
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_confidence(cls, v):
+        """接受 0-1、0-100 和数字字符串；无法识别的值交给 pydantic 报错。"""
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            try:
+                v = float(v.strip())
+            except ValueError:
+                return v
+        if isinstance(v, (int, float)) and 1 < v <= 100:
+            return v / 100
         return v
 
 
@@ -78,6 +135,10 @@ def coerce_plan_dict(raw: dict) -> dict:
         "useColumnNames": "use_column_names",
         "dataInterface": "data_interface",
         "executionOrder": "execution_order",
+        "analysisTask": "analysis_task",
+        "ambiguity": "ambiguities",
+        "assumption": "assumptions",
+        "clarifications": "clarification",
     }
     out = dict(raw)
     for k_src, k_dst in aliases.items():

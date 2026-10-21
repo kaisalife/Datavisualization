@@ -34,13 +34,23 @@ planning_system_prompt = """
   "y_axis": ["该系列的列标签列名"],
   "use_column_names": true,
   "execution_order": 1,
-  "layout": {{"legend_pos": "bottom", "grid_top": "8%", "grid_bottom": "12%"}}
+  "layout": {{"legend_pos": "bottom", "grid_top": "8%", "grid_bottom": "12%"}},
+  "analysis_task": "trend | comparison | composition | distribution | relationship",
+  "ambiguities": [{{"kind": "字段/时间/聚合/类型", "description": "哪里存在多种理解", "options": ["候选1", "候选2"]}}],
+  "assumptions": ["实际采用的假设及理由"],
+  "confidence": 0.0,
+  "clarification": [{{"question": "需要用户确认的问题", "options": ["选项1", "选项2"]}}]
 }}
 
 ## 规划原则
 - 列角色 time -> 首选 x_axis；measure -> y_axis；dimension -> 分组
 - 引用列必须是：所选系列的行/列标签列，或 transform_hint 声明的变换产物列
 - 每个 plan 必须含 series_id（从列表中来，不许编造）
+- analysis_task 从 trend / comparison / composition / distribution / relationship 中选一个
+- 用户需求存在会影响图表结果的歧义（字段、时间范围、聚合方式、图表类型等）时，写入 ambiguities；
+  高影响歧义在 clarification 中给出候选问题。不要静默选择后当作确定结果。
+- assumptions 只写实际采用的假设及理由；confidence 用 0-1 表示计划整体置信度。
+- 没有歧义时 ambiguities / clarification 留空数组，置信度高也应如实填写。
 
 ## 图表类型必须由数据形态决定（硬性）
 series 索引已给出语义类型、时间点/类别数、指标数和建议类型；先看这些数字，再选类型：
@@ -63,6 +73,7 @@ series 索引已给出语义类型、时间点/类别数、指标数和建议类
 - 这张图的类型是否和 series 的 axis_kind/时间点数/类别数匹配？
 - 这批图是否至少覆盖两个不同角度？是否重复了同一份数据？
 - x_axis/y_axis 是否是所选 series 的真实列名？
+- ambiguities、assumptions、confidence、clarification 是否如实填写？
 
 ## 校验反馈
 - create_plan 返回"已提交"或"自动降级"：继续下一个 plan

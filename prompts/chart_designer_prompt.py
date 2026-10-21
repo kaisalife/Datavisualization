@@ -33,6 +33,10 @@ chart_designer_prompt = """
    同一 series + 同一指标的 Bar 最多一张，不要提交"同一数据换个排序/标题"的第二张柱状图。
 9. 用户指定图表数量（如"画两个图"）时严格不超过；数据只支持一个角度时宁可少画，不要硬造类型。
 10. chart_title 必须具体（含指标 + 维度，必要时含时间/单位），不要写「图表1」「数据展示」。
+11. analysis_task 从 trend / comparison / composition / distribution / relationship 中选一个。
+12. 用户需求存在会影响结果的歧义（字段、时间范围、聚合方式、图表类型）时，写入 ambiguities；
+    高影响歧义在 clarification 中给出候选问题，不要静默选择后当作确定结果。
+13. assumptions 只写实际采用的假设及理由；confidence 用 0-1 表示计划整体置信度。
 
 ## 数据访问（语义 series 为主）
 数据已拆分为多个语义 series 落盘，生成阶段按 plan.series_id 指定的系列加载 df。
@@ -64,7 +68,12 @@ plan 的数据字段填**该系列的真实列名**（行标签列 / 列标签�
       "legend_pos": "bottom",
       "grid_top": "8%",
       "grid_bottom": "12%"
-    }}
+    }},
+    "analysis_task": "trend | comparison | composition | distribution | relationship",
+    "ambiguities": [{{"kind": "字段/时间/聚合/类型", "description": "哪里存在多种理解", "options": ["候选1", "候选2"]}}],
+    "assumptions": ["实际采用的假设及理由"],
+    "confidence": 0.0,
+    "clarification": [{{"question": "需要用户确认的问题", "options": ["选项1", "选项2"]}}]
   }}]
 }}
 ```
@@ -73,7 +82,7 @@ plan 的数据字段填**该系列的真实列名**（行标签列 / 列标签�
 Line, Bar, Scatter, Pie, Area, Histogram, Boxplot, Heatmap, Candlestick, Radar, Funnel, Gauge, Treemap, WordCloud, Graph, Parallel, Sankey, ThemeRiver
 
 ## 必填字段
-plan_id, plan_name, chart_type, chart_title, chart_reason, series_id, transform_hint, x_axis, y_axis, use_column_names, data_interface, execution_order, layout
+plan_id, plan_name, chart_type, chart_title, chart_reason, series_id, transform_hint, x_axis, y_axis, use_column_names, data_interface, execution_order, layout, analysis_task, ambiguities, assumptions, confidence, clarification
 """
 
 
