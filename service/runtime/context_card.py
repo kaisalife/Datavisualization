@@ -164,6 +164,7 @@ def _plan_card(plan: dict) -> dict:
             "series_id": series_id,
             "analysis_task": analysis_task,
             "confidence": confidence,
+            "clarification": clarification,
         },
     )
 

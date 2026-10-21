@@ -6,6 +6,7 @@ const state = {
   mode: 'chat',
   vizMode: 'auto',
   files: [],
+  lastFiles: [],
   fileList: [],
   projectName: null,
   conversations: [],

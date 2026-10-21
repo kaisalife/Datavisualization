@@ -24,6 +24,8 @@ function sendPrompt() {
   const prompt = input.value.trim();
   if (!prompt || state.isGenerating) return;
   const filesToSend = state.files.filter(f => typeof f === 'string');
+  // 保留本次输入的数据源，供“补充说明并重试”恢复，不必重新选文件
+  state.lastFiles = state.files.map(f => (typeof f === 'object' ? { ...f } : f));
   // 渲染用户消息（含文件标签）
   hideWelcome();
   const userMsg = document.createElement('div');
@@ -62,6 +64,7 @@ function cancelTask() { sendToRust('cancelTask', {}); }
 
 function newChat() {
   state.files = [];
+  state.lastFiles = [];
   state.selectedDb = null;
   state.apiConfig = null;
   renderFileChips();

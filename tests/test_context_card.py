@@ -47,7 +47,9 @@ def _plan(*, with_error: bool = False) -> dict:
         "y_axis": ["销售额"],
         "assumptions": ["按月份汇总销售额"],
         "ambiguities": [{"description": "求和还是平均", "options": ["总和", "平均"]}],
-        "clarification": [],
+        "clarification": [
+            {"question": "是否只看华东", "options": ["只看华东", "全部区域"]}
+        ],
         "confidence": 0.8,
         "generation": {"validation": report},
     }
@@ -77,6 +79,8 @@ def test_build_context_cards_covers_request_data_plan_validation_and_artifacts()
     assert plan_card["status"] == "warning"  # 有歧义
     assert any("求和还是平均" in i for i in plan_card["items"])
     assert any("按月份汇总销售额" in i for i in plan_card["items"])
+    assert plan_card["meta"]["clarification"]
+    assert "是否只看华东" in plan_card["meta"]["clarification"][0]
 
     workflow = next(c for c in cards if c["kind"] == "workflow")
     assert workflow["status"] == "success"

@@ -122,7 +122,10 @@ $env:BACKEND_URL="http://localhost:5000"
    下载按钮走 `downloadDataExport`，Rust 只接受
    `/api/data-profile/export` 开头的相对地址，落盘到 `%USERPROFILE%\Downloads`（同名自动加序号）。
    预览面板的原始表依赖 `/api/data-profile` 的 `save_raw=True`；图表任务本身仍不保存原始表。
-8. **剪贴板截图**：`js/preview.js` 监听 `paste`，把图片读成 data URL 经 `saveClipboardImage` 交给 Rust；
+8. **上下文卡片「补充说明」**：计划卡带待确认项时，`js/charts.js` 会渲染按钮，点击后从
+   `state.lastFiles` 恢复本次数据源并填入“在…基础上调整：”；`sendPrompt` 发送前会保存
+   `state.files` 的浅拷贝，`newChat` 清空。不要假设任务结束后 `state.files` 还在。
+9. **剪贴板截图**：`js/preview.js` 监听 `paste`，把图片读成 data URL 经 `saveClipboardImage` 交给 Rust；
    Rust 解码（上限 8MB）后写到 `%TEMP%\datavisual_clipboard`，再回调 `window.app.addClipboardFile(path)`
    加入文件列表。剪贴板同时带文本（Excel/网页复制单元格）且在输入框内粘贴时，保留正常文本粘贴。
 

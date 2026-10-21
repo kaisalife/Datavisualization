@@ -125,6 +125,30 @@ function renderContextCards(container, cards) {
       });
       el.appendChild(list);
     }
+    if (
+      card.kind === 'plan' &&
+      card.meta &&
+      Array.isArray(card.meta.clarification) &&
+      card.meta.clarification.length > 0
+    ) {
+      const action = document.createElement('button');
+      action.className = 'context-action';
+      action.textContent = '补充说明';
+      action.title = '恢复本次数据源，并在输入框中继续调整';
+      action.addEventListener('click', () => {
+        const input = document.getElementById('prompt-input');
+        if (!input) return;
+        if (state.lastFiles && state.lastFiles.length > 0) {
+          state.files = state.lastFiles.map(f => (typeof f === 'object' ? { ...f } : f));
+          if (typeof renderFileChips === 'function') renderFileChips();
+        }
+        input.value = '在“' + (card.title || '刚才的图表') + '”的基础上调整：';
+        if (typeof autoResize === 'function') autoResize(input);
+        input.focus();
+        if (input.scrollIntoView) input.scrollIntoView({ block: 'nearest' });
+      });
+      el.appendChild(action);
+    }
     grid.appendChild(el);
   });
   panel.appendChild(grid);
