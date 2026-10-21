@@ -216,6 +216,10 @@ $env:BACKEND_URL="http://localhost:5000"
   但纵向合并的**文本**（如 `城市` 跨多行）会在读取后向下填满；数值合并（合计/小计）不填，
   避免重复计量；
 - 没有表头问题的文件只多一次 4 行 peek；有数据区纵向合并时按合并区域补全文本；
+- **封面页 / 空白页自动跳过**：只有标题、0 行数据或全空行的 sheet 不进入 RawTable，避免主表变成
+  「0 行 1 列的大标题」；跳过后按剩余 sheet 重新编号（`<文件名>`、`<文件名>_sheet2`…）。
+  所有 sheet 都为空时抛「没有可读取的数据」，让 chart-only 工作簿走 router 的内嵌图片兜底；
+  显式 `sheet_name=` 时保持原行为（空表照常返回）；
 - 实测 1 万行合并表头 0.85 秒、2 万行普通表 3.5–4 秒（比原先 openpyxl 全量加载 + pandas 双读快约 30%）。
 
 实现：`service/data_ingestion/readers/excel_reader.py`；回归 `tests/test_excel_reader.py`

@@ -379,3 +379,52 @@ def test_merged_data_with_two_level_header(tmp_path: Path):
     assert list(df.columns) == ["城市", "2023 年_销售额", "2023 年_利润"]
     assert df["城市"].tolist() == ["北京", "北京", "上海"]
     assert df["2023 年_销售额"].tolist() == [100, 120, 90]
+
+
+def test_cover_and_blank_sheets_are_skipped(tmp_path: Path):
+    """封面页 / 空白页不进入数据表，主表直接是真正的数据 sheet。"""
+    path = tmp_path / "report.xlsx"
+    wb = Workbook()
+    cover = wb.active
+    cover.title = "封面"
+    cover["A1"] = "2024 年销售报表"
+    data = wb.create_sheet("数据")
+    data.append(["城市", "销售额"])
+    data.append(["北京", 1200])
+    data.append(["上海", 1500])
+    wb.create_sheet("空白")
+    wb.save(path)
+
+    tables = ExcelReader.read(str(path), table_name="销售")
+
+    assert [t.name for t in tables] == ["销售"]
+    assert list(tables[0].df.columns) == ["城市", "销售额"]
+    assert tables[0].source_path.endswith("#数据")
+
+
+def test_all_sheets_empty_raises(tmp_path: Path):
+    """只有封面/空白页时明确报错，交给 router 回退内嵌图片抽表。"""
+    path = tmp_path / "chart_only.xlsx"
+    wb = Workbook()
+    wb.active["A1"] = "只有一张标题"
+    wb.create_sheet("空白")
+    wb.save(path)
+
+    with pytest.raises(ValueError, match="没有可读取的数据"):
+        ExcelReader.read(str(path))
+
+
+def test_explicit_empty_sheet_still_returns_table(tmp_path: Path):
+    """显式指定 sheet 时保持原行为，不静默丢表。"""
+    path = tmp_path / "multi2.xlsx"
+    wb = Workbook()
+    wb.active.title = "封面"
+    wb.active["A1"] = "标题"
+    data = wb.create_sheet("数据")
+    data.append(["城市", "销售额"])
+    data.append(["北京", 1200])
+    wb.save(path)
+
+    table = ExcelReader.read(str(path), sheet_name="封面")[0]
+
+    assert table.df.empty

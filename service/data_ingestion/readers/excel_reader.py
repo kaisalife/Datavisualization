@@ -25,6 +25,9 @@ import pandas as pd
 from openpyxl.utils import range_boundaries
 
 from service.data_ingestion.models import RawTable, safe_table_name
+from service.observability import get_logger
+
+logger = get_logger(__name__)
 
 # 多级表头最多支持 3 行；再高基本是排版产物
 _MAX_HEADER_ROWS = 3
@@ -472,10 +475,20 @@ class ExcelReader:
             return [RawTable(name=base_name, df=df, source_kind="file", source_path=path)]
 
         raw_tables = []
-        for i, sheet in enumerate(sheets):
-            name = base_name if i == 0 else f"{base_name}_sheet{i + 1}"
+        for sheet in sheets:
             df = ExcelReader._read_sheet(path, sheet)
+            # 封面页 / 空白页只有标题或完全没有数据，不当作数据表；
+            # 否则第一张表可能是 0 行 1 列的「大标题」，预览和图表都会选错主表。
+            if df is None or df.empty or df.dropna(how="all").empty:
+                logger.info("skip_empty_sheet", path=path, sheet=sheet)
+                continue
+            index = len(raw_tables)
+            name = base_name if index == 0 else f"{base_name}_sheet{index + 1}"
             raw_tables.append(
                 RawTable(name=name, df=df, source_kind="file", source_path=f"{path}#{sheet}")
             )
+
+        if not raw_tables:
+            # 纯图表工作簿（只有粘贴的图片、没有数据区）由 router 回退到内嵌图片抽表
+            raise ValueError(f"Excel 文件中没有可读取的数据: {Path(path).name}")
         return raw_tables
