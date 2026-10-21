@@ -92,6 +92,8 @@ async def generate_chart_plans(
     plan_input = {
         "data_file_path": data_file_path,
         "data_preview": data_preview,
+        # 旧版 designer prompt 仍保留该变量；v4 以 canonical_dataset + series_index 为准
+        "data_interface_info": "(未提供)",
         "canonical_dataset": canonical_dataset_json,
         "series_index": series_index_json,
         "user_chart_config": user_chart_config_json,
