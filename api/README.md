@@ -30,6 +30,7 @@ api/
 | `POST` | `/api/complete-viz-code` | `code_api.py` | ✅ | 现有 Python 文件追加可视化代码 |
 | `POST` | `/api/data-profile` | `data_api.py` | ✅ | 数据预览 / 图片·PDF 抽表 |
 | `GET`  | `/api/data-profile/export` | `data_api.py` | ✅ | 导出预览数据（CSV / ZIP） |
+| `POST` | `/api/data-source/db-tables` | `data_api.py` | ✅ | 测试数据库连接并列出表 |
 | `GET`  | `/api/charts-dir` | `data_api.py` | ✅ | 取图表输出目录 |
 | `GET`  | `/api/conversations` | `conversation_api.py` | ✅ | 历史对话列表（分页） |
 | `GET`  | `/api/conversations/<id>` | `conversation_api.py` | ✅ | 对话详情（含 agent_logs） |
@@ -263,6 +264,42 @@ Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列�
 - `series_id` 只从会话的 `manifest.json` 查找；原始表只接受 `raw/manifest.json` 里的序号，
   解析后的 parquet 路径必须位于会话目录内；非法/过期会话返回 404，防止路径穿越。
 - 会话目录由 `TEMP_DATASETS_DIR` 决定，默认 `runtime/datasets/`。
+
+---
+
+### POST /api/data-source/db-tables
+
+设置面板「测试连接」使用：不保存配置也能验证数据库连接，并列出库里的表，
+减少手填表名的拼写错误。
+
+请求支持 `multipart/form-data` 的 `db_config` 字段，或直接提交 JSON body
+（`{"db_config": {...}}`，也可以把配置对象本身作为 body）：
+
+```json
+{
+  "db_config": {
+    "type": "MySQL",
+    "host": "localhost",
+    "port": "3306",
+    "user": "root",
+    "password": "***",
+    "database": "sales"
+  }
+}
+```
+
+成功返回（表名已排序）：
+
+```json
+{"db_type": "mysql", "count": 2, "tables": ["orders", "sales"]}
+```
+
+- `type` 不区分大小写，`postgres` 会归一化成 `postgresql`；
+- 建连超时 5 秒，避免填错主机时前端长时间卡住；
+- 配置非法（未知类型、sqlite 文件不存在、JSON 格式错误）返回 `400`；
+- 网络不通 / 账号密码错误等连接失败返回 `502`，`detail` 带原始异常；
+- **sqlite 只接受已存在的文件**：`sqlite3.connect` 会自动创建空库，这里提前拦截，
+  避免把写错的路径悄悄变成一个空数据库。
 
 ---
 

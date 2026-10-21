@@ -36,6 +36,7 @@ fn format_http_error(status: StatusCode, body: &str) -> String {
         StatusCode::BAD_REQUEST => format!("参数错误: {}", detail),
         StatusCode::UNAUTHORIZED => format!("认证失败（请检查 API Key）: {}", detail),
         StatusCode::NOT_FOUND => format!("资源不存在: {}", detail),
+        StatusCode::BAD_GATEWAY => format!("连接失败: {}", detail),
         StatusCode::INTERNAL_SERVER_ERROR => format!("服务器错误: {}", detail),
         _ => format!("后端返回错误 {}: {}", status, detail),
     }
@@ -205,6 +206,35 @@ impl ApiClient {
         if status == StatusCode::OK {
             serde_json::from_str::<serde_json::Value>(&body)
                 .context(format!("解析数据预览响应失败: {}", body))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
+    /// 测试数据库连接并列出表（设置面板「测试连接」）。
+    ///
+    /// `db_config` 是 `DbConfig::to_json_string()` 生成的 JSON。后端建连超时 5 秒，
+    /// 这里再留一点余量，避免网络异常时把界面卡住。
+    pub async fn list_db_tables(&self, db_config: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/api/data-source/db-tables", self.base_url);
+
+        let form = reqwest::multipart::Form::new().text("db_config", db_config.to_string());
+        let resp = self
+            .client
+            .post(&url)
+            .header("X-API-Key", &self.api_key)
+            .timeout(Duration::from_secs(20))
+            .multipart(form)
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&body)
+                .context(format!("解析数据库表列表失败: {}", body))
         } else {
             anyhow::bail!(format_http_error(status, &body))
         }

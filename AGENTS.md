@@ -250,6 +250,12 @@ $env:BACKEND_URL="http://localhost:5000"
 前端设置里的数据库连接可填「表名」（逗号/分号分隔，Rust 侧序列化成 JSON 数组，后端也兼容字符串
 并统一归一化）或「自定义 SQL」（优先于表名），留空则读取全部表；这两个字段同时作用于预览和图表任务。
 
+设置面板的「测试连接」走 `POST /api/data-source/db-tables`（`DatabaseReader.list_tables`，建连超时 5 秒），
+返回排好序的表名，点击 chip 可填入「表名」：连接失败返回 502，配置非法（含 sqlite 文件不存在）返回 400。
+**sqlite 必须是已存在的文件**——`sqlite3.connect` 会自动建空库，`_make_engine` 提前拦截，避免路径写错时
+悄悄生成一个空数据库。设置面板新增连接只列后端支持的三种方言，历史配置里的 SQL Server 仍保留原值
+（标记「暂不支持」），不会在编辑时被静默改成 MySQL。回归见 `tests/test_db_tables_api.py`。
+
 ## 表头清洗
 
 `_assemble_profile` 在数值归一化 / 拆 series 前统一清洗列名：去首尾空白、换行/制表符压成空格、

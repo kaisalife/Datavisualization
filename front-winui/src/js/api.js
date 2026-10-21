@@ -171,6 +171,11 @@ window.app = {
     document.getElementById('settingsModal').classList.remove('show');
   },
 
+  // 数据库「测试连接」返回的表列表（settings.js 负责渲染）
+  showDbTables(jsonStr) {
+    renderDbTablesResult(jsonStr);
+  },
+
   showToast(message, type) {
     const c = document.getElementById('toastContainer');
     const d = document.createElement('div');

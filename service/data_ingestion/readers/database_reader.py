@@ -83,22 +83,40 @@ class DatabaseReader:
         )
 
     @staticmethod
-    def _make_engine(db_config: dict, db_type: str):
+    def _make_engine(db_config: dict, db_type: str, connect_timeout: int | None = None):
         """构造 read_sql 用的连接对象。
 
         sqlite 用标准库连接；postgres/mysql 用 sqlalchemy（需安装对应驱动）。
+
+        Args:
+            db_config: 数据库连接配置
+            db_type: 数据库类型（大小写/别名由内部归一化）
+            connect_timeout: 建立连接的超时秒数；None 时用驱动默认值
+
+        Raises:
+            ValueError: sqlite 未提供路径，或路径不存在。sqlite3.connect 会自动
+                创建空库，提前拦截可以避免把写错的路径当成一个空数据库。
         """
         db_type = _normalize_db_type(db_type)
         if db_type == "sqlite":
-            path = db_config.get("database", db_config.get("path", ""))
+            path = str(db_config.get("database", db_config.get("path", "")) or "").strip()
             if not path:
                 raise ValueError("sqlite 数据库必须提供 database/path 配置")
+            if path != ":memory:":
+                expanded = Path(path).expanduser()
+                if not expanded.is_file():
+                    raise ValueError(f"sqlite 数据库文件不存在: {path}")
+                path = str(expanded)
             return sqlite3.connect(path)
 
         try:
             from sqlalchemy import create_engine
             url = DatabaseReader._build_url(db_config, db_type)
-            return create_engine(url)
+            connect_args = {}
+            if connect_timeout:
+                # psycopg2 / pymysql 都用 connect_timeout（秒）
+                connect_args["connect_timeout"] = int(connect_timeout)
+            return create_engine(url, connect_args=connect_args)
         except ImportError:
             raise ImportError(
                 "database_reader 需要 sqlalchemy。请运行: pip install sqlalchemy"
@@ -158,8 +176,51 @@ class DatabaseReader:
                 pass
 
     @staticmethod
-    def _list_tables(conn, db_type: str) -> list[str]:
-        """列出库中的表名（含 sqlite 兼容）。"""
+    def list_tables(
+        db_config: dict, db_type: str, connect_timeout: int = 5
+    ) -> list[str]:
+        """连接数据库并列出所有表（供「测试连接 / 列出表」使用）。
+
+        与自动发现不同，这里连接失败会抛异常而不是返回空列表，
+        让前端能区分「连不上」和「库是空的」。
+
+        Args:
+            db_config: 数据库连接配置
+            db_type: 数据库类型（大小写/别名由内部归一化）
+            connect_timeout: 建立连接的超时秒数
+
+        Returns:
+            排序后的表名列表（不含 sqlite 内部表）
+
+        Raises:
+            ValueError: 数据库类型不支持 / sqlite 文件不存在
+            Exception: 连接失败（驱动原始异常）
+        """
+        db_type = _normalize_db_type(db_type)
+        if not DatabaseReader.can_handle(db_type):
+            raise ValueError(f"不支持的数据库类型: {db_type}")
+
+        conn = DatabaseReader._make_engine(
+            db_config, db_type, connect_timeout=connect_timeout
+        )
+        try:
+            return sorted(DatabaseReader._list_tables(conn, db_type, strict=True))
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _list_tables(conn, db_type: str, strict: bool = False) -> list[str]:
+        """列出库中的表名（含 sqlite 兼容）。
+
+        Args:
+            conn: sqlite3 连接或 sqlalchemy Engine
+            db_type: 数据库类型
+            strict: True 时把连接/读取失败抛给调用方；False（默认）时只记日志，
+                避免影响「自动发现全部表」的既有读取流程
+        """
         try:
             from sqlalchemy import inspect
             inspector = inspect(conn)
@@ -171,6 +232,8 @@ class DatabaseReader:
                 )
                 return [r[0] for r in cursor.fetchall() if not r[0].startswith("sqlite_")]
             except Exception as e:
+                if strict:
+                    raise
                 logger.warning("_list_tables 自动发现失败", db_type=db_type, error=str(e))
                 return []
 

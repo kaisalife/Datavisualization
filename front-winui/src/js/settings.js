@@ -100,15 +100,18 @@ function renderDbList() {
     if (editingDbId === idx) {
       return '<div class="db-form">' +
         '<div class="form-group"><label class="form-label">连接名称</label><input class="form-input" id="edbName" value="' + escAttr(db.name) + '"></div>' +
-        '<div class="form-row"><div class="form-group"><label class="form-label">类型</label><select class="form-select" id="edbType">' + ['MySQL','PostgreSQL','SQLite','SQL Server'].map(t => '<option ' + (db.dbType===t?'selected':'') + '>' + t + '</option>').join('') + '</select></div>' +
+        '<div class="form-row"><div class="form-group"><label class="form-label">类型</label><select class="form-select" id="edbType">' + dbTypeOptions(db.dbType) + '</select></div>' +
         '<div class="form-group"><label class="form-label">主机</label><input class="form-input" id="edbHost" value="' + escAttr(db.host) + '"></div>' +
         '<div class="form-group" style="max-width:90px"><label class="form-label">端口</label><input class="form-input" id="edbPort" value="' + escAttr(db.port) + '"></div></div>' +
         '<div class="form-row"><div class="form-group"><label class="form-label">用户名</label><input class="form-input" id="edbUser" value="' + escAttr(db.user) + '"></div>' +
         '<div class="form-group"><label class="form-label">密码</label><input class="form-input" type="password" id="edbPass" value="' + escAttr(db.password || '') + '"></div></div>' +
         '<div class="form-group"><label class="form-label">数据库</label><input class="form-input" id="edbDb" value="' + escAttr(db.database || '') + '"></div>' +
-        '<div class="form-group"><label class="form-label">表名（可选，逗号分隔）</label><input class="form-input" id="edbTables" value="' + escAttr(db.tables || '') + '" placeholder="留空读取全部表，如 sales,users"></div>' +
+        '<div class="form-group"><label class="form-label">表名（可选，逗号分隔）</label><input class="form-input" id="edbTables" value="' + escAttr(db.tables || '') + '" placeholder="留空读取全部表，如 sales,users" oninput="syncDbTableChips()"></div>' +
         '<div class="form-group"><label class="form-label">自定义 SQL（可选，优先于表名）</label><textarea class="form-input" id="edbQuery" rows="3" placeholder="SELECT * FROM sales WHERE ...">' + escHtml(db.query || '') + '</textarea></div>' +
-        '<div class="db-form-actions"><button class="btn btn-primary" style="padding:6px 16px;font-size:13px" onclick="saveDbEdit(' + idx + ')">保存</button><button class="btn btn-ghost" style="padding:6px 16px;font-size:13px" onclick="cancelDbEdit()">取消</button></div>' +
+        '<div class="db-form-actions"><button class="btn btn-primary" style="padding:6px 16px;font-size:13px" onclick="saveDbEdit(' + idx + ')">保存</button>' +
+          '<button class="btn btn-ghost" style="padding:6px 16px;font-size:13px" onclick="testDbConnection()">测试连接</button>' +
+          '<button class="btn btn-ghost" style="padding:6px 16px;font-size:13px" onclick="cancelDbEdit()">取消</button></div>' +
+        '<div class="db-test-result" id="edbTestResult"></div>' +
       '</div>';
     }
     return '<div class="db-config-card">' +
@@ -151,6 +154,81 @@ function deleteDbConfig(idx) {
   if (editingDbId === idx) editingDbId = null;
   renderDbList();
   window.app.showToast('已删除', 'info');
+}
+
+// ===== 数据库连接测试 =====
+
+// 新增连接只提供后端支持的方言；历史配置里的 SQL Server 仍保留原值，
+// 避免编辑一次就被静默改成 MySQL（后端会以 400 明确拒绝）。
+function dbTypeOptions(current) {
+  const types = ['MySQL', 'PostgreSQL', 'SQLite'];
+  if (current && types.indexOf(current) < 0) types.push(current);
+  return types.map(t => {
+    const label = t === 'SQL Server' ? 'SQL Server（暂不支持）' : t;
+    return '<option value="' + escAttr(t) + '"' + (current === t ? ' selected' : '') + '>' + escHtml(label) + '</option>';
+  }).join('');
+}
+
+function testDbConnection() {
+  const box = document.getElementById('edbTestResult');
+  if (!document.getElementById('edbHost')) return;
+  if (box) box.innerHTML = '<span class="db-test-pending">正在连接...</span>';
+  sendToRust('testDbConfig', {
+    name: (document.getElementById('edbName') || {}).value || '',
+    dbType: (document.getElementById('edbType') || {}).value || 'MySQL',
+    host: (document.getElementById('edbHost') || {}).value || '',
+    port: (document.getElementById('edbPort') || {}).value || '',
+    user: (document.getElementById('edbUser') || {}).value || '',
+    password: (document.getElementById('edbPass') || {}).value || '',
+    database: (document.getElementById('edbDb') || {}).value || '',
+  });
+}
+
+// 把后端返回的表列表渲染到表单里；点击表名可加入/移出「表名」输入框
+function renderDbTablesResult(jsonStr) {
+  let result;
+  try { result = JSON.parse(jsonStr); } catch (e) { return; }
+  const box = document.getElementById('edbTestResult');
+  if (!box) {
+    window.app.showToast('数据库连接成功', 'success');
+    return;
+  }
+  const tables = Array.isArray(result.tables) ? result.tables : [];
+  let html = '<div class="db-test-ok">连接成功' +
+    (result.db_type ? ' · ' + escHtml(result.db_type) : '') +
+    ' · ' + tables.length + ' 张表</div>';
+  if (tables.length) {
+    html += '<div class="db-table-chips">' + tables.map(t =>
+      '<button type="button" class="db-table-chip" data-table="' + escAttr(t) + '" title="点击加入表名" onclick="toggleDbTable(this)">' + escHtml(t) + '</button>'
+    ).join('') + '</div>' +
+      '<div class="db-test-hint">点击表名加入「表名」输入框，再点一次移除</div>';
+  } else {
+    html += '<div class="db-test-hint">库中没有可读取的表</div>';
+  }
+  box.innerHTML = html;
+  syncDbTableChips();
+}
+
+function toggleDbTable(btn) {
+  const input = document.getElementById('edbTables');
+  if (!input) return;
+  const table = btn.getAttribute('data-table') || '';
+  if (!table) return;
+  const parts = input.value.split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
+  const idx = parts.indexOf(table);
+  if (idx >= 0) parts.splice(idx, 1); else parts.push(table);
+  input.value = parts.join(', ');
+  syncDbTableChips();
+}
+
+// 输入框手动改动时，同步表名 chip 的选中态
+function syncDbTableChips() {
+  const input = document.getElementById('edbTables');
+  if (!input) return;
+  const selected = input.value.split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
+  document.querySelectorAll('#edbTestResult .db-table-chip').forEach(chip => {
+    chip.classList.toggle('selected', selected.indexOf(chip.getAttribute('data-table')) >= 0);
+  });
 }
 
 function saveSettings() {

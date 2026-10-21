@@ -36,6 +36,7 @@ impl MainModel {
             "addDbConfig" => self.handle_add_db_config(msg.data),
             "updateDbConfig" => self.handle_update_db_config(msg.data),
             "deleteDbConfig" => self.handle_delete_db_config(msg.data),
+            "testDbConfig" => self.handle_test_db_config(msg.data, sender),
             "switchMode" => self.handle_switch_mode(msg.data),
             "completeCode" => self.handle_complete_code(msg.data, sender),
             "openChart" => self.handle_open_chart(msg.data),
@@ -1584,6 +1585,82 @@ impl MainModel {
             self.js_set_db_configs(&configs);
             self.js_show_toast("数据库配置已删除", "success");
         }
+        Ok(true)
+    }
+
+    /// 测试数据库连接并列出表（设置面板里的「测试连接」，不需要先保存配置）
+    fn handle_test_db_config(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let config = api::types::DbConfig {
+            id: String::new(),
+            name: data
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            db_type: data
+                .get("dbType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("MySQL")
+                .to_string(),
+            host: data
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("localhost")
+                .to_string(),
+            port: data
+                .get("port")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            user: data
+                .get("user")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            password: data
+                .get("password")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            database: data
+                .get("database")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            // 测试连接只看库结构，不读取表名/自定义 SQL
+            tables: String::new(),
+            query: String::new(),
+        };
+        let db_config = config.to_json_string();
+        let client = self.client.clone();
+        let sender = sender.clone();
+
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.list_db_tables(&db_config).await {
+                    Ok(result) => sender.post(MainMessage::DbTablesLoaded(result)),
+                    Err(e) => sender.post(MainMessage::ShowToast {
+                        message: format!("数据库连接失败: {}", e),
+                        toast_type: "error".to_string(),
+                    }),
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 把后端返回的表列表转给 JS 渲染（点击表名可填入「表名」输入框）
+    pub(crate) fn handle_db_tables_loaded(
+        &mut self,
+        result: serde_json::Value,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+        self.js_show_db_tables(&json);
         Ok(true)
     }
 

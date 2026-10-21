@@ -22,5 +22,6 @@ pub enum MainMessage {
     ConversationDeleted,
     CodeCompleted(String),
     DataProfileLoaded(serde_json::Value),
+    DbTablesLoaded(serde_json::Value),
     ClipboardImageSaved(String),
 }

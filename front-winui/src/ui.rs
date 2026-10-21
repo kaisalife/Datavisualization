@@ -182,6 +182,14 @@ impl MainModel {
         ));
     }
 
+    /// 显示数据库连接测试结果（表列表，点击可填入表名输入框）
+    pub(crate) fn js_show_db_tables(&mut self, json: &str) {
+        self.js(&format!(
+            "window.app.showDbTables('{}')",
+            Self::js_escape(json)
+        ));
+    }
+
     /// 把剪贴板图片加入前端文件列表
     pub(crate) fn js_add_clipboard_file(&mut self, path: &str) {
         self.js(&format!(

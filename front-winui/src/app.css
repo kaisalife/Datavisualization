@@ -337,6 +337,15 @@ textarea.api-input{resize:vertical;font-family:monospace}
 .db-add-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
 .db-form{background:var(--bg-tertiary);border:1px solid var(--accent-light);border-radius:var(--radius);padding:14px;margin-bottom:8px}
 .db-form-actions{display:flex;gap:8px;margin-top:4px}
+.db-test-result:empty{display:none}
+.db-test-result{margin-top:10px;padding:10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px}
+.db-test-pending{font-size:12px;color:var(--text-secondary)}
+.db-test-ok{font-size:12px;color:var(--success);margin-bottom:6px}
+.db-table-chips{display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow:auto}
+.db-table-chip{padding:3px 9px;border-radius:12px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-secondary);font-size:12px;cursor:pointer;transition:var(--transition)}
+.db-table-chip:hover{border-color:var(--accent-light);color:var(--accent)}
+.db-table-chip.selected{background:var(--accent-bg);border-color:var(--accent-light);color:var(--accent)}
+.db-test-hint{font-size:11px;color:var(--text-secondary);margin-top:6px}
 
 .db-selector-modal{position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;display:none;align-items:center;justify-content:center;padding:40px;animation:fadeIn 0.2s}
 .db-selector-modal.show{display:flex}

@@ -3,6 +3,7 @@
 
 POST /api/data-profile  上传文件并返回数据预览 + 特征画像
 GET  /api/data-profile/export  按会话/系列导出 CSV（或打包 ZIP）
+POST /api/data-source/db-tables  测试数据库连接并列出表
 
 独立于图表生成流程，前端可单独调用以预览数据与提取特征，无需启动 LLM agent。
 支持 CSV/Excel/JSON/Parquet/文档，以及图片与 PDF（走多模态视觉模型抽表，
@@ -158,6 +159,72 @@ def data_profile():
         return jsonify({"profile": result, "file_count": len(saved_paths)}), 200
     except Exception as e:
         return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
+
+
+@data_bp.route("/data-source/db-tables", methods=["POST"])
+@monitor_response("data_api:db_tables")
+def db_tables():
+    """测试数据库连接并列出可读取的表。
+
+    设置面板里的「测试连接」按钮使用：用户填完主机/账号后无需先保存，
+    就能确认连接是否可用，并把表名填进「表名」输入框。
+
+    请求:
+        ``db_config``（JSON 字符串，multipart 表单或 JSON body 均可）：
+        ``{"type": "MySQL", "host": "...", "port": "3306", "user": "...",
+        "password": "...", "database": "..."}``
+
+    响应:
+        ``{"db_type": "mysql", "count": 3, "tables": ["a", "b", "c"]}``
+
+    错误:
+        400 配置非法（类型不支持 / sqlite 文件不存在 / JSON 格式错误）
+        502 连接失败（网络不通、账号密码错误等，detail 带原始异常）
+    """
+    auth_error = check_api_key()
+    if auth_error:
+        return auth_error
+
+    try:
+        db_config = _db_config_from_request()
+        if db_config is None:
+            raise ValueError("必须提供 db_config")
+        db_type = validate_source_configs(db_config, None)
+    except ValueError as e:
+        return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
+
+    from service.data_ingestion.readers.database_reader import DatabaseReader
+
+    try:
+        tables = DatabaseReader.list_tables(db_config, db_type or "postgresql")
+    except ValueError as e:
+        return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
+    except ImportError as e:
+        # 驱动缺失属于部署问题，把安装命令原样回传，避免前端只看到 500
+        return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
+    except Exception as e:
+        return jsonify(
+            ErrorResponse(detail=f"连接失败: {type(e).__name__}: {e}").model_dump()
+        ), 502
+
+    return jsonify(
+        {"db_type": db_type, "count": len(tables), "tables": tables}
+    ), 200
+
+
+def _db_config_from_request() -> dict | None:
+    """读取 db_config：优先 multipart 表单，其次 JSON body。"""
+    raw = request.form.get("db_config")
+    if raw:
+        return parse_json_object(raw, "db_config")
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        candidate = payload.get("db_config", payload)
+        if isinstance(candidate, dict):
+            return candidate or None
+        if isinstance(candidate, str):
+            return parse_json_object(candidate, "db_config")
+    return None
 
 
 def _build_exports(profile, session_id: str) -> list[dict]:
