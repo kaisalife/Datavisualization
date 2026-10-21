@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from pyecharts import options as opts
-from pyecharts.charts import Bar, Grid, Line, Pie
+from pyecharts.charts import Bar, Grid, Line, Pie, TreeMap
 
 from service.pipeline.chart_polish import PALETTE, polish_options
 from service.pipeline.chart_sandbox import execute_chart_code
@@ -132,6 +132,76 @@ def test_line_with_many_points_hides_symbols_and_labels():
     series = chart.options["series"][0]
     assert series["showSymbol"] is False
     assert _label(series)["show"] is False
+
+
+def test_flat_treemap_hides_breadcrumb_upper_label_and_legend():
+    chart = (
+        TreeMap()
+        .add(
+            "销售额（元）",
+            [
+                {"value": 980, "name": "北京"},
+                {"value": 870, "name": "上海"},
+                {"value": 760, "name": "广州"},
+            ],
+        )
+        .set_global_opts(
+            title_opts=opts.TitleOpts(
+                title="各城市销售额构成",
+                subtitle="矩形面积与销售额成正比",
+            ),
+            legend_opts=opts.LegendOpts(pos_bottom="2%"),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    series = chart.options["series"][0]
+    assert series["top"] == "14%"
+    assert series["bottom"] == "4%"
+    assert _dict(series["breadcrumb"])["show"] is False
+    assert _dict(series["upperLabel"])["show"] is False
+    assert chart.options["legend"][0]["show"] is False
+
+    label = _label(series)
+    assert label["fontFamily"]
+    assert label["color"] == "#1f2937"
+    assert label["textBorderWidth"] == 2
+    assert label["textBorderColor"].startswith("rgba(255")
+
+
+def test_treemap_preserves_explicit_white_label_with_dark_outline():
+    chart = TreeMap().add(
+        "销售额",
+        [{"value": 980, "name": "北京"}, {"value": 870, "name": "上海"}],
+        label_opts=opts.LabelOpts(color="#fff"),
+    )
+    polish_options(chart.options, width=900)
+
+    label = _label(chart.options["series"][0])
+    assert label["color"] == "#fff"
+    assert label["textBorderColor"].startswith("rgba(15")
+
+
+def test_hierarchical_treemap_keeps_breadcrumb():
+    chart = TreeMap().add(
+        "文件大小",
+        [
+            {"value": 40, "name": "A"},
+            {
+                "value": 180,
+                "name": "B",
+                "children": [
+                    {"value": 76, "name": "B-1"},
+                    {"value": 104, "name": "B-2"},
+                ],
+            },
+        ],
+    )
+    polish_options(chart.options, width=900)
+
+    series = chart.options["series"][0]
+    breadcrumb = _dict(series.get("breadcrumb"))
+    assert breadcrumb is None or breadcrumb.get("show") is not False
 
 
 def test_pie_uses_safe_radius_and_label_template():

@@ -228,6 +228,9 @@ $env:BACKEND_URL="http://localhost:5000"
   标签 `{b}: {d}%`、`avoidLabelOverlap=True`
 - 类目点过多时自动隐藏标签（折线/柱 >20、饼 >15；多系列总点数 >20），折线 >30 点关闭
   `showSymbol`；长 x 轴类目按宽度估算旋转 30/45/60°，横向柱状图长类目截断到 140px
+- 单层矩形树图隐藏冗余的 breadcrumb / upperLabel / 单 series 图例（否则会压住标题），
+  并补 `top=14%`、`bottom=4%`；标签默认深色 + 浅色描边，显式白字则补深色描边，
+  黄/粉块也能读清
 - **`polish_options` 内部先深拷贝**：pyecharts 的默认 `LabelOpts` / `SplitLineOpts` 等可能被
   多张图共享，直接改会让上一张图的颜色/位置泄漏到下一张图；深拷贝后再写回原 `chart.options`
 - 回归：`tests/test_chart_polish.py`（含渲染链路 HTML 断言）；改规则要同时改 prompt 和该测试

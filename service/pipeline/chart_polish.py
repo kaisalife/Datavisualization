@@ -777,6 +777,66 @@ def _polish_series(options: dict[str, Any], *, dark: bool) -> None:
             )
 
 
+def _is_flat_treemap(node: dict[str, Any]) -> bool:
+    """数据只有一层、没有 children 时，面包屑和上层标签都是冗余的。"""
+    data = node.get("data")
+    if not isinstance(data, list) or not data:
+        return False
+    return all(
+        isinstance(item, dict) and not item.get("children")
+        for item in data
+    )
+
+
+def _polish_treemap(options: dict[str, Any], *, dark: bool) -> None:
+    """矩形树图：去掉无关的图例/面包屑，给标题留空间，并保证标签可读。
+
+    pyecharts 的 TreeMap 默认把 series 名称画在画布顶部（upperLabel/面包屑），
+    单层数据时会和标题/副标题重叠；单 series 图例也只有一个重复项。这里只处理
+    单层矩形树图，层级数据仍保留面包屑。
+    """
+    nodes = [
+        node for node in _series(options)
+        if str(node.get("type") or "").lower() == "treemap"
+    ]
+    if not nodes:
+        return
+
+    # 只有一张矩形树图时，图例没有信息量；Grid/Page 组合图不动
+    if len(_series(options)) == 1:
+        for legend in _iter_dicts(options.get("legend")):
+            legend["show"] = False
+
+    for node in nodes:
+        if node.get("top") is None:
+            node["top"] = "14%"
+        if node.get("bottom") is None:
+            node["bottom"] = "4%"
+
+        label = _ensure_dict(node, "label")
+        if label is not None:
+            _set_missing(label, "fontFamily", FONT_FAMILY)
+            _set_missing(label, "fontSize", 12)
+            if label.get("color") is None:
+                # 深色文字 + 浅色描边在黄/粉/蓝/绿块上都比白字清楚
+                label["color"] = "#1f2937"
+                _set_missing(label, "textBorderColor", "rgba(255, 255, 255, 0.9)")
+                _set_missing(label, "textBorderWidth", 2)
+            elif str(label.get("color") or "").lower() in {"white", "#fff", "#ffffff"}:
+                # 用户显式用白字时，至少补深色描边保证浅色块可读
+                _set_missing(label, "textBorderColor", "rgba(15, 23, 42, 0.55)")
+                _set_missing(label, "textBorderWidth", 2)
+
+        if not _is_flat_treemap(node):
+            continue
+        breadcrumb = _ensure_dict(node, "breadcrumb")
+        if breadcrumb is not None:
+            breadcrumb["show"] = False
+        upper_label = _ensure_dict(node, "upperLabel")
+        if upper_label is not None:
+            upper_label["show"] = False
+
+
 def polish_options(
     options: dict[str, Any],
     *,
@@ -834,6 +894,7 @@ def polish_options(
     _polish_grid(options)
     _polish_tooltip(options, dark=dark)
     _polish_series(options, dark=dark)
+    _polish_treemap(options, dark=dark)
 
     original.clear()
     original.update(options)
