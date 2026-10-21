@@ -82,6 +82,18 @@ def category_series(tmp_path: Path) -> SemanticSeries:
 
 
 @pytest.fixture
+def many_category_series(tmp_path: Path) -> SemanticSeries:
+    """10 个非负类别：柱状图之后可补矩形树图看构成。"""
+    df = pd.DataFrame({
+        "城市": [f"城市{i}" for i in range(1, 11)],
+        "销售额": [980, 870, 760, 620, 580, 540, 510, 480, 450, 420],
+    })
+    return _series(
+        tmp_path, df, "categorical_comparison", "城市", ["销售额"], "sales.多城市"
+    )
+
+
+@pytest.fixture
 def numeric_distribution_series(tmp_path: Path) -> SemanticSeries:
     """没有行标签的单列数值：应看分布，而不是当成类别柱状图。"""
     df = pd.DataFrame({
@@ -287,6 +299,51 @@ def test_generic_single_numeric_gains_distribution_plan(
         normalize_chart_type(plan["chart_type"]) in {"histogram", "boxplot"}
         for plan in result
     )
+
+
+def test_many_categories_recommend_treemap_for_composition(
+    many_category_series: SemanticSeries,
+):
+    advice = recommend_chart_types(many_category_series, "分析各城市销售额")
+
+    assert advice["recommended"][0] == "Bar"
+    assert "Treemap" in advice["alternatives"]
+
+
+def test_many_categories_gain_treemap_plan(
+    tmp_path: Path, many_category_series: SemanticSeries
+):
+    catalog = _catalog(tmp_path, many_category_series)
+    plans = [
+        _plan(
+            "1",
+            "Bar",
+            many_category_series.series_id,
+            "城市",
+            ["销售额"],
+            "各城市销售额柱状图",
+        ),
+        _plan(
+            "2",
+            "Bar",
+            many_category_series.series_id,
+            "城市",
+            ["销售额"],
+            "各城市销售额排名",
+            "排名",
+        ),
+    ]
+
+    result = diversify_plans(plans, catalog, "分析各城市销售额")
+
+    assert len(result) == 2
+    assert any(chart_family(plan["chart_type"]) == "comparison" for plan in result)
+    composition = [
+        plan for plan in result if chart_family(plan["chart_type"]) == "composition"
+    ]
+    assert composition
+    assert normalize_chart_type(composition[0]["chart_type"]) == "treemap"
+    assert len(validate_plans(result, catalog, None, [])) == len(result)
 
 
 def test_categorical_bars_gain_composition(

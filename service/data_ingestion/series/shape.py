@@ -201,7 +201,7 @@ def suggest_chart_types(
                 f"{n} 个类别的单指标对比：柱状图看高低，饼图可补充构成",
             )
         if n > 12:
-            alternatives = ["Treemap"]
+            alternatives = ["Treemap"] if (non_negative and n <= 20) else []
             if measures >= 2:
                 alternatives.append("Scatter")
             return (
@@ -212,6 +212,8 @@ def suggest_chart_types(
         alternatives = []
         if measures >= 2:
             alternatives.append("Scatter")
+        if non_negative and n <= 20:
+            alternatives.append("Treemap")
         if non_negative and n <= 8:
             alternatives.append("Pie")
         return (

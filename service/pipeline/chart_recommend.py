@@ -124,6 +124,8 @@ _CN_DIGITS = {
 
 # 超过这个类别数不再自动加饼图
 _PIE_MAX_CATEGORIES = 6
+# 矩形树图能容纳的类别数上限（再多就只保留 Top-N 柱状图）
+_TREEMAP_MAX_CATEGORIES = 20
 # 同一批图里同一分析角度最多保留几张（避免两个不同指标的 Line 被误删）
 _MAX_PER_FAMILY = 2
 # 用户没指定数量时最多生成的图
@@ -292,9 +294,21 @@ def _info(
             and measures >= 1
             and not bool(shape.get("all_equal"))
         ),
+        "treemap_ok": (
+            axis_kind in {"categorical_comparison", "part_to_whole"}
+            and 2 <= n <= _TREEMAP_MAX_CATEGORIES
+            and non_negative
+            and measures == 1
+            and not bool(shape.get("all_equal"))
+        ),
     }
     cache[series.series_id] = info
     return info
+
+
+def _supports_composition(info: dict[str, Any]) -> bool:
+    """是否适合看构成：少量类别用饼图，较多类别用矩形树图。"""
+    return bool(info["pie_ok"] or info["treemap_ok"])
 
 
 def _supports_distribution(info: dict[str, Any]) -> bool:
@@ -516,8 +530,14 @@ def _convert_for_style(
             if can_compare and old_family != "comparison":
                 _convert_plan(plan, new_type or "Bar", "类别/少量时间点适合横向对比", logs)
                 return plan
-        elif style == "composition" and info["pie_ok"] and old_family != "composition":
-            _convert_plan(plan, new_type or "Pie", "少量非负类别适合看构成占比", logs)
+        elif style == "composition" and _supports_composition(info) and old_family != "composition":
+            composition_type = new_type or ("Pie" if info["pie_ok"] else "Treemap")
+            reason = (
+                "少量非负类别适合看构成占比"
+                if info["pie_ok"]
+                else "类别较多但都非负，矩形树图比饼图更易读"
+            )
+            _convert_plan(plan, composition_type, reason, logs)
             return plan
         elif style == "distribution" and _supports_distribution(info):
             if old_family != "distribution":
@@ -552,7 +572,7 @@ def _candidate_series(
             elif info["time_like"] and 2 <= info["n"] <= 6:
                 candidates.append(info)
         elif style == "composition":
-            if info["pie_ok"]:
+            if _supports_composition(info):
                 candidates.append(info)
         elif style == "distribution":
             if _supports_distribution(info):
@@ -629,11 +649,17 @@ def _new_plan_for_style(
         if not row_label or not measure:
             return None
         x_axis, y_axis = row_label, [measure]
-        chart_type = chart_type or "pie"
+        use_pie = info["pie_ok"]
+        chart_type = chart_type or ("pie" if use_pie else "treemap")
         n = int(shape.get("row_labels") or info["n"])
-        title = f"各{row_label}{measure}占比"
-        reason = f"{n} 个非负类别可构成整体，饼图用于看各部分的份额"
-        layout = {"legend_pos": "right", "grid_top": "8%", "grid_bottom": "8%"}
+        title = f"各{row_label}{measure}{'占比' if use_pie else '构成'}"
+        reason = (
+            f"{n} 个非负类别可构成整体，饼图用于看各部分的份额"
+            if use_pie
+            else f"{n} 个非负类别较多，矩形树图比饼图更易读"
+        )
+        if use_pie:
+            layout = {"legend_pos": "right", "grid_top": "8%", "grid_bottom": "8%"}
     else:
         return None
 
@@ -677,7 +703,7 @@ def _catalog_styles(
             supported.add("trend")
         if info["categorical"] and 2 <= info["n"] <= 30:
             supported.add("comparison")
-        if info["pie_ok"]:
+        if _supports_composition(info):
             supported.add("composition")
         if _supports_distribution(info):
             supported.add("distribution")

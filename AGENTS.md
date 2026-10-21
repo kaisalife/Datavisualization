@@ -238,8 +238,9 @@ $env:BACKEND_URL="http://localhost:5000"
   - `recommend_chart_types()` 结合数据形态 + 用户意图给出首选/备选；`list_series` / `get_series`
     工具输出直接展示；`create_plan` 对明显不匹配（如 12 个点的时间序列画 Bar）当场提示；
   - `diversify_plans()` 在规划完成后做确定性守护：时间序列（≥3 个点；用户明确要“趋势”时 ≥2 个点）
-    的 Bar/Pie 安全改成 Line/Area；≤6 个非负类别且没有构成图时补 Pie；同一 series + 同一指标不重复；
-    同一分析角度最多 2 张；**保留 LLM 已规划的有效图**（如 Bar+Scatter 不会为了凑构成图被硬改成 Pie）；
+    的 Bar/Pie 安全改成 Line/Area；≤6 个非负类别且没有构成图时补 Pie，7–20 个非负类别补 Treemap；
+    同一 series + 同一指标不重复；同一分析角度最多 2 张；**保留 LLM 已规划的有效图**
+    （如 Bar+Scatter 不会为了凑构成图被硬改成 Pie）；
   - 没有行标签、只有一列数值的 generic series 按“一组观测值”处理，推荐并为分布补 Histogram/Boxplot，
     不再强行当类别柱状图；
   - 用户明确点名类型（“柱状图”“饼图”…）不自动改；用户说“画两个图”是硬上限；数据只支持一个角度时宁可少画。
