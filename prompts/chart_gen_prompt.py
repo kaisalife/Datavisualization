@@ -86,6 +86,9 @@ agent_generate_chart_prompt = """
   `areastyle_opts=opts.AreaStyleOpts(opacity=0.15)`；不要 import 不存在的 Area 类。
 - `Histogram`：pyecharts 2.1 没有 Histogram 类。用 `pd.cut` 对指标分箱、统计频数后，
   用 `Bar` 绘制（标题仍按 plan 写"分布/直方图"），不要写 `from pyecharts.charts import Histogram`。
+- `Boxplot`：用 `from pyecharts.charts import Boxplot`；单指标分布时
+  `add_xaxis([指标名])`，`add_yaxis(指标名, Boxplot.prepare_data([数值列表]))`，
+  不要把原始数值直接塞进 `add_yaxis`。
 - `Treemap`：用 `from pyecharts.charts import Treemap`，数据传
   `[{{"value": 数值, "name": 类别}}]`；不要在类别很多时改用看不清的饼图。
 - `Heatmap`：用 `HeatMap`，数据传 `[x_index, y_index, value]`，并设置 visualmap。

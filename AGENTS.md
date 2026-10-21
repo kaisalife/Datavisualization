@@ -240,9 +240,11 @@ $env:BACKEND_URL="http://localhost:5000"
   - `diversify_plans()` 在规划完成后做确定性守护：时间序列（≥3 个点；用户明确要“趋势”时 ≥2 个点）
     的 Bar/Pie 安全改成 Line/Area；≤6 个非负类别且没有构成图时补 Pie；同一 series + 同一指标不重复；
     同一分析角度最多 2 张；**保留 LLM 已规划的有效图**（如 Bar+Scatter 不会为了凑构成图被硬改成 Pie）；
+  - 没有行标签、只有一列数值的 generic series 按“一组观测值”处理，推荐并为分布补 Histogram/Boxplot，
+    不再强行当类别柱状图；
   - 用户明确点名类型（“柱状图”“饼图”…）不自动改；用户说“画两个图”是硬上限；数据只支持一个角度时宁可少画。
 - prompt 同步：`agent_planning_prompt`（默认路径）、`chart_designer_prompt`（回退）、
-  `chart_gen_prompt` 的类型实现约定（Area / Histogram / Treemap / Heatmap）。
+  `chart_gen_prompt` 的类型实现约定（Area / Histogram / Boxplot / Treemap / Heatmap）。
 - **ChatPromptTemplate 花括号坑**：prompt 里的 JSON 示例、`formatter="{b}: {d}%"` 必须写成
   `{{...}}`，否则模板把 `b/d` 当变量，生成阶段直接 `KeyError`。回归
   `tests/test_chart_prompt_rules.py::test_generate_prompt_template_can_be_formatted`。

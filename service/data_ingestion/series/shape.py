@@ -222,6 +222,18 @@ def suggest_chart_types(
         )
 
     # generic：没有明确时间/维度语义，按数值列数量给保守建议
+    # 单列数值且没有行标签时，本质是一组观测值，优先看分布而不是强行画类别柱状图。
+    if (
+        shape.get("row_label_kind") == "none"
+        and shape.get("has_values")
+        and measures == 1
+        and n >= 5
+    ):
+        return (
+            ["Histogram", "Boxplot"],
+            ["Bar"],
+            f"只有 1 个数值指标、{n} 行观测值，直方图/箱线图更适合看分布",
+        )
     if measures >= 2:
         return (
             ["Scatter", "Heatmap"],

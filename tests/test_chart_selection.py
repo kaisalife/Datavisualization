@@ -27,7 +27,7 @@ def _series(
     tmp_path: Path,
     df: pd.DataFrame,
     axis_kind: str,
-    row: str,
+    row: str | None,
     columns: list[str],
     series_id: str,
 ) -> SemanticSeries:
@@ -78,6 +78,18 @@ def category_series(tmp_path: Path) -> SemanticSeries:
     })
     return _series(
         tmp_path, df, "categorical_comparison", "城市", ["2024年"], "sales.城市"
+    )
+
+
+@pytest.fixture
+def numeric_distribution_series(tmp_path: Path) -> SemanticSeries:
+    """没有行标签的单列数值：应看分布，而不是当成类别柱状图。"""
+    df = pd.DataFrame({
+        "销售额": [98, 102, 97, 105, 110, 99, 101, 108, 95, 112,
+                  100, 104, 96, 107, 103, 109, 94, 111, 106, 113],
+    })
+    return _series(
+        tmp_path, df, "generic", None, ["销售额"], "sales.单列数值"
     )
 
 
@@ -239,6 +251,42 @@ def test_existing_relationship_plan_is_preserved(tmp_path: Path):
     assert len(result) == 2
     assert families == {"comparison", "relationship"}
     assert all(normalize_chart_type(plan["chart_type"]) != "pie" for plan in result)
+
+
+def test_generic_single_numeric_recommends_distribution(
+    numeric_distribution_series: SemanticSeries,
+):
+    advice = recommend_chart_types(numeric_distribution_series, "分析一下销售数据")
+
+    assert advice["recommended"][0] == "Histogram"
+    assert "Boxplot" in advice["recommended"]
+    assert "分布" in advice["reason"]
+
+
+def test_generic_single_numeric_gains_distribution_plan(
+    tmp_path: Path, numeric_distribution_series: SemanticSeries
+):
+    catalog = _catalog(tmp_path, numeric_distribution_series)
+    plans = [
+        _plan(
+            "1",
+            "Bar",
+            numeric_distribution_series.series_id,
+            "销售额",
+            ["销售额"],
+            "销售额柱状图",
+        ),
+    ]
+
+    result = diversify_plans(plans, catalog, "分析一下销售数据")
+
+    assert len(result) == 2
+    assert any(chart_family(plan["chart_type"]) == "comparison" for plan in result)
+    assert any(chart_family(plan["chart_type"]) == "distribution" for plan in result)
+    assert any(
+        normalize_chart_type(plan["chart_type"]) in {"histogram", "boxplot"}
+        for plan in result
+    )
 
 
 def test_categorical_bars_gain_composition(

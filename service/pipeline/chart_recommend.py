@@ -297,6 +297,27 @@ def _info(
     return info
 
 
+def _supports_distribution(info: dict[str, Any]) -> bool:
+    """是否适合看单指标分布。
+
+    除了显式 ``axis_kind=distribution``，还支持“没有行标签、只有一列数值”的
+    generic series：这类数据本质是一组观测值，不应被强行当成类别柱状图。
+    """
+    if info["axis_kind"] == "distribution":
+        return True
+    series: SemanticSeries = info["series"]
+    if info["time_like"] or series.row_label_column:
+        return False
+    columns = [str(c) for c in (series.column_label_columns or [])]
+    numeric = info["numeric_columns"] or []
+    return (
+        len(columns) == 1
+        and len(numeric) == 1
+        and int(info["n"]) >= 5
+        and not bool(info["shape"].get("all_equal"))
+    )
+
+
 def recommend_chart_types(
     series: SemanticSeries,
     user_prompt: str = "",
@@ -498,7 +519,7 @@ def _convert_for_style(
         elif style == "composition" and info["pie_ok"] and old_family != "composition":
             _convert_plan(plan, new_type or "Pie", "少量非负类别适合看构成占比", logs)
             return plan
-        elif style == "distribution" and info["axis_kind"] == "distribution":
+        elif style == "distribution" and _supports_distribution(info):
             if old_family != "distribution":
                 _convert_plan(plan, new_type or "Histogram", "单指标分布适合看形状", logs)
                 return plan
@@ -534,7 +555,7 @@ def _candidate_series(
             if info["pie_ok"]:
                 candidates.append(info)
         elif style == "distribution":
-            if info["axis_kind"] == "distribution":
+            if _supports_distribution(info):
                 candidates.append(info)
         elif style == "relationship":
             if info["measures"] >= 2 and not info["time_like"]:
@@ -658,7 +679,7 @@ def _catalog_styles(
             supported.add("comparison")
         if info["pie_ok"]:
             supported.add("composition")
-        if info["axis_kind"] == "distribution":
+        if _supports_distribution(info):
             supported.add("distribution")
         if info["measures"] >= 2 and not info["time_like"]:
             supported.add("relationship")

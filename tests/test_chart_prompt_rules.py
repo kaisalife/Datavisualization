@@ -80,6 +80,12 @@ def test_generate_prompt_avoids_nonexistent_pyecharts_option_classes():
     assert "is_avoid_label_overlap=True" in agent_generate_chart_prompt
 
 
+def test_generate_prompt_explains_boxplot_api():
+    """推荐会落到 Boxplot，prompt 必须说明 prepare_data，避免把原始值直接传给 add_yaxis。"""
+    assert "from pyecharts.charts import Boxplot" in agent_generate_chart_prompt
+    assert "Boxplot.prepare_data" in agent_generate_chart_prompt
+
+
 def test_designer_prompt_requires_varied_chart_types():
     """规划阶段要避免所有图都用 Bar，并给出图表选择口径。"""
     for keyword in (
