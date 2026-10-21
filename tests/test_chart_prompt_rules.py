@@ -87,6 +87,10 @@ def test_generate_prompt_explains_boxplot_api():
     assert "同一个 x 类目" in agent_generate_chart_prompt
 
 
+def test_generate_prompt_histogram_bins_follow_sample_size():
+    assert "min(10, max(4, int(len(values) ** 0.5)))" in agent_generate_chart_prompt
+
+
 def test_generate_prompt_uses_real_treemap_class_name():
     """pyecharts 的类名是 TreeMap（大写 M），写成 Treemap 会直接 ImportError。"""
     assert "from pyecharts.charts import TreeMap" in agent_generate_chart_prompt

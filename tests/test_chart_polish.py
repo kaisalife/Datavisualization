@@ -409,6 +409,14 @@ def test_polish_is_idempotent():
     assert chart.dump_options() == first
 
 
+def test_bar_hides_zero_value_labels():
+    chart = Bar().add_xaxis(["A", "B", "C"]).add_yaxis("频数", [0, 5, 0])
+    polish_options(chart.options, width=900)
+
+    formatter = _label(chart.options["series"][0])["formatter"]
+    assert "v === 0" in formatter.js_code
+
+
 def test_dark_theme_uses_light_label_text():
     chart = Bar().add_xaxis(["A"]).add_yaxis("销售额", [1])
     polish_options(chart.options, width=900, dark=True)

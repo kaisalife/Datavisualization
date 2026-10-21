@@ -54,6 +54,17 @@ _LABEL_VALUE_JS = (
     " return v;"
     "}"
 )
+# 柱状图/直方图的 0 值标签没有信息量，且稀疏分箱时会把画布塞满
+_LABEL_VALUE_JS_HIDE_ZERO = (
+    "function (p) {"
+    " var v = p && p.value;"
+    " if (v === null || v === undefined || v === 0) { return ''; }"
+    " if (typeof v === 'number') {"
+    " return v.toLocaleString('zh-CN', { maximumFractionDigits: 2 });"
+    " }"
+    " return v;"
+    "}"
+)
 _TOOLTIP_VALUE_JS = (
     "function (value) {"
     " if (Array.isArray(value)) {"
@@ -753,7 +764,9 @@ def _polish_label(
     if label.get("formatter") is None:
         if series_type == "pie":
             label["formatter"] = "{b}: {d}%"
-        elif series_type in {"bar", "line"} and JsCode is not None:
+        elif series_type == "bar" and JsCode is not None:
+            label["formatter"] = JsCode(_LABEL_VALUE_JS_HIDE_ZERO)
+        elif series_type == "line" and JsCode is not None:
             label["formatter"] = JsCode(_LABEL_VALUE_JS)
 
     _set_missing(label, "fontFamily", FONT_FAMILY)

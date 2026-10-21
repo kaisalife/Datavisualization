@@ -210,6 +210,10 @@ $env:BACKEND_URL="http://localhost:5000"
   会扫描 prompt 中所有 `opts.XxxOpts` 并确认在当前版本真实存在，别写不存在的选项类
 - **矩形树图的类名是 `TreeMap`（大写 M）**，不是 `Treemap`；plan 里的 `chart_type` 仍写 `Treemap`，
   生成代码必须 `from pyecharts.charts import TreeMap`，否则 ImportError（已有 prompt 回归）
+- `Histogram` 用 `pd.cut` + `Bar`；分箱数按样本量
+  `min(10, max(4, int(len(values) ** 0.5)))`，不要固定 8/10 箱（小样本遇离群值会大量空柱）
+- `Boxplot` 叠加散点时，所有散点共用同一个 x 类目，不要 `add_xaxis([指标名] * n)`；
+  同位置 Grid 子图的重复坐标轴/图例由 `chart_polish` 合并
 
 ### 图表视觉质量后处理
 
@@ -223,7 +227,8 @@ $env:BACKEND_URL="http://localhost:5000"
 - 默认顶部居中图例与标题必然重叠时移到下方，并按标题/图例宽度估算右上角是否撞车；单图
   `grid.containLabel=True`，补 top/bottom 边距，避免轴标签被裁切
 - 数值轴/数据标签/tooltip 用 `toLocaleString('zh-CN')` 加千分位；tooltip 默认柱/折线用
-  `axis` 联动（自定义 formatter 时保留 `item`）
+  `axis` 联动（自定义 formatter 时保留 `item`）；柱状图/直方图默认隐藏 0 值数据标签，
+  避免稀疏分箱时一排 0 把画布塞满
 - 柱状图标签默认 `top`（横向 `right`、堆叠 `inside`），柱宽上限 42；饼图默认半径 32%–58%、
   标签 `{b}: {d}%`、`avoidLabelOverlap=True`
 - 类目点过多时自动隐藏标签（折线/柱 >20、饼 >15；多系列总点数 >20），折线 >30 点关闭
@@ -282,8 +287,9 @@ $env:BACKEND_URL="http://localhost:5000"
   `{{...}}`，否则模板把 `b/d` 当变量，生成阶段直接 `KeyError`。回归
   `tests/test_chart_prompt_rules.py::test_generate_prompt_template_can_be_formatted`。
 - 真机规划验过：12 个月月度数据产出 Area / Line / Scatter / Histogram；6 城市数据产出 Bar + Pie；
-  10 城市数据产出 Bar + TreeMap（`tests/test_file/test_chart_variety_e2e.py`），不再全是柱状图。
-  Area / Histogram / TreeMap 单图生成均成功（每张约 30–65 秒）。
+  10 城市数据产出 Bar + TreeMap，单列销售额产出 Boxplot + 观测散点
+  （`tests/test_file/test_chart_variety_e2e.py`），不再全是柱状图。
+  Area / Histogram / TreeMap / Boxplot 单图生成均成功（每张约 30–65 秒）。
 - 回归：`tests/test_series_shape.py`、`tests/test_chart_selection.py`、`tests/test_chart_prompt_rules.py`。
 
 ## Excel 合并表头 / 标题行

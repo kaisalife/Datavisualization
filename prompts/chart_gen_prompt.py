@@ -86,6 +86,8 @@ agent_generate_chart_prompt = """
   `areastyle_opts=opts.AreaStyleOpts(opacity=0.15)`；不要 import 不存在的 Area 类。
 - `Histogram`：pyecharts 2.1 没有 Histogram 类。用 `pd.cut` 对指标分箱、统计频数后，
   用 `Bar` 绘制（标题仍按 plan 写"分布/直方图"），不要写 `from pyecharts.charts import Histogram`。
+  分箱数按样本量取 `min(10, max(4, int(len(values) ** 0.5)))`，样本少或有离群值时
+  不要固定 8/10 箱，否则会出现大量 0 频数空柱。
 - `Boxplot`：用 `from pyecharts.charts import Boxplot`；单指标分布时
   `add_xaxis([指标名])`，`add_yaxis(指标名, Boxplot.prepare_data([数值列表]))`，
   不要把原始数值直接塞进 `add_yaxis`。叠加散点时所有观测值共用**同一个 x 类目**，
