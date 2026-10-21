@@ -61,6 +61,7 @@ function contextKindMeta(kind) {
     request: { icon: '📝', label: '需求' },
     data: { icon: '📊', label: '数据' },
     plan: { icon: '🧭', label: '计划' },
+    workflow: { icon: '🔁', label: '工作流' },
     validation: { icon: '✅', label: '校验' },
     artifact: { icon: '📁', label: '产物' },
   };

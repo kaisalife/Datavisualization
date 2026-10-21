@@ -67,7 +67,7 @@ async def test_end_to_end(real_agent, normal_csv: Path, tmp_path: Path):
     # 5. 上下文卡片与生成校验报告（本次设计新增契约）
     cards = result.get("context_cards") or []
     kinds = {card.get("kind") for card in cards}
-    assert {"request", "data", "plan", "validation", "artifact"} <= kinds
+    assert {"request", "data", "plan", "workflow", "validation", "artifact"} <= kinds
     assert (tmp_path / "plans" / "context_cards.json").exists()
     for chart in result["successful_charts"]:
         generation = chart.get("generation") or {}

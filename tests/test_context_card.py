@@ -62,17 +62,26 @@ def test_build_context_cards_covers_request_data_plan_validation_and_artifacts()
         [{
             "plan": plan,
             "chart_path": "runtime/charts/x/chart_p1.html",
-            "generation": {"code_path": "runtime/charts/x/code/code_p1_success.py"},
+            "generation": {
+                "code_path": "runtime/charts/x/code/code_p1_success.py",
+                "attempts": 2,
+                "duration_ms": 1234.5,
+            },
         }],
         [],
     )
     kinds = [c["kind"] for c in cards]
-    assert kinds == ["request", "data", "plan", "validation", "artifact"]
+    assert kinds == ["request", "data", "plan", "workflow", "validation", "artifact"]
 
     plan_card = next(c for c in cards if c["kind"] == "plan")
     assert plan_card["status"] == "warning"  # 有歧义
     assert any("求和还是平均" in i for i in plan_card["items"])
     assert any("按月份汇总销售额" in i for i in plan_card["items"])
+
+    workflow = next(c for c in cards if c["kind"] == "workflow")
+    assert workflow["status"] == "success"
+    assert any("成功 1 个 / 失败 0 个" in i for i in workflow["items"])
+    assert any("修复轮次：2 次" in i for i in workflow["items"])
 
     validation = next(c for c in cards if c["kind"] == "validation")
     assert validation["status"] == "success"
@@ -80,6 +89,8 @@ def test_build_context_cards_covers_request_data_plan_validation_and_artifacts()
     artifact = next(c for c in cards if c["kind"] == "artifact")
     assert artifact["status"] == "success"
     assert any("chart_p1.html" in i for i in artifact["items"])
+    assert any("生成尝试 2 次" in i for i in artifact["items"])
+    assert any("生成耗时 1.2 秒" in i for i in artifact["items"])
 
     text = cards_to_prompt_text(cards)
     assert "当前需求" in text

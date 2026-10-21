@@ -170,25 +170,41 @@ def _plan_card(plan: dict) -> dict:
 
 def _validation_card(plans: list[dict]) -> dict | None:
     items = []
+    seen = set()
     has_error = False
     has_warning = False
-    for plan in plans:
-        plan_id = _as_text(plan_get(plan, "plan_id", "?"))
-        generation = plan_get(plan, "generation", {}) or {}
-        report = (generation.get("validation") if isinstance(generation, dict) else None) \
-            or plan_get(plan, "validation", {}) or {}
+
+    def append_report(report: dict, plan_id: str, stage_label: str) -> None:
+        nonlocal has_error, has_warning
+        if not isinstance(report, dict):
+            return
         for error in (report.get("errors") or [])[:6]:
             has_error = True
             code = error.get("code", "ERROR")
             message = error.get("message", "")
-            items.append(f"plan {plan_id} [{code}] {message}")
+            key = (plan_id, stage_label, code, message)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(f"plan {plan_id} {stage_label}[{code}] {message}")
         for warning in (report.get("warnings") or [])[:4]:
             has_warning = True
             if isinstance(warning, dict):
                 message = warning.get("message", "")
             else:
                 message = str(warning)
-            items.append(f"plan {plan_id} 提示：{message}")
+            key = (plan_id, stage_label, "warning", message)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(f"plan {plan_id} {stage_label}提示：{message}")
+
+    for plan in plans:
+        plan_id = _as_text(plan_get(plan, "plan_id", "?"))
+        append_report(plan_get(plan, "validation", {}) or {}, plan_id, "计划")
+        generation = plan_get(plan, "generation", {}) or {}
+        if isinstance(generation, dict):
+            append_report(generation.get("validation") or {}, plan_id, "生成")
 
     if not items:
         return _card(
@@ -204,6 +220,49 @@ def _validation_card(plans: list[dict]) -> dict | None:
     )
 
 
+def _workflow_card(plans: list, successful_charts: list, failed_plans: list) -> dict:
+    chart_types = []
+    for plan in plans:
+        chart_type = _as_text(plan_get(plan, "chart_type", ""))
+        if chart_type:
+            chart_types.append(chart_type)
+
+    # 生产路径里 plan 与 chart item 共享同一份 generation；优先用 chart item，
+    # 避免重复累加。没有 chart item 时（例如只做了规划）再回退到 plan。
+    generation_sources = [
+        item.get("generation") for item in (successful_charts or []) + (failed_plans or [])
+        if isinstance(item, dict)
+    ]
+    if not generation_sources:
+        generation_sources = [plan_get(plan, "generation", {}) for plan in plans]
+    attempts = 0
+    for generation in generation_sources:
+        if isinstance(generation, dict):
+            try:
+                attempts += int(generation.get("attempts") or 0)
+            except (TypeError, ValueError):
+                pass
+
+    items = [f"规划：{len(plans)} 个图表计划"]
+    if chart_types:
+        items.append(f"图表类型：{', '.join(chart_types)}")
+    items.append(f"生成：成功 {len(successful_charts)} 个 / 失败 {len(failed_plans)} 个")
+    if attempts:
+        items.append(f"代码执行/修复轮次：{attempts} 次")
+    if successful_charts:
+        items.append("产物：HTML 与自包含 Python 代码已落盘")
+
+    status = "error" if failed_plans and not successful_charts else (
+        "warning" if failed_plans else ("success" if successful_charts else "info")
+    )
+    return _card(
+        "workflow", "workflow", "工作流",
+        text="数据接入 → 计划 → 生成 → 校验 → 产物",
+        items=items,
+        status=status,
+    )
+
+
 def _artifact_card(successful_charts: list, failed_plans: list) -> dict:
     items = []
     for item in successful_charts or []:
@@ -211,12 +270,22 @@ def _artifact_card(successful_charts: list, failed_plans: list) -> dict:
             continue
         plan = item.get("plan") or {}
         title = _as_text(plan_get(plan, "plan_name", "")) or _as_text(plan_get(plan, "plan_id", "图表"))
+        generation = item.get("generation") or {}
         html_path = _as_text(item.get("chart_path", ""))
-        code_path = _as_text((item.get("generation") or {}).get("code_path", ""))
+        code_path = _as_text(generation.get("code_path", ""))
         if html_path:
             items.append(f"{title} → {html_path}")
         if code_path:
             items.append(f"{title} 代码 → {code_path}")
+        attempts = generation.get("attempts")
+        if attempts:
+            items.append(f"{title} 生成尝试 {attempts} 次")
+        duration_ms = generation.get("duration_ms")
+        if duration_ms:
+            try:
+                items.append(f"{title} 生成耗时 {round(float(duration_ms) / 1000, 1)} 秒")
+            except (TypeError, ValueError):
+                pass
 
     for item in failed_plans or []:
         if not isinstance(item, dict):
@@ -262,6 +331,7 @@ def build_context_cards(
         _data_card(profile),
     ]
     cards.extend(_plan_card(plan) for plan in plans if plan is not None)
+    cards.append(_workflow_card(plans, successful_charts, failed_plans))
     validation = _validation_card(plans)
     if validation is not None:
         cards.append(validation)
