@@ -68,6 +68,10 @@
   直接拿它做 OpenAI 兼容调用时要自己加；`tests/conftest.py` 已注入。服务侧用同类网关时设
   `LLM_EXTRA_HEADERS`（JSON），`BaseAgent` / 多模态 / LLM 表格化 / 报告生成都会带上；Agent 输出上限用
   `AGENT_MAX_TOKENS`（推理模型同样要留足）。
+- **根 `.env` 可能是半套配置**（有 `BASE_URL`/`MODEL_NAME`、`API_KEY` 为空）。`tests/test_file/conftest.py`
+  必须整组回退到 `tests/.env`，不能逐项用 `or` 拼接，否则会把 opencode 的 key 发到 bigmodel 网关，
+  表现为 401“令牌已过期”，但直接调用 opencode 却成功。fixture 还会用新 UUID **覆盖**根 `.env` 里
+  残留的占位 `LLM_EXTRA_HEADERS`（保留其他自定义头）。
 - **新增任何 `ChatOpenAI` 构造点都要带** `default_headers=get_llm_extra_headers() or None`
   （`service/runtime/utils.py`），否则自定义网关直接 400。`get_env_int()` 也在这里，别再写本地小工具。
 - `deepseek-v4.1-flash` 是**推理模型**：`reasoning_tokens` 也占 `max_tokens`，给小了会

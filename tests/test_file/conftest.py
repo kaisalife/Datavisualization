@@ -24,11 +24,15 @@ def _llm_env() -> tuple[str, str, str, str]:
     model = os.getenv("MODEL_NAME", "")
     session = ""
     if not all((base_url, api_key, model)):
+        # 根 .env 只配了一半时（例如有 BASE_URL/MODEL_NAME 但没有 API_KEY），
+        # 不能逐项回退到 tests/.env，否则会把 opencode 的 key 发到 bigmodel 网关。
         test_env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-        base_url = base_url or (test_env.get("TEST_LLM_BASE_URL") or "")
-        api_key = api_key or (test_env.get("TEST_LLM_API_KEY") or "")
-        model = model or (test_env.get("TEST_LLM_MODEL") or "")
-        session = (test_env.get("TEST_LLM_SESSION") or "").strip()
+        test_base = (test_env.get("TEST_LLM_BASE_URL") or "").strip()
+        test_key = (test_env.get("TEST_LLM_API_KEY") or "").strip()
+        test_model = (test_env.get("TEST_LLM_MODEL") or "").strip()
+        if all((test_base, test_key, test_model)):
+            base_url, api_key, model = test_base, test_key, test_model
+            session = (test_env.get("TEST_LLM_SESSION") or "").strip()
     if "opencode.ai" in base_url:
         session = session or str(uuid.uuid4())
     return base_url, api_key, model, session
@@ -41,9 +45,18 @@ async def real_agent():
     if not all((base_url, api_key, model)):
         pytest.skip(".env 未配置 BASE_URL/API_KEY/MODEL_NAME")
 
-    # opencode 网关要求每次请求带 x-opencode-session；BaseAgent 通过该环境变量注入
-    if session and not os.getenv("LLM_EXTRA_HEADERS"):
-        os.environ["LLM_EXTRA_HEADERS"] = json.dumps({"x-opencode-session": session})
+    # opencode 网关要求 x-opencode-session；BaseAgent 通过该环境变量注入。
+    # 根 .env 里可能残留占位/过期 session，这里必须覆盖，同时保留其他自定义头。
+    if session:
+        extra_headers = {}
+        try:
+            extra_headers = json.loads(os.getenv("LLM_EXTRA_HEADERS") or "{}")
+            if not isinstance(extra_headers, dict):
+                extra_headers = {}
+        except ValueError:
+            extra_headers = {}
+        extra_headers["x-opencode-session"] = session
+        os.environ["LLM_EXTRA_HEADERS"] = json.dumps(extra_headers)
 
     from agent import BaseAgent
 
