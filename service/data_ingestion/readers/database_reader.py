@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from service.data_ingestion.models import RawTable, safe_table_name
+from service.data_ingestion.sql_safety import ensure_read_only
 from service.observability import get_logger
 
 logger = get_logger(__name__)
@@ -146,6 +147,11 @@ class DatabaseReader:
         db_type = _normalize_db_type(db_type)
         if not DatabaseReader.can_handle(db_type):
             raise ValueError(f"不支持的数据库类型: {db_type}")
+
+        # 自定义 SQL 直接交给驱动执行，先挡住写操作 / 多语句（误操作与注入）
+        query = str(query or "").strip()
+        if query:
+            ensure_read_only(query)
 
         conn = DatabaseReader._make_engine(db_config, db_type)
         source_path = f"{db_type}://{_mask_conn(db_config)}"

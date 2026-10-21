@@ -250,6 +250,12 @@ $env:BACKEND_URL="http://localhost:5000"
 前端设置里的数据库连接可填「表名」（逗号/分号分隔，Rust 侧序列化成 JSON 数组，后端也兼容字符串
 并统一归一化）或「自定义 SQL」（优先于表名），留空则读取全部表；这两个字段同时作用于预览和图表任务。
 
+自定义 SQL 统一经 `service/data_ingestion/sql_safety.py` 的 `ensure_read_only()` 校验：只接受单条
+`SELECT` / `VALUES` / `SHOW` / `EXPLAIN` / `DESCRIBE`，或主语句仍是 `SELECT` 的 `WITH` CTE；写操作、
+DDL、多语句（`select 1; drop table x`）在 `validate_source_configs` 阶段就返回 400，`DatabaseReader.read`
+执行前再校验一次（防绕过）。校验前会剥离字符串字面量和注释，`WHERE note = 'a;b'` 不会被误判。
+回归见 `tests/test_sql_safety.py`。
+
 设置面板的「测试连接」走 `POST /api/data-source/db-tables`（`DatabaseReader.list_tables`，建连超时 5 秒），
 返回排好序的表名，点击 chip 可填入「表名」：连接失败返回 502，配置非法（含 sqlite 文件不存在）返回 400。
 **sqlite 必须是已存在的文件**——`sqlite3.connect` 会自动建空库，`_make_engine` 提前拦截，避免路径写错时

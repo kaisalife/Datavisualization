@@ -71,6 +71,9 @@ api/
 | `viz_mode` | 可选 | string | `agent` / `auto`（默认，自主流水线）、`legacy` / `chart` / `scientific`（固定 plan 流水线） |
 | `multi_table` | 可选 | bool | `true` 时抽出图片 / PDF / Office 内嵌图片里的所有表（默认只取主表） |
 
+> `db_config.query` 只允许单条只读查询（`SELECT` / `WITH` / `SHOW` / `EXPLAIN`）；
+> 写操作或多语句（如 `select 1; drop table sales`）在提交阶段直接 `400`，不会进入任务队列。
+>
 > 图片 / PDF 会先经视觉模型抽成表格，再进入后续 series 拆分与图表生成。
 > Word / PPT / Excel 里的表格截图（内嵌图片）在文字层解析失败或退化时也会走视觉模型。
 > 视觉模型凭证优先用请求里的 `model_url` / `model_api_key`，其次
@@ -202,6 +205,7 @@ X-API-Key: <your_key>
 
 > `files` / `db_config` / `api_config` 至少提供一种，同时存在时优先 `files`。
 > 非法 JSON、未知数据库类型、缺 `database`（sqlite）/ `url`（API）会直接返回 `400`。
+> `db_config.query` 同样只允许单条只读查询，写操作 / 多语句返回 `400`。
 
 #### 响应
 

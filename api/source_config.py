@@ -10,6 +10,8 @@ import json
 import re
 from typing import Any
 
+from service.data_ingestion.sql_safety import ensure_read_only
+
 # 与 service/data_ingestion/readers/database_reader.py 支持的方言保持一致
 SUPPORTED_DB_TYPES = {"postgresql", "mysql", "sqlite"}
 _DB_TYPE_ALIASES = {"postgres": "postgresql"}
@@ -78,9 +80,17 @@ def validate_source_configs(
         归一化后的数据库类型；没有数据库配置时返回 None
 
     Raises:
-        ValueError: 数据库类型不支持、sqlite 缺路径、API 缺 url/api_type
+        ValueError: 数据库类型不支持、sqlite 缺路径、自定义 SQL 非只读、API 缺 url/api_type
     """
     normalize_db_tables(db_config)
+    if db_config is not None:
+        # 自定义 SQL 只允许单条只读查询；空值直接丢掉，交给表名模式
+        query = str(db_config.get("query") or "").strip()
+        if query:
+            ensure_read_only(query)
+            db_config["query"] = query
+        else:
+            db_config.pop("query", None)
     db_type = normalize_db_type(db_config)
     if db_type is not None:
         if db_type not in SUPPORTED_DB_TYPES:
