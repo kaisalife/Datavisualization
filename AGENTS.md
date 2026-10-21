@@ -204,6 +204,8 @@ $env:BACKEND_URL="http://localhost:5000"
 - **pyecharts 2.1 没有 `BarOpts` / `LineOpts`**：柱宽用 `add_yaxis(..., bar_max_width=42)`，
   折线点标记用 `add_yaxis(..., is_symbol_show=False)`；`tests/test_chart_prompt_rules.py`
   会扫描 prompt 中所有 `opts.XxxOpts` 并确认在当前版本真实存在，别写不存在的选项类
+- **矩形树图的类名是 `TreeMap`（大写 M）**，不是 `Treemap`；plan 里的 `chart_type` 仍写 `Treemap`，
+  生成代码必须 `from pyecharts.charts import TreeMap`，否则 ImportError（已有 prompt 回归）
 
 ### 图表视觉质量后处理
 

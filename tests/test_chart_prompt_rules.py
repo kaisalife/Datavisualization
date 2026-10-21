@@ -86,6 +86,12 @@ def test_generate_prompt_explains_boxplot_api():
     assert "Boxplot.prepare_data" in agent_generate_chart_prompt
 
 
+def test_generate_prompt_uses_real_treemap_class_name():
+    """pyecharts 的类名是 TreeMap（大写 M），写成 Treemap 会直接 ImportError。"""
+    assert "from pyecharts.charts import TreeMap" in agent_generate_chart_prompt
+    assert "from pyecharts.charts import Treemap" not in agent_generate_chart_prompt
+
+
 def test_designer_prompt_requires_varied_chart_types():
     """规划阶段要避免所有图都用 Bar，并给出图表选择口径。"""
     for keyword in (

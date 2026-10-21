@@ -89,8 +89,9 @@ agent_generate_chart_prompt = """
 - `Boxplot`：用 `from pyecharts.charts import Boxplot`；单指标分布时
   `add_xaxis([指标名])`，`add_yaxis(指标名, Boxplot.prepare_data([数值列表]))`，
   不要把原始数值直接塞进 `add_yaxis`。
-- `Treemap`：用 `from pyecharts.charts import Treemap`，数据传
-  `[{{"value": 数值, "name": 类别}}]`；不要在类别很多时改用看不清的饼图。
+- `Treemap`：pyecharts 的类名是 `TreeMap`（大写 M），用
+  `from pyecharts.charts import TreeMap`；数据传 `[{{"value": 数值, "name": 类别}}]`；
+  类名不要写成 `Treemap`（会 ImportError），也不要在类别很多时改用看不清的饼图。
 - `Heatmap`：用 `HeatMap`，数据传 `[x_index, y_index, value]`，并设置 visualmap。
 - 其他类型严格按 RAG 参考文档的真实 API 写，拿不准时优先用 Bar/Line/Pie/Scatter。
 
