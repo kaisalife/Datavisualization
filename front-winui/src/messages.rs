@@ -8,7 +8,12 @@ pub enum MainMessage {
     WindowResized,
     BridgeAction(BridgeMessage),
     TaskStarted(String),
-    TaskCompleted { charts: Vec<String>, html_files: Vec<String>, codes: Vec<String> },
+    TaskCompleted {
+        charts: Vec<String>,
+        html_files: Vec<String>,
+        codes: Vec<String>,
+        context_cards: Vec<serde_json::Value>,
+    },
     TaskFailed(String),
     TaskCancelled,
     AppendLog(String),

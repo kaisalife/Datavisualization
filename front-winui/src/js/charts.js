@@ -55,6 +55,81 @@ function renderChartGrid(container, items) {
   container.appendChild(grid);
 }
 
+// ===== 上下文卡片：需求 / 数据 / 计划 / 校验 / 产物 =====
+function contextKindMeta(kind) {
+  const map = {
+    request: { icon: '📝', label: '需求' },
+    data: { icon: '📊', label: '数据' },
+    plan: { icon: '🧭', label: '计划' },
+    validation: { icon: '✅', label: '校验' },
+    artifact: { icon: '📁', label: '产物' },
+  };
+  return map[kind] || { icon: '•', label: '信息' };
+}
+
+function renderContextCards(container, cards) {
+  if (!container) return;
+  container.innerHTML = '';
+  if (!cards || cards.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = 'block';
+
+  const panel = document.createElement('details');
+  panel.className = 'context-panel';
+  panel.open = true;
+
+  const summary = document.createElement('summary');
+  summary.className = 'context-summary';
+  const errorCount = cards.filter(c => c.status === 'error').length;
+  const warnCount = cards.filter(c => c.status === 'warning').length;
+  let summaryText = '方案与校验 · ' + cards.length + ' 项';
+  if (errorCount > 0) summaryText += ' · ' + errorCount + ' 个错误';
+  else if (warnCount > 0) summaryText += ' · ' + warnCount + ' 个提示';
+  summary.textContent = summaryText;
+  panel.appendChild(summary);
+
+  const grid = document.createElement('div');
+  grid.className = 'context-grid';
+  cards.forEach(card => {
+    const el = document.createElement('div');
+    el.className = 'context-card context-' + (card.status || 'info');
+
+    const header = document.createElement('div');
+    header.className = 'context-card-header';
+    const dot = document.createElement('span');
+    dot.className = 'context-dot';
+    const meta = contextKindMeta(card.kind);
+    const title = document.createElement('span');
+    title.className = 'context-card-title';
+    title.textContent = meta.icon + ' ' + (card.title || meta.label);
+    header.appendChild(dot);
+    header.appendChild(title);
+    el.appendChild(header);
+
+    if (card.text) {
+      const text = document.createElement('div');
+      text.className = 'context-card-text';
+      text.textContent = card.text;
+      el.appendChild(text);
+    }
+    if (card.items && card.items.length > 0) {
+      const list = document.createElement('ul');
+      list.className = 'context-card-items';
+      card.items.slice(0, 8).forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        list.appendChild(li);
+      });
+      el.appendChild(list);
+    }
+    grid.appendChild(el);
+  });
+  panel.appendChild(grid);
+  container.appendChild(panel);
+}
+
 // ===== Chart Viewer 全屏查看器 =====
 function openChartViewer(item) {
   document.getElementById('cvTitle').textContent = item.title || item.chartType || '图表预览';

@@ -162,14 +162,16 @@ impl MainModel {
                         match ws_result {
                             Ok(Ok(Ok(notification))) => {
                                 if notification.status == "success" {
-                                    let (html_files, charts, codes, agent_logs) = match notification.result {
-                                        Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs),
-                                        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+                                    let (html_files, charts, codes, agent_logs, context_cards) = match notification.result {
+                                        Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs, r.context_cards),
+                                        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
                                     };
                                     for log in agent_logs {
                                         sender.post(MainMessage::AppendLog(log));
                                     }
-                                    sender.post(MainMessage::TaskCompleted { charts, html_files, codes });
+                                    sender.post(MainMessage::TaskCompleted {
+                                        charts, html_files, codes, context_cards,
+                                    });
                                 } else if notification.status == "cancelled" {
                                     sender.post(MainMessage::TaskCancelled);
                                 } else {
@@ -212,14 +214,16 @@ impl MainModel {
                                     use api::types::TaskStatus;
                                     match task_resp.status {
                                         TaskStatus::Success => {
-                                            let (html_files, charts, codes, agent_logs) = match task_resp.result {
-                                                Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs),
-                                                None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+                                            let (html_files, charts, codes, agent_logs, context_cards) = match task_resp.result {
+                                                Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs, r.context_cards),
+                                                None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
                                             };
                                             for log in agent_logs {
                                                 sender.post(MainMessage::AppendLog(log));
                                             }
-                                            sender.post(MainMessage::TaskCompleted { charts, html_files, codes });
+                                            sender.post(MainMessage::TaskCompleted {
+                                                charts, html_files, codes, context_cards,
+                                            });
                                         }
                                         TaskStatus::Cancelled => {
                                             sender.post(MainMessage::TaskCancelled);
@@ -861,6 +865,7 @@ impl MainModel {
         let charts = detail.charts.clone().unwrap_or_default();
         let html_files = detail.html_file_paths.clone().unwrap_or_default();
         let codes = detail.codes.clone().unwrap_or_default();
+        let context_cards = detail.context_cards.clone().unwrap_or_default();
         let chart_items: Vec<serde_json::Value> = html_files
             .iter()
             .enumerate()
@@ -883,6 +888,7 @@ impl MainModel {
             "status": detail.status,
             "agent_logs": detail.agent_logs,
             "chart_items": chart_items,
+            "context_cards": context_cards,
             "error": detail.error,
             "created_at": detail.created_at,
         });
@@ -909,6 +915,7 @@ impl MainModel {
         charts: Vec<String>,
         html_files: Vec<String>,
         codes: Vec<String>,
+        context_cards: Vec<serde_json::Value>,
     ) -> std::result::Result<bool, Error> {
         // 防竞态:已取消则忽略过期的完成回调
         if !self.is_generating {
@@ -921,7 +928,12 @@ impl MainModel {
         let total = html_files.len();
         if total == 0 {
             self.js_complete_task(
-                &serde_json::json!({ "type": "charts", "items": [] }).to_string(),
+                &serde_json::json!({
+                    "type": "charts",
+                    "items": [],
+                    "contextCards": context_cards,
+                })
+                .to_string(),
             );
         } else {
             let items: Vec<serde_json::Value> = (0..total)
@@ -943,6 +955,7 @@ impl MainModel {
             let chart_json = serde_json::json!({
                 "type": "charts",
                 "items": items,
+                "contextCards": context_cards,
             })
             .to_string();
             self.js_complete_task(&chart_json);

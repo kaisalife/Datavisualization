@@ -74,6 +74,8 @@ window.app = {
     window.app.stopStageTimer();
     state.lastChartData = parsed;
     if (state.activeTaskEl) {
+      const context = state.activeTaskEl.querySelector('.task-context');
+      if (context) renderContextCards(context, parsed.contextCards || []);
       const container = state.activeTaskEl.querySelector('.task-charts');
       if (container) renderChartGrid(container, parsed.items || []);
       const summary = state.activeTaskEl.querySelector('.task-summary');
@@ -310,7 +312,11 @@ window.app = {
     // 5. 根据状态完成或失败
     if (status === 'success') {
       const items = d.chart_items || [];
-      window.app.completeTask(JSON.stringify({ type: 'charts', items: items }));
+      window.app.completeTask(JSON.stringify({
+        type: 'charts',
+        items: items,
+        contextCards: d.context_cards || [],
+      }));
     } else if (status === 'failed') {
       window.app.failTask(d.error || '任务失败');
     }

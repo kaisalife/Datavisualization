@@ -116,7 +116,9 @@ impl Component for MainModel {
             MainMessage::WindowResized => Ok(true),
             MainMessage::BridgeAction(msg) => self.handle_bridge_action(msg, sender).await,
             MainMessage::TaskStarted(task_id) => self.handle_task_started(task_id),
-            MainMessage::TaskCompleted { charts, html_files, codes } => self.handle_task_completed(charts, html_files, codes),
+            MainMessage::TaskCompleted { charts, html_files, codes, context_cards } => {
+                self.handle_task_completed(charts, html_files, codes, context_cards)
+            }
             MainMessage::TaskFailed(err) => self.handle_task_failed(err),
             MainMessage::TaskCancelled => self.handle_task_cancelled(),
             MainMessage::AppendLog(msg) => self.handle_append_log(msg),

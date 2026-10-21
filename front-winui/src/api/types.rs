@@ -121,6 +121,9 @@ pub struct TaskResult {
     /// 生成代码列表（与 HtmlFilePaths 一一对应）
     #[serde(rename = "Codes", default)]
     pub codes: Vec<String>,
+    /// 结构化上下文卡片（需求/数据/计划/校验/产物）
+    #[serde(rename = "ContextCards", default)]
+    pub context_cards: Vec<serde_json::Value>,
 }
 
 // ============================================================
@@ -217,6 +220,9 @@ pub struct ConversationDetail {
     pub charts: Option<Vec<String>>,
     pub html_file_paths: Option<Vec<String>>,
     pub codes: Option<Vec<String>>,
+    /// 结构化上下文卡片（历史对话）
+    #[serde(default)]
+    pub context_cards: Option<Vec<serde_json::Value>>,
     pub error: Option<String>,
     pub created_at: String,
     pub updated_at: Option<String>,
