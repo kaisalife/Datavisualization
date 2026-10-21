@@ -273,8 +273,9 @@ $env:BACKEND_URL="http://localhost:5000"
 - **ChatPromptTemplate 花括号坑**：prompt 里的 JSON 示例、`formatter="{b}: {d}%"` 必须写成
   `{{...}}`，否则模板把 `b/d` 当变量，生成阶段直接 `KeyError`。回归
   `tests/test_chart_prompt_rules.py::test_generate_prompt_template_can_be_formatted`。
-- 真机规划验过：12 个月月度数据产出 Area / Line / Scatter / Histogram；6 城市数据产出 Bar + Pie，
-  不再全是柱状图。Area / Histogram 单图生成均成功（约 44–65 秒）。
+- 真机规划验过：12 个月月度数据产出 Area / Line / Scatter / Histogram；6 城市数据产出 Bar + Pie；
+  10 城市数据产出 Bar + TreeMap（`tests/test_file/test_chart_variety_e2e.py`），不再全是柱状图。
+  Area / Histogram / TreeMap 单图生成均成功（每张约 30–65 秒）。
 - 回归：`tests/test_series_shape.py`、`tests/test_chart_selection.py`、`tests/test_chart_prompt_rules.py`。
 
 ## Excel 合并表头 / 标题行

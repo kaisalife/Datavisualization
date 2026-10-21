@@ -1,0 +1,77 @@
+"""图表丰富度端到端回归（真实模型）：较多类别时 Bar + Treemap 都能生成。
+
+默认测试集排除 needs_llm；显式运行：
+
+    .venv/Scripts/python.exe -m pytest tests/test_file/test_chart_variety_e2e.py \
+        -o addopts="" -m "needs_llm and integration" -q
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from service.data_ingestion import DataSource, ingest
+from service.pipeline.agent_pipeline import run_agent_pipeline
+from service.pipeline.chart_recommend import chart_family, normalize_chart_type
+
+pytestmark = [pytest.mark.needs_llm, pytest.mark.integration]
+
+
+@pytest.fixture
+def many_cities_csv(tmp_path: Path) -> Path:
+    path = tmp_path / "多城市销售.csv"
+    rows = [
+        ("城市", "销售额"),
+        ("北京", 980), ("上海", 870), ("广州", 760), ("深圳", 620),
+        ("杭州", 580), ("成都", 540), ("武汉", 510), ("南京", 480),
+        ("西安", 450), ("重庆", 420),
+    ]
+    path.write_text(
+        "\n".join(f"{city},{value}" for city, value in rows) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+async def test_many_categories_generate_bar_and_treemap(
+    real_agent, many_cities_csv: Path, tmp_path: Path
+):
+    profile = await ingest(
+        DataSource(kind="file", path=str(many_cities_csv), name="多城市销售")
+    )
+    model_ = SimpleNamespace(
+        user_prompt="分析各城市销售额：画两个图，对比各城市销售额，并看销售额构成",
+        file_paths=[str(many_cities_csv)],
+        config=None,
+        mcp_prompt="",
+        skill_prompt="",
+        model_type="deepseek",
+    )
+
+    result = await run_agent_pipeline(
+        real_agent, model_, profile, tmp_path, task_id=None, max_iterations=18
+    )
+    logs = result["agent_logs"]
+
+    assert result["successful_charts"], "未产出任何图表:\n" + "\n".join(logs[-8:])
+    assert len(result["successful_charts"]) == 2, "\n".join(logs[-8:])
+
+    chart_types = [
+        normalize_chart_type((chart.get("plan") or {}).get("chart_type", ""))
+        for chart in result["successful_charts"]
+    ]
+    families = {chart_family(t) for t in chart_types}
+    assert "comparison" in families
+    assert "composition" in families
+    assert "treemap" in chart_types, chart_types
+
+    for chart in result["successful_charts"]:
+        html = Path(chart["chart_path"])
+        assert html.exists() and html.stat().st_size > 0
+        generation = chart.get("generation") or {}
+        assert generation.get("ok") is True
+        data = (generation.get("validation") or {}).get("data") or {}
+        if normalize_chart_type((chart.get("plan") or {}).get("chart_type", "")) == "treemap":
+            assert data.get("types") == ["treemap"], data
