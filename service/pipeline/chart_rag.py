@@ -1,13 +1,14 @@
 """图表生成 RAG 检索（从 chart_generator.py 拆出）。
 
-查询以图表类型为核心：知识库文档开头带 ``图表类型 / 功能标签`` 元信息，
-用「柱状图 Bar 基础 多系列 示例」这类中文功能词检索，比英文
-``pyecharts Bar chart example`` 更容易命中 ``bar_base.md`` 这类基础示例。
-
-不拼 plan_description / data_analysis / chart_title：业务标题会稀释 embedding
-主语义，而标题本身已经由生成 prompt 单独提供。
+检索策略（对应 docs/论文参考与系统设计.md 的 RGVisNet 落地）：
+1. 查询以图表类型为核心，叠加分析任务、多系列/布局等 API 特征；
+2. 不拼业务标题，避免稀释 embedding 主语义；
+3. 检索后优先保留与目标图表类型一致的文档，过滤失败时回退到原始结果；
+4. 去重并限制注入数量，避免把不相关/重复示例塞进生成 prompt。
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 try:
     from Entity.plan_models import plan_get
@@ -60,23 +61,141 @@ _CHART_QUERIES = {
     "dataset": "Dataset 数据集 转换 示例",
 }
 
+# 分析任务 -> 检索补充词
+_ANALYSIS_QUERIES = {
+    "trend": "趋势 时间序列",
+    "comparison": "对比 排名",
+    "composition": "占比 构成",
+    "distribution": "分布",
+    "relationship": "关系 相关性",
+}
 
-def build_rag_query(chart_type: str) -> str:
-    """为图表类型构造检索 query（纯函数，便于测试）。"""
-    raw = str(chart_type or "").strip()
-    key = raw.lower().replace("_", "").replace(" ", "")
-    if key in _CHART_QUERIES:
-        return _CHART_QUERIES[key]
-    # 未知类型：保留原始类型名，让向量检索仍有机会命中
-    return f"{raw or '图表'} 图表示例"
+# 图表类型 -> 知识库目录名（过滤 source 用）；未列出的按小写名匹配
+_CHART_FOLDER_ALIASES = {
+    "kline": "candlestick",
+    "heatmap": "heatmap",
+    "treemap": "treemap",
+    "effectscatter": "effectscatter",
+    "wordcloud": "wordcloud",
+    "themeriver": "themeriver",
+}
+
+_DEFAULT_MAX_DOCS = 4
 
 
-def retrieve_reference_docs(retriever, plan: dict) -> str:
-    """按 plan 的图表类型检索 pyecharts 参考文档。
+def _normalize_chart_key(value: str) -> str:
+    """把 Bar / HeatMap / heat_map 统一成小写无分隔形式。"""
+    return str(value or "").strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+
+
+def _plan_dict(chart_type_or_plan) -> tuple[str, dict]:
+    """兼容旧的字符串参数和新的 plan dict 参数。"""
+    if isinstance(chart_type_or_plan, dict):
+        plan = chart_type_or_plan
+        return str(plan_get(plan, "chart_type", "") or ""), plan
+    return str(chart_type_or_plan or ""), {}
+
+
+def build_rag_query(chart_type_or_plan: str | dict = "") -> str:
+    """为图表类型/plan 构造检索 query（纯函数，便于测试）。
+
+    兼容 ``build_rag_query("Bar")`` 的旧调用；传入 plan dict 时会额外拼接
+    analysis_task、多系列、变换和布局等特征，但不拼业务标题。
+    """
+    raw, plan = _plan_dict(chart_type_or_plan)
+    key = _normalize_chart_key(raw)
+
+    base = _CHART_QUERIES.get(key)
+    if not base:
+        base = f"{raw.strip() or '图表'} 图表示例"
+
+    extras: list[str] = []
+    if plan:
+        task = str(plan_get(plan, "analysis_task", "") or "").strip().lower()
+        if task in _ANALYSIS_QUERIES:
+            extras.append(_ANALYSIS_QUERIES[task])
+
+        y_axis = plan_get(plan, "y_axis", None)
+        if isinstance(y_axis, list) and len(y_axis) > 1:
+            extras.append("多系列")
+
+        if str(plan_get(plan, "transform_hint", "") or "").strip():
+            extras.append("数据变换")
+
+        layout = plan_get(plan, "layout", None)
+        if isinstance(layout, dict):
+            if layout.get("grid_top") or layout.get("grid_bottom"):
+                extras.append("布局边距")
+            if layout.get("legend_pos"):
+                extras.append("图例")
+
+    if not extras:
+        return base
+    # 去重且保持顺序
+    deduped = list(dict.fromkeys(extras))
+    return " ".join([base, *deduped])
+
+
+def infer_doc_chart_type(doc) -> str:
+    """从文档元数据/来源路径推断图表类型，供检索过滤。
+
+    知识库按 ``RAG_Data/<Bar|Line|...>/xxx.md`` 组织；TextLoader 会把
+    ``source`` 写进 metadata。没有 source 的假文档返回空串，走回退逻辑。
+    """
+    metadata = getattr(doc, "metadata", None) or {}
+    explicit = metadata.get("chart_type")
+    if explicit:
+        return _normalize_chart_key(str(explicit))
+
+    source = metadata.get("source")
+    if not source:
+        return ""
+    try:
+        folder = Path(str(source)).parent.name
+    except Exception:
+        return ""
+    return _normalize_chart_key(folder)
+
+
+def filter_reference_docs(docs: list, plan: dict, max_docs: int = _DEFAULT_MAX_DOCS) -> list:
+    """按目标图表类型过滤、去重并限制注入数量。
+
+    过滤结果为空时回退到原始 docs（知识库目录命名不一致/旧文档时仍能工作）。
+    """
+    if not docs:
+        return []
+
+    target = _normalize_chart_key(str(plan_get(plan, "chart_type", "") or ""))
+    if not target:
+        selected = list(docs)
+    else:
+        expected = _CHART_FOLDER_ALIASES.get(target, target)
+        matched = [d for d in docs if infer_doc_chart_type(d) == expected]
+        selected = matched or list(docs)
+
+    seen: set[tuple[str, str]] = set()
+    result = []
+    for doc in selected:
+        metadata = getattr(doc, "metadata", None) or {}
+        source = str(metadata.get("source") or "")
+        content = str(getattr(doc, "page_content", "") or "")
+        key = (source, content[:160])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(doc)
+        if len(result) >= max(1, int(max_docs)):
+            break
+    return result
+
+
+def retrieve_reference_docs(retriever, plan: dict, max_docs: int = _DEFAULT_MAX_DOCS) -> str:
+    """按 plan 的图表类型/分析任务检索 Pyecharts 参考文档。
 
     Args:
         retriever: RAGRetriever（None 时返回空串）
-        plan: 计划 dict（chart_type）
+        plan: 计划 dict
+        max_docs: 最多注入的示例数量
 
     Returns:
         参考文档拼接文本；无结果返回空串
@@ -85,16 +204,25 @@ def retrieve_reference_docs(retriever, plan: dict) -> str:
         return ""
 
     chart_type = plan_get(plan, "chart_type", "Line")
-    search_query = build_rag_query(chart_type)
+    search_query = build_rag_query(plan)
 
-    logger.info("正在检索相关文档", search_query=search_query)
+    logger.info("正在检索相关文档", search_query=search_query, chart_type=chart_type)
     try:
         docs = retriever.retrieve(search_query)
         if not docs:
-            logger.warning("未找到相关示例")
+            logger.warning("未找到相关示例", chart_type=chart_type)
             return ""
-        logger.info("找到示例", count=len(docs))
-        return "\n\n---\n\n".join(doc.page_content for doc in docs)
+        selected = filter_reference_docs(docs, plan, max_docs=max_docs)
+        if not selected:
+            logger.warning("检索结果被过滤为空", chart_type=chart_type, raw_count=len(docs))
+            return ""
+        logger.info(
+            "找到示例",
+            count=len(selected),
+            raw_count=len(docs),
+            chart_type=chart_type,
+        )
+        return "\n\n---\n\n".join(doc.page_content for doc in selected)
     except Exception as e:
         logger.warning("检索失败", error=str(e))
         return ""
