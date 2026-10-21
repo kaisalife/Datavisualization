@@ -73,6 +73,44 @@ def test_bar_defaults_are_polished():
     assert "#4E79A7" in dumped
 
 
+def test_x_axis_name_is_centered_and_not_clipped():
+    """x 轴名称不能贴着轴末端画，否则长名称会在右侧被裁掉。"""
+    chart = (
+        Bar()
+        .add_xaxis(["北京", "上海", "广州", "深圳"])
+        .add_yaxis("销售额", [1200, 1500, 900, 1100])
+        .set_global_opts(
+            title_opts=opts.TitleOpts(title="各城市销售额"),
+            xaxis_opts=opts.AxisOpts(name="城市"),
+            yaxis_opts=opts.AxisOpts(name="销售额（万元）"),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    x_axis = _dict(chart.options["xAxis"][0])
+    assert x_axis["nameLocation"] == "middle"
+    assert x_axis["nameGap"] >= 30
+    assert chart.options["grid"][0]["bottom"] == "16%"
+
+
+def test_rotated_x_labels_reserve_space_for_axis_name():
+    """旋转标签 + 轴名时需要更大的底部边距和 nameGap。"""
+    categories = [f"2023年第{i}季度" for i in range(1, 9)]
+    chart = (
+        Bar()
+        .add_xaxis(categories)
+        .add_yaxis("销售额", list(range(8)))
+        .set_global_opts(xaxis_opts=opts.AxisOpts(name="季度"))
+    )
+    polish_options(chart.options, width=600)
+
+    x_axis = _dict(chart.options["xAxis"][0])
+    assert _dict(x_axis["axisLabel"])["rotate"] in (30, 45, 60)
+    assert x_axis["nameLocation"] == "middle"
+    assert x_axis["nameGap"] >= 60
+    assert chart.options["grid"][0]["bottom"] == "20%"
+
+
 def test_horizontal_bar_labels_are_on_the_right():
     chart = (
         Bar()

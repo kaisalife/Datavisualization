@@ -42,7 +42,7 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 341 passed / 21 deselected）
+.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 343 passed / 21 deselected）
 .venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
 .venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
 .venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
@@ -212,6 +212,8 @@ $env:BACKEND_URL="http://localhost:5000"
 自定义 tooltip。规则：
 
 - 统一 Tableau 10 调色板（`set_colors` 显式配置优先）；中文无衬线字体；标题居中 + 2% 顶距
+- x 轴名称默认贴右端（`nameLocation="end"`）会被画布裁掉：统一改为居中，并按类目标签旋转角度
+  补 `nameGap`（无旋转 30、30°/45°/60° 依次 64/72/81）；有轴名时底部预留 16%，标签旋转时 20%
 - 默认顶部居中图例与标题必然重叠时移到下方，并按标题/图例宽度估算右上角是否撞车；单图
   `grid.containLabel=True`，补 top/bottom 边距，避免轴标签被裁切
 - 数值轴/数据标签/tooltip 用 `toLocaleString('zh-CN')` 加千分位；tooltip 默认柱/折线用

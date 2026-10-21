@@ -196,6 +196,19 @@ def _axis_is_value(axis: dict[str, Any] | None) -> bool:
     return not isinstance(data, (list, tuple)) or len(data) == 0
 
 
+def _axis_label_rotate(axis: dict[str, Any] | None) -> int:
+    """读取类目标签旋转角度；缺省/非法值按 0 处理。"""
+    if axis is None:
+        return 0
+    label = _opts_dict(axis.get("axisLabel"))
+    if label is None:
+        return 0
+    try:
+        return abs(int(label.get("rotate") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _is_cartesian(options: dict[str, Any]) -> bool:
     if not (_series_types(options) & _CARTESIAN_SERIES):
         return False
@@ -376,7 +389,6 @@ def _polish_grid(options: dict[str, Any]) -> None:
     if not _is_cartesian(options):
         return
 
-    series = _series(options)
     legends = list(_iter_dicts(options.get("legend")))
     legend_top = any(_legend_at_top(node) and node.get("show") is not False for node in legends)
     legend_bottom = any(_legend_at_bottom(node) and node.get("show") is not False for node in legends)
@@ -389,7 +401,21 @@ def _polish_grid(options: dict[str, Any]) -> None:
         default_top = "13%"
     else:
         default_top = "10%"
-    default_bottom = "18%" if has_data_zoom else ("14%" if legend_bottom else "10%")
+
+    # x 轴名称居中后需要额外的底部空间，否则会压住旋转后的类目标签或跑出画布
+    x_axes = list(_iter_dicts(options.get("xAxis")))
+    has_x_name = any(str(axis.get("name") or "").strip() for axis in x_axes)
+    x_rotated = any(_axis_label_rotate(axis) > 0 for axis in x_axes)
+    if has_x_name and x_rotated:
+        default_bottom = "20%"
+    elif has_x_name:
+        default_bottom = "16%"
+    elif has_data_zoom:
+        default_bottom = "18%"
+    elif legend_bottom:
+        default_bottom = "14%"
+    else:
+        default_bottom = "10%"
 
     grids = list(_iter_dicts(options.get("grid")))
     if not grids:
@@ -412,6 +438,27 @@ def _polish_grid(options: dict[str, Any]) -> None:
             _set_missing(grid, "left", "8%")
             _set_missing(grid, "right", "4%")
     # 多图 Grid 的间距由调用方控制，这里只补 containLabel，避免破坏布局
+
+
+def _center_x_axis_name(axis: dict[str, Any]) -> None:
+    """把默认靠右的 x 轴名称移到中间，避免长名称在画布右侧被裁掉。
+
+    pyecharts 默认 ``nameLocation="end"``，名称贴着轴末端绘制，右侧只剩 4%–5%
+    边距时经常只露出半个字。名称居中后按标签旋转角度补足 ``nameGap``；
+    用户显式设置 ``start`` / ``middle`` 等位置时不改动。
+    """
+    if not str(axis.get("name") or "").strip():
+        return
+    location = str(axis.get("nameLocation") or "end").lower()
+    if location not in {"", "end"}:
+        return
+
+    rotate = _axis_label_rotate(axis)
+    gap = 30 if rotate <= 0 else int(48 + rotate * 0.55)
+    axis["nameLocation"] = "middle"
+    current_gap = axis.get("nameGap")
+    if not isinstance(current_gap, (int, float)) or current_gap < gap:
+        axis["nameGap"] = gap
 
 
 def _polish_axes(options: dict[str, Any], *, dark: bool, width: int) -> None:
@@ -447,6 +494,10 @@ def _polish_axes(options: dict[str, Any], *, dark: bool, width: int) -> None:
                     if line_style is not None:
                         _set_missing(line_style, "type", "dashed")
                         _set_missing(line_style, "opacity", 0.45)
+
+            # 旋转角度确定后再居中轴名，才能按实际角度留出 nameGap
+            if axis_key == "xAxis":
+                _center_x_axis_name(axis)
 
 
 def _rotate_category_labels(
@@ -777,9 +828,10 @@ def polish_options(
             legend["right"] = None
             legend["orient"] = "horizontal"
 
-    # 3. 布局 / 坐标轴 / tooltip / series
-    _polish_grid(options)
+    # 3. 坐标轴 / 布局 / tooltip / series
+    # 先把类目标签旋转和 x 轴名称定下来，_polish_grid 才能据此预留底部空间
     _polish_axes(options, dark=dark, width=width_px)
+    _polish_grid(options)
     _polish_tooltip(options, dark=dark)
     _polish_series(options, dark=dark)
 
