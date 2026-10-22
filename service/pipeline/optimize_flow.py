@@ -57,6 +57,21 @@ def _dataset_summary_from_data(data_path: str) -> str:
         return "(未提供)"
 
 
+def _strip_injection_header(code: str) -> str:
+    """原始 success 代码去掉守护层注入的 series 读取段（进 prompt 前剥离）。
+
+    注入段是确定性产物（优化时会重新注入），留在"原始成功代码"里只会诱导
+    agent 复制它，进而与优化后的注入段重复加载 parquet。
+    """
+    if not code.lstrip().startswith("# --- series:"):
+        return code
+    marker = "# --- end series ---"
+    idx = code.find(marker)
+    if idx == -1:
+        return code
+    return code[idx + len(marker):].lstrip("\n")
+
+
 def _serialize_result(item: dict | None, chart_path: str, code: str) -> dict:
     return {
         "plan": item or {},
@@ -104,7 +119,7 @@ async def optimize_chart_main(model_, config_path=None, task_id=None):
     code_path = Path(asset.get("code_path") or "")
     if not code_path.is_file():
         raise ConfigError(f"原始成功代码缺失: {code_path}")
-    original_code = code_path.read_text(encoding="utf-8")
+    original_code = _strip_injection_header(code_path.read_text(encoding="utf-8"))
 
     data_path = str(asset.get("data_path") or "")
     if not data_path:

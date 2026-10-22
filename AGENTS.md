@@ -592,6 +592,33 @@ runtime/charts/<首个上传文件 stem>/          # 可用 CHARTS_DIR 覆盖
   `run_python_safely` 也给子进程注入 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1`，否则沙箱里
   print 的中文会被父进程按 UTF-8 解码成替换字符，debug 反馈和图表数据摘要都会失真。
 
+## 单图二次优化（多轮对话）
+
+用户对**已成功生成**的图表提修改（改标题/配色/Top-N…）时，只跑优化 agent，不重跑
+数据接入与规划：
+
+- **资产登记**：生成成功路径自动写 `runtime/charts/<数据集>/assets.json`
+  （`service/runtime/chart_assets.py`，弱依赖、含路径穿越校验）；登记字段有
+  plan/series 数据路径/代码路径，二次优化全靠它反查。优化产物登记为
+  `<原 plan_id>_opt<N>`（`origin_chart_id` 指向原图，`version` 递增），原图/原代码
+  **永不覆盖**。
+- **优化 API**：`POST /api/optimize-chart`（chart_id + user_prompt，202 建任务）；
+  资产早失败校验（缺 plan/series/代码直接 4xx）；`GET /api/task-assets/<task_id>`
+  返回前端资产卡（title/chart_type/version/origin，旧任务从 raw 结果兜底合成）。
+  两者共用生成任务的状态机 / WS / 对话日志管线（`api/common.py:_run_optimize_in_executor`）。
+- **优化内核**：`service/pipeline/chart_optimizer.py` 复用 debug 循环
+  （`SeriesRunCodeTool` 注入读取代码 + `read_series_sample`），消息里强调
+  「只改优化指令涉及的部分」；RAG 用同一进程内检索器。进 prompt 前要剥离原 success
+  代码里的注入段（`_strip_injection_header`），否则 agent 会复制注入段造成重复加载。
+  自备读取模式（无 series 数据文件）的图表暂不支持优化（明确报错）。
+- **前端**：图表卡片 hover 出「优化」按钮 → 输入区橙色 chip（`state.optimizeTarget`），
+  发送走 `optimizeChart` 桥接 action（Rust `handle_optimize_chart`）。watch 逻辑抽成
+  `watch_task_flow` 与 sendPrompt 共用。
+- **坑**：pyecharts 把中文序列化成 `\uXXXX`，断言 HTML 标题要用转义兼容形式；
+  测试文件先 `import service.*` 再用 `real_agent`（规避 service↔agent 循环导入）。
+- 回归：`tests/test_chart_optimize.py`（21 例，核心白名单） +
+  `tests/test_file/test_chart_optimize_e2e.py`（真机，约 100 秒一条）。
+
 ## 文档可信度
 
 - 以代码为准。`docs/技术资料.md` / `docs/开发计划.md` / `docs/问题清单.md` **已过期**（还在描述
