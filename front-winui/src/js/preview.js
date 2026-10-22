@@ -107,6 +107,21 @@ function _dpRawTableList(profile, sessionId) {
   return '<div class="dp-list">' + rows + '</div>' + (zipButton ? '<div class="dp-actions">' + zipButton + '</div>' : '');
 }
 
+function _dpViewsList(profile) {
+  // 已物化的派生视图（run_view 产物；spec 摘要可核对聚合口径）
+  const views = Array.isArray(profile.views) ? profile.views : [];
+  if (!views.length) {
+    return '<div class="dp-muted">暂无派生视图；规划 agent 用 run_view 造完视角后会出现在这里</div>';
+  }
+  const rows = views.map(v => {
+    const columns = Array.isArray(v.columns) ? v.columns.join('、') : '';
+    const meta = (v.rows || 0) + ' 行' + (columns ? ' · ' + columns : '') + ' · ' + (v.view_id || '');
+    return '<div class="dp-item"><div><div class="dp-item-main">' + escHtml(v.spec_summary || v.view_id || 'view') + '</div>' +
+      '<div class="dp-item-sub">' + escHtml(meta) + '</div></div></div>';
+  }).join('');
+  return '<div class="dp-list">' + rows + '</div>';
+}
+
 function showDataPreview(payload) {
   let parsed;
   try {
@@ -149,7 +164,9 @@ function showDataPreview(payload) {
     '<div class="dp-section"><div class="dp-section-title">语义 Series</div>' +
       _dpSeriesList(profile, sessionId) + '</div>' +
     '<div class="dp-section"><div class="dp-section-title">原始表（抽表 / 归一化后）</div>' +
-      _dpRawTableList(profile, sessionId) + '</div>';
+      _dpRawTableList(profile, sessionId) + '</div>' +
+    '<div class="dp-section"><div class="dp-section-title">派生视图（run_view 物化）</div>' +
+      _dpViewsList(profile) + '</div>';
 
   document.getElementById('dataPreviewModal').classList.add('show');
 }
