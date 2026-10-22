@@ -11,6 +11,7 @@ from typing import Any, Dict
 from pydantic import BaseModel, Field
 
 from agent.tools.base import Decision, PermissionDecision, Tool, ToolContext, ToolOutput
+from agent.tools.series_preview import compact_columns, compact_frame
 from service.data_ingestion.series import load_series_df
 from service.data_ingestion.series.shape import format_shape_summary
 from service.pipeline.chart_recommend import recommend_chart_types
@@ -134,10 +135,13 @@ class GetSeriesTool(Tool):
             return ToolOutput(success=False, error=f"series 不存在: {series_id}")
         try:
             df = load_series_df(series).head(5)
-            preview = df.to_dict(orient="records")
         except Exception as e:
             return ToolOutput(success=False, error=f"series 加载失败: {e}")
 
+        preview_df, note = compact_frame(
+            df, row_label_column=series.row_label_column
+        )
+        preview = preview_df.to_dict(orient="records")
         advice = recommend_chart_types(series, load_if_missing=True)
         shape = advice.get("shape") or {}
         examples = shape.get("row_label_examples") or []
@@ -147,10 +151,12 @@ class GetSeriesTool(Tool):
                 f"{series.series_id} [{series.axis_kind}]\n"
                 f"说明: {series.description}\n"
                 f"数据形态: {format_shape_summary(shape) or '(未知)'}\n"
-                f"行标签列: {series.row_label_column}\n列标签列: {series.column_label_columns}\n"
+                f"行标签列: {series.row_label_column}\n"
+                f"列标签列: {compact_columns(series.column_label_columns)}\n"
                 f"行标签示例: {examples}\n"
                 f"建议图表: {'/'.join(advice.get('recommended', [])) or '(无)'}"
                 f"（{advice.get('reason', '')}）\n"
+                f"{note + chr(10) if note else ''}"
                 f"真实样例(前5行): {preview}"
             ),
         )

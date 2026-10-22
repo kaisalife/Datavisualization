@@ -545,6 +545,9 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
 - **变换**：按 `transform_hint` 在 `df` 上用 pandas 完成（如增长率 = (本年-上年)/上年*100）
 - **自包含契约**：`code_<plan_id>_success.py` 是注入后的完整代码，拷走 + 对应 series `.parquet` 即可独立运行
 - `series_id` 缺失（agent 自主规划）时走自备读取模式：直接从 `data_interface` 取数
+- **宽表预览只展示前 20 列**：`get_series` / `preview_series` 经
+  `agent/tools/series_preview.py` 截断列并标注“共 N 列”，避免几千台设备把规划上下文打满；
+  生成阶段由 many-series 技能按业务重要性选 Top-N。
 - 校验在 `service/pipeline/plan_validator.py`；不要绕过它直接把 LLM 输出喂给执行器
 
 ## 产物路径与命名

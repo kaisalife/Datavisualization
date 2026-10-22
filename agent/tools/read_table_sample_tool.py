@@ -11,6 +11,7 @@ from typing import Any, Dict
 from pydantic import BaseModel, Field
 
 from agent.tools.base import Decision, PermissionDecision, Tool, ToolContext, ToolOutput
+from agent.tools.series_preview import compact_columns, compact_frame
 from service.data_ingestion.series import load_series_df
 from service.data_ingestion.series.models import SeriesCatalog
 
@@ -60,12 +61,20 @@ class ReadSeriesSampleTool(Tool):
         except Exception as e:
             return ToolOutput(success=False, error=f"series 加载失败: {e}")
 
+        preview_df, note = compact_frame(
+            df, row_label_column=series.row_label_column
+        )
+        rows = len(preview_df)
         return ToolOutput(
             success=True,
             output=(
                 f"series: {series_id} [{series.axis_kind}]\n"
-                f"行标签列: {series.row_label_column}\n列标签列: {series.column_label_columns}\n"
-                f"列: {list(df.columns)}\n行数(上限{limit}): {len(df)}\n"
-                f"数据:\n{json.dumps(df.to_dict(orient='records'), ensure_ascii=False, default=str)}"
+                f"行标签列: {series.row_label_column}\n"
+                f"列标签列: {compact_columns(series.column_label_columns)}\n"
+                f"列: {compact_columns(preview_df.columns)}\n"
+                f"行数(上限{limit}): {rows}\n"
+                f"{note + chr(10) if note else ''}"
+                f"数据:\n"
+                f"{json.dumps(preview_df.to_dict(orient='records'), ensure_ascii=False, default=str)}"
             ),
         )
