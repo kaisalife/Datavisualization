@@ -45,6 +45,7 @@ CORE_TEST_FILES = {
     "test_chart_asset_inline.py",
     "test_chart_polish.py",
     "test_chart_rag.py",
+    "test_sandbox.py",
 }
 
 

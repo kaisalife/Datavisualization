@@ -18,6 +18,7 @@ from pathlib import Path
 from agent_tools.sandbox import run_python_safely
 from service.observability import get_logger
 from service.pipeline.chart_data_check import STATS_PREFIX
+from service.runtime.utils import get_env_int
 
 try:
     from pydantic import BaseModel, ConfigDict
@@ -172,7 +173,7 @@ def execute_chart_code(
     *,
     charts_folder: Path,
     plan_id: str,
-    timeout: int = 60,
+    timeout: int | None = None,
 ) -> SandboxResult:
     """沙箱执行图表代码并做产物校验/重命名兜底。
 
@@ -180,11 +181,14 @@ def execute_chart_code(
         code_body: 已完成 series 注入的代码正文（不含 _RENDER_HEADER）
         charts_folder: HTML 输出目录
         plan_id: 计划ID（产物命名）
-        timeout: 沙箱超时秒数
+        timeout: 沙箱超时秒数；None 时读 ``SANDBOX_TIMEOUT``（默认 90）
+            大数据聚合/渲染偶尔超过一分钟，固定 60 会把正常图判失败
 
     Returns:
         SandboxResult（success 含产物存在且非空校验）
     """
+    if timeout is None:
+        timeout = get_env_int("SANDBOX_TIMEOUT", 90)
     attempt_start_ts = time.time()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     chart_filename = f"chart_{plan_id}_{timestamp}.html"

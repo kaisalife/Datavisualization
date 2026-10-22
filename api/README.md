@@ -82,6 +82,9 @@ api/
 > `db_config.query` 只允许单条只读查询（`SELECT` / `WITH` / `SHOW` / `EXPLAIN`）；
 > 写操作或多语句（如 `select 1; drop table sales`）在提交阶段直接 `400`，不会进入任务队列。
 >
+> 队列过载时返回 `429`：按 `pending + running` 计数，上限 `TASK_QUEUE_LIMIT`（默认 20，
+> 0 = 不限制）；等待现有任务完成或调大上限后重试即可。
+>
 > 图片 / PDF 会先经视觉模型抽成表格，再进入后续 series 拆分与图表生成。
 > Word / PPT / Excel 里的表格截图（内嵌图片）在文字层解析失败或退化时也会走视觉模型。
 > 视觉模型凭证优先用请求里的 `model_url` / `model_api_key`，其次

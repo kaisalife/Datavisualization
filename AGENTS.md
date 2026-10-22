@@ -656,6 +656,13 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   `TASK_RETENTION_SECONDS`（默认 3600 秒）+ `TASK_MAX_ENTRIES`（默认 500 条，按时间从旧到新淘汰）。
   进行中的任务永不清理。**不要**把回收逻辑塞进 `get_tasks()`，它会在读路径上隐式改数据。
 - 进程退出时 `atexit` 调 `executor.shutdown(wait=False, cancel_futures=True)`，避免排队任务拖住停止。
+- **队列过载保护**：提交生成/优化任务前 `ensure_queue_capacity()` 检查 pending+running 数量，
+  超过 `TASK_QUEUE_LIMIT`（默认 20，0 = 不限制）直接返回 429，避免无界 ThreadPool 队列
+  把几十个任务排到几小时后（每个任务都要打多轮 LLM）。
+- **任务事件循环必须用 `shutdown_event_loop()` 关闭**（不要只 `loop.close()`）：
+  先取消未完成任务、`shutdown_asyncgens()`，再把线程当前循环置空。ThreadPoolExecutor
+  会复用线程，残留的 pending 任务/httpx 连接会在下一次任务里报
+  `Event loop is closed` 或 `Task was destroyed but it is pending`。
 - `/api/health`（liveness）只看进程；`/api/ready`（readiness）检查上传/图表目录可写 + 对话库可访问，
   未就绪返回 503。两个探针都不鉴权。
 
@@ -713,6 +720,22 @@ runtime/charts/<首个上传文件 stem>/          # 可用 CHARTS_DIR 覆盖
   stdout/stderr 切 UTF-8；服务代码里不要 `print`（`BaseAgent` / `agent/retry.py` 已改 structlog）。
   `run_python_safely` 也给子进程注入 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1`，否则沙箱里
   print 的中文会被父进程按 UTF-8 解码成替换字符，debug 反馈和图表数据摘要都会失真。
+
+### 沙箱执行（生成代码）
+
+`agent_tools/sandbox.py` 是生成代码的唯一执行入口（`chart_sandbox.execute_chart_code` /
+MCP 的 `run_code` 工具都走它）：
+
+- **环境净化**：子进程环境剔除 `*KEY*` / `*TOKEN*` / `*SECRET*` / `*PASSWORD*` /
+  `*CREDENTIAL*` / `*AUTH*` 和 `LLM_EXTRA_HEADERS`。生成代码不需要凭证，
+  否则一次 `print(os.environ)` 或异常栈就会把 API Key 带进日志/前端；
+- **输出限长**：stdout/stderr 写临时文件，只保留末尾 `SANDBOX_MAX_OUTPUT_BYTES`
+  （默认 512KB，上限 16MB），并加"已截断"标记；`capture_output=True` 的管道会把
+  失控 print 全读进内存，能直接打爆服务进程；
+- **超时杀进程树**：Windows 用 `taskkill /T /F`，POSIX 用 `killpg`；只杀直接子进程
+  会留下孙进程。`execute_chart_code` 的 `SANDBOX_TIMEOUT` 默认 90 秒（原 60 会误杀
+  大数据聚合）；
+- 临时 `.py` 用后即删；回归 `tests/test_sandbox.py`。
 
 ## 单图二次优化（多轮对话）
 

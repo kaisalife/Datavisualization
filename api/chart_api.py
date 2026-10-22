@@ -12,8 +12,9 @@ from pathlib import Path
 from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from Entity import GenerateChartWithPromptRequest, ErrorResponse, OptimizeChartRequest
 from api.common import (
-    check_api_key, get_upload_dir, get_tasks, get_tasks_lock, get_executor,
-    prune_tasks, _run_service_main_in_executor, _run_optimize_in_executor, monitor_response,
+    check_api_key, ensure_queue_capacity, get_upload_dir, get_tasks, get_tasks_lock,
+    get_executor, prune_tasks, _run_service_main_in_executor, _run_optimize_in_executor,
+    monitor_response,
 )
 from api.source_config import parse_json_object, validate_source_configs
 from service.observability import get_logger
@@ -97,6 +98,9 @@ def generate_chart_with_prompt():
         )
 
         # --- 提交任务 ---
+        capacity_error = ensure_queue_capacity()
+        if capacity_error:
+            return capacity_error
         task_id = uuid.uuid4().hex
         # 创建对话记录
         file_paths_str = [f.filename for f in files] if files else []
@@ -168,6 +172,9 @@ def optimize_chart():
         )
 
         # --- 提交任务 ---
+        capacity_error = ensure_queue_capacity()
+        if capacity_error:
+            return capacity_error
         task_id = uuid.uuid4().hex
         conversation_id = create_conversation(
             user_prompt=f"[优化 {chart_id}] {user_prompt}",

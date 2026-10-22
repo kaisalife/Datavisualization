@@ -175,6 +175,75 @@ def clear_cancel(task_id: str):
 
 # 终态：不再变化的任务状态
 _TERMINAL_STATUSES = {"success", "failed", "cancelled"}
+_ACTIVE_STATUSES = {"pending", "running"}
+
+
+def shutdown_event_loop(loop) -> None:
+    """关闭任务专用事件循环：取消未完成任务、清理异步生成器后再 close。
+
+    ThreadPoolExecutor 会复用线程：不清理就 close 会留下
+    "Task was destroyed but it is pending"，httpx 连接池也可能在循环关闭后
+    才做清理（表现为 Event loop is closed）；关闭后把线程的当前循环置空。
+    """
+    import asyncio
+
+    if loop is None:
+        return
+    try:
+        if not loop.is_closed():
+            pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.run_until_complete(loop.shutdown_asyncgens())
+    except Exception:
+        pass
+    finally:
+        try:
+            if not loop.is_closed():
+                loop.close()
+        except Exception:
+            pass
+        try:
+            asyncio.set_event_loop(None)
+        except Exception:
+            pass
+
+
+def active_task_count(tasks=None) -> int:
+    """进行中/排队任务数（pending + running）。"""
+    tasks = get_tasks() if tasks is None else tasks
+    with get_tasks_lock():
+        return sum(
+            1 for task in tasks.values()
+            if str(task.get("status") or "") in _ACTIVE_STATUSES
+        )
+
+
+def ensure_queue_capacity():
+    """任务队列过载保护：超过 TASK_QUEUE_LIMIT 时返回 429 响应，否则 None。
+
+    ThreadPoolExecutor 的等待队列默认无界，短时间提交大量任务会无限堆积
+    （每个任务都要打多轮 LLM）。上限按 pending+running 计算；设为 0 表示不限制。
+    """
+    limit = _env_int("TASK_QUEUE_LIMIT", 20)
+    if limit <= 0:
+        return None
+    active = active_task_count()
+    if active < limit:
+        return None
+    return (
+        jsonify(
+            ErrorResponse(
+                detail=(
+                    f"服务繁忙：当前排队/进行中任务 {active} 个，已达上限 {limit}；"
+                    "请等待现有任务完成或调大 TASK_QUEUE_LIMIT"
+                )
+            ).model_dump()
+        ),
+        429,
+    )
 
 
 def _env_int(name: str, default: int) -> int:
@@ -357,8 +426,7 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                         "error": f"{type(e).__name__}: {e}",
                     })
             finally:
-                if loop:
-                    loop.close()
+                shutdown_event_loop(loop)
                 # 错误汇总 + trace 落盘
                 try:
                     err_summary = error_monitor.get_summary(task_id)
@@ -503,8 +571,7 @@ def _run_optimize_in_executor(app, task_id, request_model, conversation_id=None)
                         "error": f"{type(e).__name__}: {e}",
                     })
             finally:
-                if loop:
-                    loop.close()
+                shutdown_event_loop(loop)
                 # 错误汇总 + trace 落盘
                 try:
                     err_summary = error_monitor.get_summary(task_id)

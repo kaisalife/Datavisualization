@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from flask import Flask
@@ -82,6 +83,85 @@ class TestHealthEndpoints:
         body = resp.get_json()
         assert body["status"] == "ok"
         assert "tasks" in body and body["tasks"]["total"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# 队列过载保护 / 事件循环清理
+# ---------------------------------------------------------------------------
+
+
+def _app_with_tasks(tasks: dict) -> Flask:
+    app = Flask(__name__)
+    init_app(
+        app,
+        executor=None,
+        tasks=tasks,
+        tasks_lock=threading.Lock(),
+        upload_dir=Path("."),
+        charts_dir=Path("."),
+        service_api_key="",
+        logger=None,
+    )
+    return app
+
+
+class TestQueueBackpressure:
+    def test_active_count_excludes_terminal_tasks(self):
+        from api.common import active_task_count
+
+        tasks = {
+            "run": {"status": "running"},
+            "queue": {"status": "pending"},
+            "done": {"status": "success"},
+            "fail": {"status": "failed"},
+        }
+        app = _app_with_tasks(tasks)
+
+        with app.app_context():
+            assert active_task_count() == 2
+
+    def test_limit_returns_429_with_actionable_detail(self, monkeypatch):
+        from api.common import ensure_queue_capacity
+
+        monkeypatch.setenv("TASK_QUEUE_LIMIT", "2")
+        tasks = {"a": {"status": "running"}, "b": {"status": "pending"}}
+        app = _app_with_tasks(tasks)
+
+        with app.app_context(), app.test_request_context():
+            response = ensure_queue_capacity()
+
+        assert response is not None
+        payload, status = response
+        assert status == 429
+        assert "上限" in payload.get_json()["detail"]
+
+    def test_below_limit_and_zero_means_unlimited(self, monkeypatch):
+        from api.common import ensure_queue_capacity
+
+        tasks = {"a": {"status": "running"}}
+        app = _app_with_tasks(tasks)
+
+        with app.app_context(), app.test_request_context():
+            monkeypatch.setenv("TASK_QUEUE_LIMIT", "5")
+            assert ensure_queue_capacity() is None
+            monkeypatch.setenv("TASK_QUEUE_LIMIT", "0")
+            assert ensure_queue_capacity() is None
+
+
+def test_shutdown_event_loop_cancels_pending_tasks():
+    import asyncio
+
+    from api.common import shutdown_event_loop
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    pending = loop.create_task(asyncio.sleep(60))
+    loop.run_until_complete(asyncio.sleep(0))  # 让任务真正启动
+
+    shutdown_event_loop(loop)
+
+    assert loop.is_closed()
+    assert pending.cancelled() or pending.done()
 
     def test_ready_reports_checks(self, client):
         resp = client.get("/api/ready")

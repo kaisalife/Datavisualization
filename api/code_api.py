@@ -9,7 +9,13 @@ from pathlib import Path
 
 from flask import Blueprint, request, jsonify
 from Entity import CompleteVizCodeRequest, ErrorResponse
-from api.common import check_api_key, get_upload_dir, get_logger, monitor_response
+from api.common import (
+    check_api_key,
+    get_logger,
+    get_upload_dir,
+    monitor_response,
+    shutdown_event_loop,
+)
 
 
 code_bp = Blueprint("code", __name__, url_prefix="/api")
@@ -79,7 +85,7 @@ def complete_viz_code():
             from service.code_completer import complete_visualization_code
             result = loop.run_until_complete(complete_visualization_code(req))
         finally:
-            loop.close()
+            shutdown_event_loop(loop)
 
         get_logger().info("code_completion_success",
                           files=len(req.code_file_paths),
