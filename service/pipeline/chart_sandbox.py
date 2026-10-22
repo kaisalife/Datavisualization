@@ -82,7 +82,17 @@ try:
             args = (str(target),) + args[1:]
         else:
             kwargs["path"] = str(target)
-        return _orig_render(self, *args, **kwargs)
+        path = _orig_render(self, *args, **kwargs)
+        # 渲染后就地内联 echarts 资产（失败保留 CDN 链接，不阻断出图）
+        try:
+            from service.pipeline.chart_asset_inliner import inline_rendered_html as _inline
+
+            _inline_n, _kept = _inline(str(path))
+            if _inline_n:
+                print(f"[chart_sandbox header] inlined {_inline_n} asset(s), cdn left {_kept}")
+        except Exception as _e:
+            print(f"[chart_sandbox header] asset inline skipped: {_e}")
+        return path
 
     _PyBase.render = _patched_render
 except Exception as _e:

@@ -45,6 +45,19 @@ def get_vision_cache_dir() -> Path:
     return _PROJECT_ROOT / "runtime" / "cache" / "vision"
 
 
+def get_chart_assets_dir() -> Path:
+    """echarts 静态资产本地缓存目录（离线内联用）。
+
+    读 CHART_ASSETS_DIR env，默认 <项目根>/runtime/assets/echarts。
+    按 assets.pyecharts.org 的 URL 子路径镜像存放（echarts.min.js / 主题 JS 等），
+    chart_asset_inliner 渲染后就地内联，产物 HTML 摆脱 CDN 依赖。
+    """
+    override = os.getenv("CHART_ASSETS_DIR", "").strip()
+    if override:
+        return Path(override)
+    return _PROJECT_ROOT / "runtime" / "assets" / "echarts"
+
+
 def get_llm_text_cache_dir() -> Path:
     """文本表格化（HTML/Markdown/日志）结果缓存目录。
 

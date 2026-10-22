@@ -38,6 +38,7 @@ CORE_TEST_FILES = {
     "test_data_view_mcp.py",
     "test_plan_view_tool.py",
     "test_chart_optimize.py",
+    "test_chart_asset_inline.py",
 }
 
 
