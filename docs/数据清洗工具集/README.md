@@ -1,92 +1,67 @@
-# 面向可视化的数据清洗工具集（调研与落地记录）
+# 数据视图层（DataView）：面向可视化的确定性数据变换
 
-> 目标不是把表“洗干净”，而是让真实数据在指定图表意图下**可出图、可比较、可解释、可复现**。
-> 对图表没有影响的清洗不做；会影响图表表达的缺陷，按“图表契约”选择最小、可逆、可预览的处理策略。
+> 结论先行：截至 **2026-10-22**，没有现成的、专注"多模态数据清洗 + 图表准备"的 skill / MCP 工具集。
+> 本项目采用的方案不是"清洗层"，而是一层**确定性数据视图（DataView）**：
+> 每一次变换都是 `纯函数 × 不可变数据 → DataFrame`，结果可复现、可缓存、可审计；
+> LLM 只出现在"写 spec"这一步，永远不在执行路径上。
+>
+> 历史备注：本目录早期版本提出过"图表契约（fitness / contract / strategy / variant）"分层方案，
+> 已否决——多阶段流程太长、灵活性差；其后的"固定 op 清洗"方案也已否决——有限词表表达不了任意变换。
+> 03/04/05/06 已按新方向重写；06 已删除。
 
-## 结论先说
-
-截至 **2026-10-22**，没有检索到一个成熟的、同时满足以下条件的现成 skill / MCP 工具集：
-
-1. 覆盖图片、PDF、Office 内嵌表格等多模态抽表；
-2. 理解图表语义（时间轴、类别、指标、构成、分布、关系）；
-3. 能按图表类型判断“这套数据能不能画、该怎么准备”；
-4. 支持组合策略、dry-run、版本回退和来源追溯。
-
-现成生态大多只是“表格清洗”，不是“可视化准备”：
-
-| 类别 | 代表 | 能解决 | 对可视化的缺口 |
-|---|---|---|---|
-| 文档 / OCR 抽表 | Docling、OCRFlux、mcp-ocr、Unstructured | 图片、PDF、扫描件、Office 内嵌表格 → 文本或表格 | 不判断图表是否可读，也不处理类别过多、负值、时间缺口等图表问题 |
-| 通用表格清洗 MCP | `AstyanM/mcp-data-science`、MCP Pandas、Data Exploration | 去重、缺失、异常、类型、编码等通用 pandas 操作 | 没有“图表意图”，不知道饼图不能有负值、折线图需要时间顺序、柱状图类别过多要 Top-N |
-| Agent Skills | Anthropic `xlsx` / `pdf` / `docx`、通用 `data-cleaning` | 文件操作、pandas/numpy 变换 | 规则偏通用，缺少图表契约、策略比较和审计 |
-
-因此本项目**不引入一个“万能清洗 MCP”**，而是在现有数据接入层之上增加一个
-**可视化准备层（Visualization Preparation Layer）**：
+## 一句话架构
 
 ```text
-现有 reader 抽表（图片 / PDF / Office / CSV / Excel / DB / API）
-        │
-        ▼
-结构归一化（列名、表头、编码、数值文本）         ← 已有能力，低风险
-        │
-        ▼
-可视化画像（角色、时间性、基数、单位、缺失、异常）  ← 新增，只读
-        │
-        ▼
-候选 series（现有 splitter，可能有多条）           ← 已有能力
-        │
-        ▼
-图表契约评估（Line / Bar / Pie / Histogram / Scatter...） ← 新增，按图判断
-        │
-        ▼
-准备策略（组合操作；dry-run；多方案对比）          ← 新增，灵活性核心
-        │
-        ▼
-prepared series 变体（版本化、可回退、带变更清单）
-        │
-        ▼
-图表规划 → 生成 → 数据检查 → 反馈修正
+dataset（不可变，内容寻址）
+   └── view = 纯变换（spec 可序列化：SQL 或纯函数插件）
+         → view_id = hash(source_hash + spec_hash + engine_version)
+         → 物化为 parquet，plan 只引用 view_id，生成代码只看 schema
 ```
 
-MCP 只是这层能力的**薄适配器**：真正有价值的是确定性规则、图表契约和可组合策略，
-而不是把 pandas 操作换个 MCP 外壳。这样 MCP 才会真正影响图表结果，而不是多一个“看起来能清洗”的工具。
+- **数据层不认识 chart_type**。View 只返回「列名 + dtype + 行结构」，能不能画、怎么画是
+  plan / 生成层的事。图表可行性检查留在生成代码里（`chart_data_check` 已有），不单设一层。
+- **不新增流程阶段**。现有 `series` 路径保留：series 就是 view 的物化产物。
+  用户没提特殊变换时直接走现状（0 次额外调用）；需要时 plan 多带一个 view spec，
+  一次物化、多图复用。
+- **默认不调 LLM**。同 `source + spec + engine_version` 必得同结果。
 
-## 四条硬原则
+## 灵活性从哪来
 
-1. **图表意图决定清洗目标**：同一份数据画折线、饼图、直方图，需要的准备完全不同。
-   缺失值在折线图里可以是断点，在饼图里可能必须排除；重复时间点在折线图里应聚合，
-   在明细表里可能应保留。不能脱离图表谈“清洗”。
-2. **最小变换，不追求“全局干净”**：只做当前图表需要的操作；不影响图表的列不重命名、不编码、不缩放。
-3. **默认只报告，修改必须可预览、可回退**：删除行、填充、单位换算、跨表合并必须显式确认；
-   原始数据只读，准备结果写入新变体。
-4. **契约 + 策略，而不是硬编码**：图表要求放在可配置契约里，规则阈值集中管理；
-   特殊场景通过 skill 提供领域策略，不在 Python 里写 `if 列名 == "销售额"`。
+唯一开放的是 **spec 的表达能力**，不是能力枚举：
+
+1. `sql`：一条只读 `SELECT/WITH`（复用 `sql_safety.ensure_read_only` 校验）——
+   聚合、透视、Top-N、排序、分箱、join 全覆盖；
+2. `plugin`：注册过的纯函数 `def apply(df, params) -> df`（`plugins/data_view/` 每文件一个）——
+   SQL 不擅长的领域变换（K 线重采样、模糊匹配、多模态后处理）。
+
+新能力 = 新插件文件，核心零改动。**不是消灭函数，而是不让核心枚举能力**——
+这就是对"硬编码灵活度不行"的回答。
+
+## 硬原则
+
+1. **不可变**：原始 dataset 只读；变换永远产出新 view，不覆盖；
+2. **确定性**：spec 是纯的——无随机、无时间依赖、无 IO、无网络；插件的输入只有 `df` 和 `params`；
+3. **短流程**：view 不是独立阶段，嵌在 plan 执行里；规划→生成链路不变；
+4. **数据层与图表层解耦**：view 不知道图表类型；图表契约不进数据层，避免两者互相牵制。
 
 ## 目录
 
 | 文件 | 内容 |
 |---|---|
-| [01-调研结论.md](01-调研结论.md) | 外部工具对比、为什么通用清洗 MCP 不够、推荐路线 |
-| [02-工具清单.md](02-工具清单.md) | 现有能力、待补能力、外部抽取器与依赖策略 |
-| [03-清洗流程与规则.md](03-清洗流程与规则.md) | 面向可视化的流水线、信号、操作目录、策略优先级、变更清单 |
-| [04-MCP与Skill设计.md](04-MCP与Skill设计.md) | MCP 工具契约、skill 结构、agent 调用流程、安全边界 |
-| [05-验收与落地计划.md](05-验收与落地计划.md) | P0/P1/P2、测试矩阵、以图表效果为准的验收标准 |
-| [06-图表契约与策略引擎.md](06-图表契约与策略引擎.md) | 图表契约 schema、意图模型、策略矩阵、扩展机制 |
+| [01-调研结论.md](01-调研结论.md) | 外部工具对比、为什么现成工具不够、不采用原因 |
+| [02-工具清单.md](02-工具清单.md) | 已有能力盘点、待补能力、外部候选与依赖策略 |
+| [03-数据视图设计.md](03-数据视图设计.md) | ViewSpec / 执行器 / 插件契约 / 确定性保证 / lineage |
+| [04-MCP与暴露面.md](04-MCP与暴露面.md) | 怎么把 view 层暴露给 agent（最薄的两个工具）与安全边界 |
+| [05-验收与落地计划.md](05-验收与落地计划.md) | P0/P1/P2 交付物、测试矩阵、验收标准 |
 
 ## 与现有代码的关系
 
-项目**已经具备大部分“抽表 + 结构归一化 + series 拆分”能力**，不需要重写接入层：
+接入层、归一化、series 拆分**全部保留且不重写**，它们本身就是"默认 view"的生产者：
 
-- `service/data_ingestion/router.py`：列名清洗、数值归一化入口、原始表保存；
-- `service/data_ingestion/normalize.py`：`1,200` / `12.5%` / `(1,200)` / 全角数字 / 空值占位符；
-- `service/data_ingestion/readers/excel_reader.py`：合并表头、标题行、空白 sheet、数据区纵向合并；
-- `service/data_ingestion/readers/multimodal_reader.py`：图片/PDF 抽表、跨页续表、一图多表；
-- `service/data_ingestion/readers/office_image_reader.py`：docx/pptx/xlsx 内嵌表格截图；
-- `service/data_ingestion/profiler.py`：schema、统计、时间/指标/维度/ID 语义；
-- `service/data_ingestion/series/splitter.py`：长表透视、自然时间排序、重复时间点聚合；
-- `service/data_ingestion/series/shape.py`：时间点/类别数、指标数、负值等形态；
-- `service/pipeline/chart_recommend.py`：按形态推荐图表类型、plan 多样性守护；
-- `service/pipeline/chart_data_check.py`：渲染后空数据、全 0、类型偏离检查。
+- `service/data_ingestion/router.py` / `normalize.py`：接入 + 结构/值归一化（已有）；
+- `service/data_ingestion/series/splitter.py` / `shape.py`：series 拆分与形态（已有，就是默认视图）；
+- `service/data_ingestion/sql_safety.py`：只读 SQL 校验，view 执行器直接复用；
+- `service/pipeline/chart_data_check.py`：渲染后检查（已有，是图表层的把关，不迁移到数据层）。
 
-缺的是**面向图表的就绪度评估、可组合的准备策略、变体管理和反馈闭环**。
-本目录记录这层的设计与边界；代码落地时按 [05-验收与落地计划.md](05-验收与落地计划.md) 推进。
+缺的只有一件事：**在 series 之上支持"声明式的派生视图"**，
+即 `ViewSpec → 执行器 → 新 series（带 view_id）`。落地见 05。
