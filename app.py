@@ -158,4 +158,9 @@ if __name__ == "__main__":
     host = os.getenv("FLASK_HOST", "0.0.0.0")
     port = int(os.getenv("FLASK_PORT", "5000"))
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    # 后台预热 pipeline/agent 重模块（不阻塞启动）；SERVICE_WARMUP=0 可关闭
+    if os.getenv("SERVICE_WARMUP", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        from service.runtime.warmup import start_warmup
+
+        start_warmup()
     app.run(host=host, port=port, debug=debug)

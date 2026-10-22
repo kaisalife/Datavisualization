@@ -116,3 +116,27 @@ def test_chart_sandbox_timeout_is_env_configurable(monkeypatch, tmp_path: Path):
 
     assert result.success is False
     assert "超时" in result.output
+
+def test_chart_sandbox_import_does_not_pull_heavy_pipeline():
+    """图表沙箱只应导入 pyecharts/pandas 级依赖，不能连带 torch/chromadb。
+
+    service/__init__.py 曾在导入任意子模块时急切加载 service_main/chart_generator，
+    导致每张图的沙箱启动多花 ~30 秒（连 print 都要 32 秒）。
+    """
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    code = (
+        "import sys\n"
+        "import service.pipeline.chart_sandbox\n"
+        "print('torch' in sys.modules, 'chromadb' in sys.modules)\n"
+    )
+    output = subprocess.check_output(
+        [sys.executable, "-X", "utf8", "-c", code],
+        cwd=str(root),
+        text=True,
+        timeout=120,
+    ).strip()
+
+    assert output == "False False"

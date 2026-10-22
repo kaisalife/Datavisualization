@@ -726,6 +726,14 @@ runtime/charts/<首个上传文件 stem>/          # 可用 CHARTS_DIR 覆盖
 `agent_tools/sandbox.py` 是生成代码的唯一执行入口（`chart_sandbox.execute_chart_code` /
 MCP 的 `run_code` 工具都走它）：
 
+- **`service/__init__.py` 必须保持惰性导入**（PEP 562 `__getattr__`）。Python 导入任意
+  子模块都会先执行包初始化；曾经在这里急切加载 `service_main` / `chart_generator`，
+  连带拉起 agent、RAG、torch、chromadb，导致**每次沙箱启动多花 ~30 秒**（连
+  `print('hi')` 都要 32 秒）。改成惰性后单图沙箱 31.5s → 2.4s，同一 2 图任务
+  130s → 76s。新增重依赖不要在包 `__init__` 里 import；门面属性走 `_LAZY_ATTRS`。
+- **启动后台预热**：`service/runtime/warmup.py` 在守护线程里 import
+  pipeline/agent（不建 retriever、不连 MCP），避免首个任务再为惰性导入等 ~25 秒；
+  `SERVICE_WARMUP=0` 可关闭。不要把 embedding 模型放进预热（2.4GB，启动变重）。
 - **环境净化**：子进程环境剔除 `*KEY*` / `*TOKEN*` / `*SECRET*` / `*PASSWORD*` /
   `*CREDENTIAL*` / `*AUTH*` 和 `LLM_EXTRA_HEADERS`。生成代码不需要凭证，
   否则一次 `print(os.environ)` 或异常栈就会把 API Key 带进日志/前端；
