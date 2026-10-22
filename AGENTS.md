@@ -275,6 +275,46 @@ $env:BACKEND_URL="http://localhost:5000"
 - **`polish_options` 内部先深拷贝**：pyecharts 的默认 `LabelOpts` / `SplitLineOpts` 等可能被
   多张图共享，直接改会让上一张图的颜色/位置泄漏到下一张图；深拷贝后再写回原 `chart.options`
 - 回归：`tests/test_chart_polish.py`（含渲染链路 HTML 断言）；改规则要同时改 prompt 和该测试
+- 主题常量在 `service/pipeline/chart_theme.py`：Tableau 10 调色板（`DVS_PALETTE`）+ 中文
+  字体栈（`DVS_FONT_FAMILY`）+ 明暗文字 token（`TONE_LIGHT`/`TONE_DARK`，十字段：
+  标题/副标题/图例/轴标签/轴名/数据标签/tooltip/矩形树图及其描边）。polish 只定
+  「要不要改」，主题文件定「改成什么」；换配色/字体只动 chart_theme
+- `polish_chart` 的深色判定 = `chart.theme` 含 "dark" **或** `backgroundColor` 亮度 < 0.35
+  （`set_dark_mode()` 只改 backgroundColor、不动 theme 属性，纯按 theme 判断会漏）
+
+### echarts 资产离线内联（产物摆脱 CDN）
+
+pyecharts 默认把 `<script src="https://assets.pyecharts.org/assets/v6/...">` 写进产物，
+离线/内网/导出到本地的 HTML 打开是空白图；库自带 `RenderOpts(is_embed_js=True)` 虽可内联，
+但每次渲染都 HTTPS 下载（实测 12.2s / 1.1MB、无缓存）。因此自管：
+
+- `service/pipeline/chart_asset_inliner.py` 在 `_patched_render` 渲染后就地替换 CDN
+  script 标签为本地缓存内容；缓存目录 `runtime/assets/echarts`（`CHART_ASSETS_DIR`
+  可覆盖），按 URL 子路径镜像（echarts.min.js ~1.1MB 只下一次网络下载）；
+- 失败降级：缓存缺失且下载失败/内容含 `</script` 字面量时**保留 CDN 链接**（在线仍可用），
+  绝不阻断出图；`CHART_ASSETS_INLINE=0` 整体关闭；
+- 仅信任 `https://assets.pyecharts.org/` 单一域名，URL 子路径拒绝 `..` 穿越；
+- 回归：`tests/test_chart_asset_inline.py`（核心白名单；测试用注入的假缓存，不联网）。
+
+### Feature 高级用法文档（RAG 第二通道）
+
+`RAG/RAG_Data/Feature/` 存放「跨图表类型的高级用法」六篇（markLine 参考线、
+markArea 参考区间、axisBreak 断轴、labelLayout 标签防重叠+universalTransition、
+tooltip 富文本 JsCode、dataZoom）。与按图表类型组织的主知识库互补；用的注意事项：
+
+- 所有用法**先在 pyecharts 2.1 源码实测再写文档**：断轴参数是
+  `opts.AxisOpts(axisbreaks_opts=[opts.AxisBreakOpts(...)])`（生成 `yAxis.breaks`），
+  `labelLayout`/`universalTransition` 不是 opts 类，走
+  `set_series_opts(labelLayout={...}, universalTransition={...})` 直通 series；
+  `add_yaxis` 的冒牌 kwargs 会直接 TypeError；
+- `chart_rag.plan_feature_queries()` 按 plan 的 LLM 文案字段
+  （plan_name/chart_title/chart_reason/transform_hint/assumptions）扫触发词，命中后
+  对 Feature 查询做第二检索（每规则取第一篇、上限 2 条、失败静默降级），追加在主文档后；
+  文档目录名 `Feature` 是过滤标记，**别改**（`infer_doc_chart_type` 按它识别）；
+- 新增/改动文档用 `python -m RAG.sync_index --missing` 增量入库（每篇约 5–7 秒），
+  真机验证检索命中率（Feature 文档六连查第一名命中）；
+- ECharts X 新插件图（violin/stage/contour/lineRange/barRange/segmentedDoughnut）在
+  pyecharts 2.1 里类名存在但没有 `.add` 方法，**暂不写文档让 LLM 使用**；
 
 ### 图表数据检查（渲染后、成功前）
 
@@ -564,9 +604,10 @@ runtime/charts/<首个上传文件 stem>/          # 可用 CHARTS_DIR 覆盖
 
 - 其他运行期目录：`runtime/uploads/`、`runtime/datasets/ds_<sid>/`、`runtime/traces/<task_id>.json`、
   `runtime/cache/vision/<hash>/`（多模态 / Office 抽表缓存）、`runtime/cache/llm_text/<hash>/`
-  （文本表格化缓存）、`runtime/logs/datavisual.jsonl`
+  （文本表格化缓存）、`runtime/assets/echarts/`（echarts.min.js 等资产缓存，离线内联用）、
+  `runtime/logs/datavisual.jsonl`
 - 覆盖用环境变量（`.env`）：`TEMP_UPLOAD_DIR`、`TEMP_DATASETS_DIR`、`CHARTS_DIR`、`LOG_PATH`、
-  `VISION_CACHE_DIR`、`LLM_TEXT_CACHE_DIR`
+  `VISION_CACHE_DIR`、`LLM_TEXT_CACHE_DIR`、`CHART_ASSETS_DIR`（`CHART_ASSETS_INLINE=0` 关内联）
 - `.gitignore` 里是 `/runtime/`（根锚定）。**不要改回 `runtime/`**，那样会连 `service/runtime/` 下的新文件一起忽略
 
 ## 代码风格
