@@ -15,6 +15,7 @@ try:
         GetChartRequest,
         ErrorResponse,
         CompleteVizCodeRequest,
+        OptimizeChartRequest,
     )
     from .plan_models import ChartPlan, PlanBundle, parse_plans, plan_get, plan_field
 except ImportError:
@@ -25,6 +26,7 @@ except ImportError:
         GetChartRequest,
         ErrorResponse,
         CompleteVizCodeRequest,
+        OptimizeChartRequest,
     )
     from plan_models import ChartPlan, PlanBundle, parse_plans, plan_get, plan_field
 
@@ -35,6 +37,7 @@ __all__ = [
     'GetChartRequest',
     'ErrorResponse',
     'CompleteVizCodeRequest',
+    'OptimizeChartRequest',
     'ChartPlan',
     'PlanBundle',
     'parse_plans',

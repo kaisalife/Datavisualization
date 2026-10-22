@@ -242,6 +242,21 @@ async def generate_single_chart(
                     plan_id=plan_id, ok=True, attempts=attempts, started_at=started_at,
                     code_path=code_path, html_path=result.chart_path, report=report,
                 )
+                # 资产登记（弱依赖）：前端资产管理与二次优化入口都靠它反查
+                try:
+                    from service.monitoring.tracer import _task_id as _ctx_task_id
+                    from service.runtime.chart_assets import record_chart
+
+                    record_chart(
+                        output_folder,
+                        task_id=_ctx_task_id.get() or "",
+                        plan=plan if isinstance(plan, dict) else None,
+                        chart_path=result.chart_path,
+                        code_path=code_path,
+                        data_path=str(series.data_path) if series is not None else "",
+                    )
+                except Exception as asset_err:
+                    logger.warning("图表资产登记失败", plan_id=plan_id, error=str(asset_err))
                 logger.info("计划执行成功", plan_id=plan_id, chart_path=result.chart_path)
                 return True, result.chart_path, body, ""
 

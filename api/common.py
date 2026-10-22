@@ -385,3 +385,149 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                         })
                 except Exception:
                     pass
+
+
+def _run_optimize_in_executor(app, task_id, request_model, conversation_id=None):
+    """
+    在 executor 线程里跑单图优化（optimize_chart_main），与 _run_service_main_in_executor 同构。
+
+    流程与产物契约完全对齐：任务状态机 / TraceContext / WS 推送 / 对话日志，
+    只是编排函数换成 chart 优化（不重跑数据接入与规划）。
+    """
+    with app.app_context():
+        from service.monitoring import TraceContext, trace_store, error_monitor, ws_streamer
+
+        with TraceContext(task_id=task_id, conversation_id=conversation_id or ""):
+            tasks = get_tasks()
+            lock = get_tasks_lock()
+            logger = get_logger()
+
+            with lock:
+                if task_id not in tasks:
+                    return
+                tasks[task_id].update(status="running")
+
+            if conversation_id:
+                update_conversation_status(conversation_id, "running")
+
+            logger.info("optimize_task_start", task_id=task_id, chart_id=request_model.chart_id)
+            loop = None
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                from service.pipeline.optimize_flow import optimize_chart_main
+                from Entity import GenerateChartWithPromptResponse
+                clear_cancel(task_id)
+                result = loop.run_until_complete(
+                    optimize_chart_main(request_model, task_id=task_id)
+                )
+
+                charts = [item["chart_path"] for item in result.get("successful_charts", [])]
+                chart_types = [
+                    item["plan"].get("chart_type", "unknown")
+                    for item in result.get("successful_charts", [])
+                ]
+                codes = [item.get("code", "") for item in result.get("successful_charts", [])]
+                agent_logs = result.get("agent_logs", [])
+                response = GenerateChartWithPromptResponse(
+                    Charts=chart_types,
+                    HtmlFilePaths=charts,
+                    AgentLogs=agent_logs,
+                    Codes=codes,
+                    ContextCards=[],
+                )
+                if is_cancelled(task_id):
+                    with lock:
+                        tasks[task_id].update(status="cancelled", error="Cancelled by user")
+                    logger.info("optimize_task_cancelled", task_id=task_id)
+                    notify_task_complete(task_id, {
+                        "status": "cancelled",
+                        "error": "Cancelled by user",
+                    })
+                    return
+                # 优化跑完但没产出新版本也算 failed（前端需要明确信号）
+                final_status = "success" if charts else "failed"
+                final_error = "" if charts else "图表优化未产出新版本"
+                with lock:
+                    tasks[task_id].update(
+                        status=final_status,
+                        result=response.model_dump(),
+                        raw={
+                            "successful_charts": result.get("successful_charts", []),
+                            "failed_plans": result.get("failed_plans", []),
+                        },
+                        error=final_error,
+                    )
+                if conversation_id:
+                    complete_conversation(
+                        conversation_id, final_status,
+                        agent_logs=agent_logs,
+                        charts=chart_types,
+                        html_file_paths=charts,
+                        codes=codes,
+                        error=final_error,
+                    )
+                logger.info(
+                    "optimize_task_success", task_id=task_id,
+                    charts_count=len(charts), status=final_status,
+                )
+                notify_task_complete(task_id, {
+                    "status": final_status,
+                    "result": response.model_dump(),
+                    "agent_logs": agent_logs,
+                    "error": final_error,
+                })
+            except Exception as e:
+                if is_cancelled(task_id):
+                    with lock:
+                        tasks[task_id].update(status="cancelled", error="Cancelled by user")
+                    if conversation_id:
+                        complete_conversation(conversation_id, "cancelled", error="Cancelled by user")
+                    logger.info("optimize_task_cancelled", task_id=task_id)
+                    notify_task_complete(task_id, {
+                        "status": "cancelled",
+                        "error": "Cancelled by user",
+                    })
+                else:
+                    with lock:
+                        tasks[task_id].update(status="failed", error=f"{type(e).__name__}: {e}")
+                    if conversation_id:
+                        complete_conversation(conversation_id, "failed", error=f"{type(e).__name__}: {e}")
+                    logger.error(
+                        "optimize_task_failed", task_id=task_id,
+                        error=str(e), error_type=type(e).__name__,
+                    )
+                    notify_task_complete(task_id, {
+                        "status": "failed",
+                        "error": f"{type(e).__name__}: {e}",
+                    })
+            finally:
+                if loop:
+                    loop.close()
+                # 错误汇总 + trace 落盘
+                try:
+                    err_summary = error_monitor.get_summary(task_id)
+                    if err_summary.get("total_errors", 0) > 0:
+                        ws_streamer.broadcast(task_id, {
+                            "type": "error_summary",
+                            "task_id": task_id,
+                            **err_summary,
+                        })
+                except Exception:
+                    pass
+                try:
+                    trace_store.flush(task_id)
+                except Exception:
+                    pass
+                # 阶段耗时汇总推送 + 落盘清理
+                try:
+                    from service.monitoring import stage_timer
+                    stage_summary = stage_timer.flush(task_id)
+                    if stage_summary.get("stages"):
+                        ws_streamer.broadcast(task_id, {
+                            "type": "stage", "event": "summary",
+                            "task_id": task_id, **stage_summary,
+                        })
+                except Exception:
+                    pass

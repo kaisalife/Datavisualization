@@ -19,6 +19,17 @@ class GenerateChartWithPromptRequest(BaseModel):
     multi_table: Optional[bool] = False  # True = 抽出图片/PDF/Office 内嵌图片中的所有表
 
 
+class OptimizeChartRequest(BaseModel):
+    """单图二次优化请求模型"""
+    chart_id: str                                # 被优化的图表 HTML 文件名
+    user_prompt: str                             # 优化指令（改标题/配色/Top-N…）
+    config: Optional[str] = None                 # 图表配置（JSON字符串，预留）
+    model_url: Optional[str] = None
+    model_type: Optional[str] = None
+    model_api_key: Optional[str] = None
+    api_key: Optional[str] = None                # 认证 API 密钥
+
+
 class CompleteVizCodeRequest(BaseModel):
     """Path B：代码可视化补全请求。"""
     code_file_paths: List[str]                    # 用户代码文件路径列表

@@ -27,6 +27,7 @@ api/
 | `GET`  | `/api/task/<task_id>` | `task_api.py` | ✅ | 查询任务进度 / 结果 |
 | `POST` | `/api/task/<task_id>/cancel` | `task_api.py` | ✅ | 请求取消任务 |
 | `GET`  | `/api/chart/<chart_id>` | `chart_api.py` | ❌ | 获取生成的图表 HTML |
+| `POST` | `/api/optimize-chart` | `chart_api.py` | ✅ | 单图二次优化（异步，只跑优化 agent） |
 | `POST` | `/api/complete-viz-code` | `code_api.py` | ✅ | 现有 Python 文件追加可视化代码 |
 | `POST` | `/api/data-profile` | `data_api.py` | ✅ | 数据预览 / 图片·PDF 抽表 |
 | `GET`  | `/api/data-profile/export` | `data_api.py` | ✅ | 导出预览数据（CSV / ZIP） |
@@ -158,6 +159,33 @@ X-API-Key: <your_key>
 
 已做路径穿越防护；先在 `CHARTS_DIR/chart_id` 查找，不存在再 `rglob` 递归
 查找（兼容旧版 `charts/xxx/charts/*.html` 结构）。
+
+---
+
+### POST /api/optimize-chart
+
+单图二次优化：对**已成功生成**的图表按新指令重渲染（改标题/配色/Top-N/阈值…），
+只跑优化 agent，不重跑数据接入与规划。原图与原代码永不覆盖，优化产物登记为
+新版本（`<原 plan_id>_optN`），并以 `origin_chart_id` 溯源到原图。
+
+表单字段（`multipart/form-data`）：
+
+| 字段 | 必须 | 说明 |
+|------|------|------|
+| `chart_id` | 是 | 被优化的图表 HTML 文件名（前端从任务结果/资产列表取） |
+| `user_prompt` | 是 | 优化指令（自然语言） |
+| `model_url` / `model_type` / `model_api_key` | 否 | 模型配置，与生成接口一致 |
+
+```
+202 Accepted
+{"task_id": "...", "status": "pending", "conversation_id": "..."}
+```
+
+错误：`chart_id` 非法（含路径分隔符）返回 `400`；图表不存在/已被清理返回 `404`。
+后续同样用 `GET /api/task/{task_id}` 轮询 / `WS /ws/task/{task_id}` 订阅。
+
+前置条件：生成时已写入图表资产（`runtime/charts/<数据集>/assets.json`）；自备读取
+模式（无 series 数据文件）的图表暂不支持优化，任务会以 failed 终止并给出原因。
 
 ---
 
