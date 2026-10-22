@@ -292,6 +292,32 @@ def test_existing_relationship_plan_is_preserved(tmp_path: Path):
     assert all(normalize_chart_type(plan["chart_type"]) != "pie" for plan in result)
 
 
+def test_gauge_plan_from_skill_is_preserved(tmp_path: Path):
+    """技能/用户意图选出的单值 Gauge 属 "other" 家族，不能被数据形态守护丢弃。"""
+    df = pd.DataFrame({
+        "机组": ["3号机组"],
+        "本月发电量": [1824],
+        "目标发电量": [1900],
+        "停机时长": [96],
+    })
+    series = _series(
+        tmp_path, df, "category", "机组",
+        ["本月发电量", "目标发电量", "停机时长"], "kpi.机组",
+    )
+    catalog = _catalog(tmp_path, series)
+    plans = [
+        _plan("1", "Gauge", series.series_id, "机组", ["本月发电量"], "3号机组发电量完成率仪表盘"),
+        _plan("2", "Bar", series.series_id, "机组", ["本月发电量", "目标发电量"], "各机组发电量对比"),
+        _plan("3", "Scatter", series.series_id, "本月发电量", ["目标发电量"], "发电量与目标关系"),
+    ]
+
+    result = diversify_plans(plans, catalog, "3号机组这个月的发电量完成情况怎么样，有没有达标")
+
+    types = [normalize_chart_type(plan["chart_type"]) for plan in result]
+    assert "gauge" in types, types
+    assert chart_family("Gauge") == "other"
+
+
 def test_generic_single_numeric_recommends_distribution(
     numeric_distribution_series: SemanticSeries,
 ):

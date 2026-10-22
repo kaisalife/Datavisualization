@@ -821,7 +821,7 @@ def _diversify(
     optional_styles = [] if explicit else [
         style for style in allowed if style not in required_styles
     ]
-    preserve_allowed = set(required_styles) if (explicit or only_mode) else set(allowed)
+    preserve_allowed = set(required_styles) if (explicit or only_mode) else set(allowed) | {"other"}
 
     # 1) 先满足用户明确要求的角度（没有现成的就安全改造或按数据补一张）
     for style in required_styles:
@@ -843,6 +843,9 @@ def _diversify(
         add(plan)
 
     # 2) 优先保留 LLM 已经规划好的有效图（按原顺序，同 series+指标去重）
+    # preserve_allowed 含 "other"：Gauge/Liquid/WordCloud/Graph 这类不属于
+    # 五大分析家族的合法图（尤其是技能/用户意图选出的单值快照图）不能因为
+    # 归不进 tool 家族就被静默丢弃；总数仍由 target 上限约束。
     for plan in sorted(work, key=lambda item: (bool(item.get("auto_generated")), order.get(id(item), 999))):
         if len(selected) >= target:
             break

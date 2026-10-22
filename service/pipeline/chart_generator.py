@@ -125,11 +125,13 @@ async def generate_single_chart(
     dataset_summary: str = "",
     user_config: str = "(未提供)",
     catalog: "SeriesCatalog | None" = None,
+    user_prompt: str = "",
 ) -> tuple[bool, str, str, str]:
     """生成并执行单个图表计划（v4）。
 
     Args:
         catalog: 语义 series 目录（plan.series_id 解析为 df 加载）
+        user_prompt: 用户原始话术——技能选择要用它做 require_keywords 门控，
 
     Returns:
         (成功与否, chart_path, 最终代码, 错误信息)
@@ -160,8 +162,12 @@ async def generate_single_chart(
             logger.warning("series 预览失败", series_id=series_id, error=str(e))
     series_hint = _build_series_hint(series_id, df_preview)
     reference_docs = retrieve_reference_docs(retriever, plan)
-    # 技能按计划类型 + series 形态选择；只有命中时才把完整正文放进 prompt
-    skill_context = get_skill_registry().context_for_plan(plan=plan, series=series)
+    # 技能按计划类型 + series 形态选择；只有命中时才把完整正文放进 prompt。
+    # user_prompt 必须传：require_keywords 门控（如同为 Bar+comparison 的普通排行
+    # 与帕累托）要靠用户话术区分，不传则这类技能在生成阶段永远注入不进来。
+    skill_context = get_skill_registry().context_for_plan(
+        plan=plan, series=series, user_prompt=user_prompt
+    )
 
     final_code = ""
     code = ""

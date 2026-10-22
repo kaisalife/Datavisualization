@@ -149,6 +149,7 @@ async def run_agent_pipeline(
                     dataset_summary=dataset_summary_json,
                     catalog=catalog,
                     user_config=user_chart_config_json,
+                    user_prompt=model_.user_prompt or "",
                 )
         except Exception as e:
             success, chart_path, code, error = False, "", "", f"generate_single_chart 异常: {e}"

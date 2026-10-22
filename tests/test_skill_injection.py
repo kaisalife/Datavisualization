@@ -151,3 +151,109 @@ async def test_generation_injects_financial_skill_for_candlestick(
     assert success is True, error
     assert "金融 K 线" in captured["skill_context"]
     assert "[open, close, low, high]" in captured["skill_context"]
+
+
+def _category_series(tmp_path: Path) -> SemanticSeries:
+    """类目排行 series（11 个类目，1 个度量）——帕累托技能的形态。"""
+    labels = [
+        "焊点虚焊", "元件偏移", "少锡", "连锡", "立碑", "桥接短路",
+        "划伤", "表面划伤", "异物", "端子变形", "锡珠",
+    ]
+    df = pd.DataFrame({"不良描述": labels, "判定数量": list(range(33, 22, -1))})
+    path = tmp_path / "defect.parquet"
+    df.to_parquet(path, index=False)
+    return SemanticSeries(
+        series_id="defect.不良描述",
+        name="defect.不良描述",
+        axis_kind="category",
+        row_label_column="不良描述",
+        column_label_columns=["判定数量"],
+        data_path=str(path),
+        source_table="defect",
+        description="不良项排行",
+        extra_semantics={
+            "shape": {"rows": len(labels), "time_like": False},
+            "source_kind": "file",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_generation_skill_selection_uses_user_prompt_gate(
+    tmp_path: Path, monkeypatch,
+):
+    """require_keywords 技能必须靠用户话术命中；生成阶段不传 user_prompt 时应选不中。"""
+    series = _category_series(tmp_path)
+    catalog = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])
+    plan = {
+        "plan_id": "1",
+        "plan_name": "不良项排行",
+        "chart_type": "Bar",
+        "chart_title": "不良项排行",
+        "series_id": series.series_id,
+        "x_axis": "不良描述",
+        "y_axis": ["判定数量"],
+        "analysis_task": "comparison",
+    }
+    captured: dict = {}
+
+    async def fake_invoke(engine, chat, prompt, input_data):
+        captured.update(input_data)
+        return "```python\nprint('ok')\n```"
+
+    monkeypatch.setattr(
+        "service.pipeline.chart_generator.execute_chart_code", _fake_execute
+    )
+    monkeypatch.setattr(
+        "service.pipeline.chart_generator._invoke_llm", fake_invoke
+    )
+
+    # 1) 普通话术（无场景关键词）→ 帕累托技能门控拦截，不注入
+    await generate_single_chart(
+        chat=_FakeChat(),
+        plan=plan,
+        data_file_path="",
+        data_preview="",
+        output_folder=tmp_path,
+        max_retries=1,
+        catalog=catalog,
+        user_prompt="对比各城市销售额",
+    )
+    assert "extend_axis" not in captured["skill_context"]
+
+    # 2) 业务话术命中 → 注入完整技能正文（双轴范式可见）
+    await generate_single_chart(
+        chat=_FakeChat(),
+        plan=plan,
+        data_file_path="",
+        data_preview="",
+        output_folder=tmp_path,
+        max_retries=1,
+        catalog=catalog,
+        user_prompt="帮我做不良项主次因素排列，看帕累托",
+    )
+    assert "extend_axis" in captured["skill_context"]
+    assert "累计占比" in captured["skill_context"]
+
+
+def test_chart_designer_prompt_carries_skill_index():
+    """回退规划路径（无 load_skill 工具）也必须能看到技能索引。"""
+    from prompts.chart_designer_prompt import get_agent_chart_designer_prompt
+
+    text = get_agent_chart_designer_prompt().invoke(
+        {
+            "data_file_path": "",
+            "data_preview": "",
+            "data_interface_info": "",
+            "canonical_dataset": "{}",
+            "series_index": "- s1",
+            "skill_index": "- gauge-kpi-snapshot: KPI 达成仪表盘",
+            "user_chart_config": "",
+            "user_prompt": "3号机组完成情况",
+            "mcp_prompt": "",
+            "skill_prompt": "",
+        }
+    ).to_string()
+
+    assert "gauge-kpi-snapshot" in text
+    assert "skill_index" in text

@@ -82,6 +82,7 @@ async def execute_chart_plans(
     config: dict,
     task_id=None,
     agent_logs: list,
+    user_prompt: str = "",
 ) -> tuple[list, list]:
     """并发执行图表计划。
 
@@ -97,6 +98,7 @@ async def execute_chart_plans(
         config: 服务配置（读 chart_generation 并发参数）
         task_id: 任务ID（取消检查）
         agent_logs: 前端展示日志，就地追加
+        user_prompt: 用户原始话术（透传给技能选择做 require_keywords 门控）
 
     Returns:
         (successful_charts, failed_plans)
@@ -150,6 +152,7 @@ async def execute_chart_plans(
                 dataset_summary=dataset_summary_json,
                 catalog=catalog,
                 user_config=user_config_json,
+                user_prompt=user_prompt,
             )
             return plan_item, success, chart_path, code, error
 

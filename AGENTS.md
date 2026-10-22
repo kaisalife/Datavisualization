@@ -247,6 +247,15 @@ $env:BACKEND_URL="http://localhost:5000"
   便于微调内置场景而不改仓库）；匹配/评分/选择全部委托原实现，零逻辑复制。
 - **接线**：`registry.get_skill_registry()` 一行委托 `build_default_registry()`——
   规划索引、`load_skill` 工具、生成阶段技能注入自动看到用户技能，别处无感知。
+- **生成阶段必须透传用户话术**：`generate_single_chart(..., user_prompt=...)` →
+  `context_for_plan(user_prompt=...)`。`require_keywords` 技能靠用户话术门控，
+  不传则这类技能（内置 pareto-quality / 用户技能）在生成阶段静默失效——
+  新增调用点要同时接 `service_main`/`agent_pipeline` → `execute_chart_plans` →
+  `generate_single_chart` 这条链（回归见 `tests/test_skill_injection.py`）。
+- **规划回退路径也带技能索引**：`chart_designer_prompt` 有 `{skill_index}` 变量
+  （`_legacy_plan_via_prompt` 注入）。plan agent 会话因网关 400（tool_calls 未回填
+  tool 消息）失败时先**换新会话重试一次**，再回退——回退路径没有 `load_skill` 工具，
+  只靠索引选图型，别把它当主路径。
 - **API** `api/skills_api.py`：`GET/POST /api/skills`、`GET/PUT/DELETE /api/skills/<name>`；
   保存/删除后进程内 `reload()` 立即生效，无需重启。内置技能 GET 可读正文（前端当模板）。
 - 正文模板与校验规则见 API docstring；同一份 SKILL.md 结构与内置技能完全一致
@@ -382,6 +391,9 @@ tooltip 富文本 JsCode、dataZoom）。与按图表类型组织的主知识库
     的 Bar/Pie 安全改成 Line/Area；≤6 个非负类别且没有构成图时补 Pie，7–20 个非负类别补 Treemap；
     同一 series + 同一指标不重复；同一分析角度最多 2 张；**保留 LLM 已规划的有效图**
     （如 Bar+Scatter 不会为了凑构成图被硬改成 Pie）；
+  - **"other" 家族也要保留**：Gauge/Liquid/WordCloud/Graph 这类不属于五大分析家族的合法图
+    （尤其是技能/用户意图选出的单值快照图）不能被数量/角度规则静默丢弃；数量上限仍由
+    target 控制。用户明确点名类型时（explicit）仍以点名为准；
   - 没有行标签、只有一列数值的 generic series 按“一组观测值”处理，推荐并为分布补 Histogram/Boxplot，
     不再强行当类别柱状图；
   - 用户明确点名类型（“柱状图”“饼图”…）不自动改；用户说“画两个图”是硬上限；数据只支持一个角度时宁可少画。

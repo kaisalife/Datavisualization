@@ -32,6 +32,7 @@ async def _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs: li
     from prompts.agent_prompt import get_agent_chart_designer_prompt
     from service.pipeline.plan_validator import validate_plans
     from service.runtime.utils import extract_json_from_response
+    from service.skills import get_skill_registry
 
     canonical_dataset = "(未提供)"
     if profile is not None:
@@ -46,6 +47,9 @@ async def _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs: li
         "data_interface_info": "",
         "canonical_dataset": canonical_dataset,
         "series_index": catalog.to_index_prompt() if catalog is not None else "(未提供)",
+        # 回退路径没有 load_skill 工具，至少要把技能索引给到 LLM 才能选对
+        # 图表类型/分析角度（技能正文会在生成阶段由 context_for_plan 注入）
+        "skill_index": get_skill_registry().index_text(),
         "user_chart_config": (model_.config or "(未提供)") if model_.config else "(未提供)",
         "user_prompt": model_.user_prompt,
         "mcp_prompt": getattr(model_, "mcp_prompt", "") or "",
@@ -131,30 +135,50 @@ async def run_plan_stage(
         _persist_plans(plans, output_folder, agent_logs)
         return plans
 
-    state = PlanSessionState(
-        catalog=catalog,
-        agent_logs=agent_logs,
-        profile=profile,
-        user_prompt=model_.user_prompt,
-    )
-    try:
-        tools = build_plan_tool_pool(state)
-        message = build_planning_prompt().invoke({
-            "user_prompt": model_.user_prompt,
-            "profile_str": profile.to_prompt_str() if profile else "(未提供)",
-            "series_index": catalog.to_index_prompt(),
-            "skill_index": get_skill_registry().index_text(),
-        })
-        with stage_timer.stage(task_id, "plan", "图表规划(agent)"):
-            result = await chat.arun_with_tools(
-                message, max_iterations=PLAN_MAX_ITERATIONS, tools=tools
-            )
-        logs = result.get("agent_logs", []) if isinstance(result, dict) else []
-        for line in logs:
-            agent_logs.append(f"📋 [plan agent] {line}")
-    except Exception as e:
-        logger.warning("plan agent 会话异常，回退旧路径", error=str(e))
-        agent_logs.append(f"⚠️ plan agent 会话失败({e})，回退旧规划路径")
+    def _new_state() -> "PlanSessionState":
+        return PlanSessionState(
+            catalog=catalog,
+            agent_logs=agent_logs,
+            profile=profile,
+            user_prompt=model_.user_prompt,
+        )
+
+    state = _new_state()
+    plan_message = build_planning_prompt().invoke({
+        "user_prompt": model_.user_prompt,
+        "profile_str": profile.to_prompt_str() if profile else "(未提供)",
+        "series_index": catalog.to_index_prompt(),
+        "skill_index": get_skill_registry().index_text(),
+    })
+
+    # 网关偶发 400（tool_calls 未被 tool 消息回填 / reasoning_content 未回传）
+    # 会让整段会话作废；先换新会话重试一次，避免直接掉到无 load_skill 工具的
+    # 回退路径（那会丢掉技能索引，规划质量明显下降）。
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            tools = build_plan_tool_pool(state)
+            with stage_timer.stage(task_id, "plan", "图表规划(agent)"):
+                result = await chat.arun_with_tools(
+                    plan_message, max_iterations=PLAN_MAX_ITERATIONS, tools=tools
+                )
+            logs = result.get("agent_logs", []) if isinstance(result, dict) else []
+            for line in logs:
+                agent_logs.append(f"📋 [plan agent] {line}")
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            logger.warning("plan agent 会话异常", attempt=attempt + 1, error=str(e))
+            if attempt == 0:
+                agent_logs.append(
+                    f"⚠️ plan agent 会话异常({type(e).__name__})，换新会话重试一次"
+                )
+                state = _new_state()  # 丢弃半途 plan，避免重试产物重复
+            else:
+                agent_logs.append(f"⚠️ plan agent 会话失败({e})，回退旧规划路径")
+
+    if last_error is not None:
         plans = await _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs)
         plans = _deterministic_fallback(
             plans, catalog, model_.user_prompt, agent_logs

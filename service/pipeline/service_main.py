@@ -179,6 +179,7 @@ async def service_main(model_: GenerateChartWithPromptRequest, config_path=None,
             config=config,
             task_id=task_id,
             agent_logs=agent_logs,
+            user_prompt=model_.user_prompt,
         )
 
     _ensure_not_cancelled(task_id, agent_logs)

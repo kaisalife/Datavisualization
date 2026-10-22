@@ -11,6 +11,8 @@ chart_designer_prompt = """
 ## 输入
 - canonical_dataset（权威）：列 name/dtype/semantic_role(time/measure/dimension/id)、stats、preview_rows、semantic_hints.detected_patterns
 - series_index（权威）：可用数据系列索引（series_id + 语义类型 + 说明），每个 plan 必须从中选定一个
+- skill_index：可用场景技能索引（名称 + 一句话用途）；数据/需求明显匹配某技能时，
+  按该技能的图表类型与数据处理约定规划（技能指南在生成阶段会自动注入）
 - data_file_path、data_preview：辅助
 - user_chart_config：用户图表配置偏好（可选）
 - 用户需求
@@ -96,10 +98,12 @@ def get_agent_chart_designer_prompt() -> ChatPromptTemplate:
             "{data_file_path}\n数据预览:{data_preview}\n数据接口信息:{data_interface_info}\n"
             "canonical_dataset(权威):\n{canonical_dataset}\n"
             "数据系列索引(series_index,权威):\n{series_index}\n"
+            "可用场景技能索引(skill_index):\n{skill_index}\n"
             "用户自定义图表配置:{user_chart_config}\n{user_prompt}\n{mcp_prompt}\n{skill_prompt}",
         ),
     ]).partial(
         canonical_dataset="(未提供)",
         user_chart_config="(未提供)",
         series_index="(未提供)",
+        skill_index="(无技能)",
     )
