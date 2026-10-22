@@ -42,17 +42,19 @@
 # venv 已装好 pytest / pytest-asyncio；换机器时再装
 .venv\Scripts\python.exe -m pip install pytest pytest-asyncio pytest-cov
 
-.venv\Scripts\python.exe -m pytest -q                                     # 免 LLM 全集（当前 343 passed / 21 deselected）
-.venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q         # 接入/plan 冒烟
-.venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -q  # 多模态抽表（假模型，含错误分支）
-.venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -q      # 探针 + 任务回收
-.venv\Scripts\python.exe -m pytest tests/test_chart_prompt_rules.py tests/test_llm_headers.py tests/test_query_engine_usage.py -q   # prompt 规则 / 网关请求头 / token 计量
+.venv\Scripts\python.exe -m pytest                                      # 默认核心链路（当前 101 passed）
+.venv\Scripts\python.exe -m pytest -o addopts="" -m "not needs_llm and not needs_network" -q  # 完整免 LLM 回归（414 passed / 24 deselected）
+.venv\Scripts\python.exe -m pytest tests/test_refactor_smoke.py -q       # 核心：接入/plan 冒烟
+.venv\Scripts\python.exe -m pytest tests/test_multimodal_tabularize.py -o addopts="" -q  # 扩展：多模态抽表
+.venv\Scripts\python.exe -m pytest tests/test_service_hardening.py -o addopts="" -q      # 扩展：探针 + 任务回收
+.venv\Scripts\python.exe -m pytest tests/test_chart_prompt_rules.py tests/test_llm_headers.py -o addopts="" -q  # 扩展：prompt/网关
 .venv\Scripts\python.exe -m pytest tests/test_file/test_end_to_end.py -o addopts="" -m "needs_llm and integration" -q   # 真模型
 ```
 
-`pytest.ini` 的 `addopts` 默认 `-m "not needs_llm and not needs_network"`；跑真模型测试要
-`-o addopts=""` 并显式带标记。`asyncio_mode = auto`，异步测试不用手写 marker。
-新增测试放 `tests/`，共享 fixture 在 `tests/conftest.py`。
+`pytest.ini` 的默认 `addopts` 只跑核心链路并排除 `needs_llm` / `needs_network` / `extended`；
+核心文件白名单在 `tests/conftest.py` 的 `CORE_TEST_FILES`，其余测试自动标 `extended`。
+跑扩展/完整回归或真模型测试要 `-o addopts=""` 并显式带标记。`asyncio_mode = auto`，
+异步测试不用手写 marker。新增测试放 `tests/`，共享 fixture 在 `tests/conftest.py`。
 
 ### 真实模型与表格效果评估
 

@@ -16,6 +16,29 @@ from dotenv import dotenv_values
 
 TEST_ENV_PATH = Path(__file__).with_name(".env")
 
+# 日常默认只跑这些核心链路测试；其余数据接入/RAG/真实文件测试标记为 extended。
+# 新增核心回归时把文件名加到这里；完整回归见 pytest.ini 注释。
+CORE_TEST_FILES = {
+    "test_refactor_smoke.py",
+    "test_plan_contract.py",
+    "test_agent_plan_fallback.py",
+    "test_chart_selection.py",
+    "test_chart_data_check.py",
+    "test_generation_validation.py",
+    "test_skill_registry.py",
+    "test_skill_injection.py",
+    "test_series_shape.py",
+    "test_series_split.py",
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    """把核心链路之外的测试标成 extended，默认由 addopts 排除。"""
+    for item in items:
+        filename = Path(str(item.fspath)).name
+        if filename not in CORE_TEST_FILES:
+            item.add_marker(pytest.mark.extended)
+
 
 def load_test_env() -> dict:
     """读取 tests/.env；文件不存在时返回空 dict。"""
