@@ -70,6 +70,42 @@ _ANALYSIS_QUERIES = {
     "relationship": "关系 相关性",
 }
 
+# Feature/ 目录高级用法文档的触发规则：(触发词集合, 补充检索 query)。
+# 触发扫描只看 plan 的 LLM 文案字段（plan_name/chart_title/chart_reason/transform_hint/
+# assumptions），不拼业务标题进主 query——Feature 文档按触发词单独检索。
+_FEATURE_RULES: tuple[tuple[frozenset[str], str], ...] = (
+    (
+        frozenset({"目标线", "均值线", "平均线", "警戒线", "预算线", "基准线", "达标线", "markline"}),
+        "markLine 参考线 目标线 均值线 示例",
+    ),
+    (
+        frozenset({"参考区间", "旺季", "波动带", "高亮区间", "markarea"}),
+        "markArea 参考区间 高亮时段 示例",
+    ),
+    (
+        frozenset({"断轴", "离群值", "跨度", "axisbreak"}),
+        "断轴 axisBreak 离群值 数值轴 示例",
+    ),
+    (
+        frozenset({"标签重叠", "标签挤", "labelLayout", "hotoverlap"}),
+        "数据标签重叠 labelLayout hideOverlap 示例",
+    ),
+    (
+        frozenset({"富文本", "提示框自定义", "涨跌箭头"}),
+        "tooltip 富文本 JsCode 自定义 提示框 示例",
+    ),
+    (
+        frozenset({"数据缩放", "滚动浏览", "长序列", "datazoom"}),
+        "dataZoom 数据缩放 长序列 slider 示例",
+    ),
+    (
+        frozenset({"切换动画", "过渡动画", "universaltransition"}),
+        "universalTransition 系列切换 过渡动画 示例",
+    ),
+)
+
+_MAX_FEATURE_DOCS = 2
+
 # 图表类型 -> 知识库目录名（过滤 source 用）；未列出的按小写名匹配
 _CHART_FOLDER_ALIASES = {
     "kline": "candlestick",
@@ -189,6 +225,51 @@ def filter_reference_docs(docs: list, plan: dict, max_docs: int = _DEFAULT_MAX_D
     return result
 
 
+def _plan_feature_text(plan: dict) -> str:
+    """拼出用于 Feature 触发扫描的 plan 文案（LLM 写的语义字段）。"""
+    parts = [
+        str(plan_get(plan, k, "") or "")
+        for k in ("plan_name", "chart_title", "chart_reason", "transform_hint")
+    ]
+    assumptions = plan_get(plan, "assumptions", None)
+    if isinstance(assumptions, list):
+        parts.extend(str(a) for a in assumptions[:5])
+    return " ".join(parts)
+
+
+def plan_feature_queries(plan: dict) -> list[str]:
+    """按 plan 文案扫描 Feature 触发词，返回去重的补充检索 query（最多 2 条）。"""
+    text = _plan_feature_text(plan).lower()
+    queries: list[str] = []
+    for triggers, query in _FEATURE_RULES:
+        if any(t in text for t in triggers) and query not in queries:
+            queries.append(query)
+    return queries[:_MAX_FEATURE_DOCS]
+
+
+def _retrieve_feature_docs(retriever, plan: dict, max_docs: int = _MAX_FEATURE_DOCS) -> str:
+    """检索 Feature/ 目录高级用法文档（失败静默降级，不影响主检索）。"""
+    if retriever is None:
+        return ""
+
+    picked: list = []
+    for query in plan_feature_queries(plan):
+        try:
+            docs = retriever.retrieve(query) or []
+        except Exception as e:
+            logger.warning("Feature 文档检索失败", query=query, error=str(e))
+            break
+        feature_docs = [
+            d for d in docs
+            if infer_doc_chart_type(d) == "feature"
+            and d not in picked
+        ]
+        if feature_docs:
+            picked.append(feature_docs[0])
+
+    return "\n\n---\n\n".join(str(getattr(d, "page_content", "")) for d in picked)
+
+
 def retrieve_reference_docs(retriever, plan: dict, max_docs: int = _DEFAULT_MAX_DOCS) -> str:
     """按 plan 的图表类型/分析任务检索 Pyecharts 参考文档。
 
@@ -222,7 +303,12 @@ def retrieve_reference_docs(retriever, plan: dict, max_docs: int = _DEFAULT_MAX_
             raw_count=len(docs),
             chart_type=chart_type,
         )
-        return "\n\n---\n\n".join(doc.page_content for doc in selected)
+        main_text = "\n\n---\n\n".join(doc.page_content for doc in selected)
+        # 高级用法（markLine/断轴/labelLayout…）：按 plan 文案触发词补检索 Feature 文档
+        feature_text = _retrieve_feature_docs(retriever, plan)
+        if feature_text:
+            return f"{main_text}\n\n---\n\n{feature_text}"
+        return main_text
     except Exception as e:
         logger.warning("检索失败", error=str(e))
         return ""

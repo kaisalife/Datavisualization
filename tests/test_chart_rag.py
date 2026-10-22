@@ -7,6 +7,7 @@ from service.pipeline.chart_rag import (
     build_rag_query,
     filter_reference_docs,
     infer_doc_chart_type,
+    plan_feature_queries,
     retrieve_reference_docs,
 )
 
@@ -133,3 +134,86 @@ def test_retrieve_uses_filtered_docs_and_dedupes():
     text = retrieve_reference_docs(retriever, {"chart_type": "Line"}, max_docs=4)
     assert text == "line-a"
     assert "折线图" in retriever.queries[0]
+
+
+# ---------- Feature 高级用法文档通道 ----------
+
+
+class _RoutingRetriever:
+    """主 query 与 Feature query 返回不同文档集合。"""
+
+    def __init__(self, main_docs, feature_docs):
+        self.main_docs = main_docs
+        self.feature_docs = feature_docs
+        self.queries: list[str] = []
+
+    def retrieve(self, query: str):
+        self.queries.append(query)
+        for triggers, feature_query in [
+            ({"目标线", "markline"}, "markLine 参考线 目标线 均值线 示例"),
+        ]:
+            if any(t in query.lower() for t in triggers):
+                return self.feature_docs
+        return self.main_docs
+
+
+def test_feature_triggers_scan_plan_text_fields():
+    plan = {
+        "chart_type": "Line",
+        "chart_title": "月度销售额",
+        "chart_reason": "对比实际与 2024 目标线",
+        "transform_hint": "",
+    }
+
+    queries = plan_feature_queries(plan)
+
+    assert queries == ["markLine 参考线 目标线 均值线 示例"]
+
+    # 无触发词时不追加检索
+    assert plan_feature_queries({"chart_type": "Bar", "chart_reason": "对比各城市"}) == []
+
+
+def test_feature_queries_dedupe_and_cap():
+    plan = {
+        "chart_reason": "标注旺季参考区间并保留长序列滚动浏览，另加目标线",
+    }
+
+    queries = plan_feature_queries(plan)
+
+    assert len(queries) == 2  # 上限 2 条
+    assert len(queries) == len(set(queries))
+
+
+def test_feature_docs_appended_after_main_docs():
+    retriever = _RoutingRetriever(
+        main_docs=[SimpleNamespace(page_content="line-main", metadata={"source": "RAG_Data/Line/a.md"})],
+        feature_docs=[
+            SimpleNamespace(page_content="markline-doc", metadata={"source": "RAG_Data/Feature/markline.md"}),
+            SimpleNamespace(page_content="bar-noise", metadata={"source": "RAG_Data/Bar/b.md"}),
+        ],
+    )
+
+    text = retrieve_reference_docs(
+        retriever, {"chart_type": "Line", "chart_reason": "带目标线"}
+    )
+
+    assert text.startswith("line-main")
+    assert "markline-doc" in text  # Feature 文档在主文档之后
+    assert "bar-noise" not in text  # 非 Feature 文档被过滤
+    assert len(retriever.queries) == 2  # 主 query + Feature 补充 query
+
+
+def test_feature_retrieval_failure_degrades_gracefully():
+    class _FailOnSecond:
+        def __init__(self):
+            self.calls = 0
+
+        def retrieve(self, query):
+            self.calls += 1
+            if self.calls > 1:
+                raise RuntimeError("feature boom")
+            return [SimpleNamespace(page_content="line", metadata={"source": "RAG_Data/Line/x.md"})]
+
+    # 主检索正常，Feature 补充检索抛错被吞掉，主文档照常返回
+    text = retrieve_reference_docs(_FailOnSecond(), {"chart_type": "Line"})
+    assert text == "line"
