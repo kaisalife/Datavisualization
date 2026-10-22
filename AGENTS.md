@@ -234,6 +234,25 @@ $env:BACKEND_URL="http://localhost:5000"
   `if 列名 == "开盘"` 之类特判。
 - `SKILLS_DIR` 可覆盖技能目录。回归：`tests/test_skill_registry.py`。
 
+### 用户自定义技能（skills_user/）
+
+用户不改仓库、不写代码就能扩展场景技能，新逻辑全部在新模块（模块化，不动既有实现）：
+
+- **存储层** `service/skills/user_skills.py:UserSkillStore`：目录默认 `<项目根>/skills_user`
+  （gitignore，`USER_SKILLS_DIR` 可覆盖，动态读取——测试切临时目录无需重建单例）；
+  保存前校验「名称 slug（挡穿越）/ frontmatter 完整 / name 与提交名一致 / 正文非空 /
+  256KB 上限」，非法内容写不进目录；落盘后用真实解析器再验一遍，失败回滚目录。
+- **组合注册表** `service/skills/user_skills.py:CompositeSkillRegistry`：内置 + 用户两个
+  `SkillRegistry` 合并视图，**用户技能与内置同名时用户覆盖**（删同名用户技能即恢复内置，
+  便于微调内置场景而不改仓库）；匹配/评分/选择全部委托原实现，零逻辑复制。
+- **接线**：`registry.get_skill_registry()` 一行委托 `build_default_registry()`——
+  规划索引、`load_skill` 工具、生成阶段技能注入自动看到用户技能，别处无感知。
+- **API** `api/skills_api.py`：`GET/POST /api/skills`、`GET/PUT/DELETE /api/skills/<name>`；
+  保存/删除后进程内 `reload()` 立即生效，无需重启。内置技能 GET 可读正文（前端当模板）。
+- 正文模板与校验规则见 API docstring；同一份 SKILL.md 结构与内置技能完全一致
+  （frontmatter + 正文渐进披露，含 `require_keywords` 门控）。
+- 回归：`tests/test_user_skills.py`（存储校验 / 组合注册表覆盖语义 / API CRUD 三层，17 例）。
+
 ## 图表生成规范
 
 - 只用 `pyecharts`；禁止 matplotlib / seaborn / plotly

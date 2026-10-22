@@ -321,6 +321,9 @@ class SkillRegistry:
 
 
 @lru_cache(maxsize=1)
-def get_skill_registry() -> SkillRegistry:
-    """进程内复用技能注册表（技能目录是静态资源）。"""
-    return SkillRegistry()
+def get_skill_registry():
+    """进程内复用技能注册表（内置 skills/ + 用户自定义组合，见 user_skills 模块）。"""
+    # 局部导入避免循环（user_skills 复用本模块的解析与注册表实现）
+    from service.skills.user_skills import build_default_registry
+
+    return build_default_registry()

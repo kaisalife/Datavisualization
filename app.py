@@ -115,7 +115,7 @@ init_api_deps(
 init_db()
 
 # ========== 注册蓝图 ==========
-from api import chart_bp, task_bp, code_bp, data_bp, health_bp
+from api import chart_bp, task_bp, code_bp, data_bp, health_bp, skills_bp
 from api.conversation_api import bp as conversation_bp
 from api.cleanup_api import bp as cleanup_bp
 app.register_blueprint(chart_bp)
@@ -125,6 +125,7 @@ app.register_blueprint(data_bp)
 app.register_blueprint(conversation_bp)
 app.register_blueprint(cleanup_bp)
 app.register_blueprint(health_bp)
+app.register_blueprint(skills_bp)
 
 # ========== WebSocket 端点 ==========
 from api.common import register_ws_connection, unregister_ws_connection

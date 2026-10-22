@@ -41,6 +41,11 @@ api/
 | `DELETE` | `/api/conversations/batch` | `conversation_api.py` | ✅ | 批量删除对话 |
 | `PUT`  | `/api/conversations/<id>/prompt` | `conversation_api.py` | ✅ | 修改用户提示词 |
 | `POST` | `/api/cleanup` | `cleanup_api.py` | ✅ | 清理超期 runtime 文件 |
+| `GET`  | `/api/skills` | `skills_api.py` | ✅ | 技能索引（内置 + 用户，含来源/覆盖） |
+| `GET`  | `/api/skills/<name>` | `skills_api.py` | ✅ | 读技能完整 SKILL.md（内置只读） |
+| `POST` | `/api/skills` | `skills_api.py` | ✅ | 保存用户技能（name + content，即时生效） |
+| `PUT`  | `/api/skills/<name>` | `skills_api.py` | ✅ | 更新用户技能正文 |
+| `DELETE` | `/api/skills/<name>` | `skills_api.py` | ✅ | 删除用户技能（同名覆盖内置时删除即恢复内置） |
 | `GET`  | `/api/health` | `health_api.py` | ❌ | 存活探针（liveness） |
 | `GET`  | `/api/ready` | `health_api.py` | ❌ | 就绪探针（readiness） |
 | `WS`   | `/ws/task/<task_id>` | `app.py` | ✅ | 任务进度推送 |
