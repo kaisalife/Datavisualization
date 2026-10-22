@@ -11,10 +11,61 @@ import pytest
 from pyecharts import options as opts
 from pyecharts.charts import Bar, Boxplot, Grid, Line, Pie, Scatter, TreeMap
 
-from service.pipeline.chart_polish import PALETTE, polish_options
+from service.pipeline.chart_polish import PALETTE, polish_chart, polish_options
 from service.pipeline.chart_sandbox import execute_chart_code
+from service.pipeline.chart_theme import DVS_PALETTE, TONE_DARK, TONE_LIGHT, tone_for
 
 pytestmark = pytest.mark.whitebox
+
+
+# ---------- 主题常量层 ----------
+
+
+def test_theme_palette_is_tableau10_unique():
+    assert DVS_PALETTE == PALETTE  # polish 兼容导出同一来源
+    assert len(DVS_PALETTE) == 10
+    assert len(set(DVS_PALETTE)) == 10
+    assert all(c.startswith("#") for c in DVS_PALETTE)
+
+
+def test_theme_tones_are_complete_pairs():
+    required = {
+        "title", "subtitle", "legend_text", "axis_label", "axis_name",
+        "data_label", "tooltip_text", "treemap_label",
+        "treemap_label_border", "treemap_label_border_alt",
+    }
+    assert set(TONE_LIGHT) == required
+    assert set(TONE_DARK) == required
+    assert tone_for(False) is TONE_LIGHT and tone_for(True) is TONE_DARK
+
+
+def test_dark_background_detection_switches_tone():
+    from types import SimpleNamespace
+
+    # set_dark_mode() 只改 backgroundColor、不改 theme 属性
+    chart = (
+        Bar()
+        .add_xaxis(["北京", "上海", "广州"])
+        .add_yaxis("销售额", [1200, 1500, 900])
+    )
+    chart.options["backgroundColor"] = "#100C2A"
+    theme_like = SimpleNamespace(
+        options=chart.options, width="900px", theme="", _datavis_polished=False
+    )
+    assert polish_chart(theme_like) is True
+    assert _label(chart.options["series"][0])["color"] == TONE_DARK["data_label"]
+
+    # 浅色背景不受影响
+    light_chart = (
+        Bar()
+        .add_xaxis(["北京", "上海", "广州"])
+        .add_yaxis("销售额", [1200, 1500, 900])
+    )
+    light_theme_like = SimpleNamespace(
+        options=light_chart.options, width="900px", theme="", _datavis_polished=False
+    )
+    assert polish_chart(light_theme_like) is True
+    assert _label(light_chart.options["series"][0])["color"] == TONE_LIGHT["data_label"]
 
 
 def _dict(value):
@@ -46,7 +97,7 @@ def test_bar_defaults_are_polished():
     polish_options(chart.options, width=900)
 
     series = chart.options["series"][0]
-    assert chart.options["color"] == PALETTE
+    assert chart.options["color"] == list(PALETTE)
     assert series["barMaxWidth"] == 42
 
     label = _label(series)

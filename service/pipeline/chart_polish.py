@@ -21,21 +21,14 @@ except ImportError:  # pragma: no cover - pyecharts 是运行期硬依赖
     JsCode = None  # type: ignore[assignment]
     BasicOpts = ()  # type: ignore[assignment]
 
-# Tableau 10：色相区分度高，浅色/深色主题下都能保持可读性
-PALETTE = [
-    "#4E79A7",
-    "#F28E2B",
-    "#E15759",
-    "#76B7B2",
-    "#59A14F",
-    "#EDC948",
-    "#B07AA1",
-    "#FF9DA7",
-    "#9C755F",
-    "#BAB0AC",
-]
-
-FONT_FAMILY = "Microsoft YaHei, PingFang SC, Hiragino Sans GB, Noto Sans CJK SC, sans-serif"
+try:
+    from service.pipeline.chart_theme import DVS_FONT_FAMILY as FONT_FAMILY
+    from service.pipeline.chart_theme import DVS_PALETTE as PALETTE
+    from service.pipeline.chart_theme import tone_for
+except ImportError:  # pragma: no cover - 沙箱双导入差异
+    from .chart_theme import DVS_FONT_FAMILY as FONT_FAMILY  # type: ignore
+    from .chart_theme import DVS_PALETTE as PALETTE  # type: ignore
+    from .chart_theme import tone_for  # type: ignore
 
 # 坐标轴 / 数据标签的大数字统一加千分位；数值型之外的值原样返回
 _THOUSANDS_JS = (
@@ -359,6 +352,7 @@ def _should_move_legend_bottom(
 
 
 def _polish_title(options: dict[str, Any], *, dark: bool, width: int, multi_grid: bool) -> None:
+    tone = tone_for(dark)
     for title in _iter_dicts(options.get("title")):
         if title.get("left") is None and title.get("right") is None:
             title["left"] = "center"
@@ -372,28 +366,25 @@ def _polish_title(options: dict[str, Any], *, dark: bool, width: int, multi_grid
             font_size = 16 if _display_width(text) * 9 > width * 0.9 else 18
             _set_missing(text_style, "fontSize", font_size)
             _set_missing(text_style, "fontWeight", "bold")
-            if not dark:
-                _set_missing(text_style, "color", "#1f2937")
-            else:
-                _set_missing(text_style, "color", "#f8fafc")
+            _set_missing(text_style, "color", tone["title"])
 
         if title.get("subtext"):
             sub_style = _ensure_dict(title, "subtextStyle")
             if sub_style is not None:
                 _set_missing(sub_style, "fontFamily", FONT_FAMILY)
                 _set_missing(sub_style, "fontSize", 12)
-                _set_missing(sub_style, "color", "#cbd5e1" if dark else "#6b7280")
+                _set_missing(sub_style, "color", tone["subtitle"])
 
 
 def _polish_legend(options: dict[str, Any], *, dark: bool) -> None:
+    tone = tone_for(dark)
     for legend in _iter_dicts(options.get("legend")):
         text_style = _ensure_dict(legend, "textStyle")
         if text_style is None:
             continue
         _set_missing(text_style, "fontFamily", FONT_FAMILY)
         _set_missing(text_style, "fontSize", 12)
-        if not dark:
-            _set_missing(text_style, "color", "#4b5563")
+        _set_missing(text_style, "color", tone["legend_text"])
 
 
 def _grid_signature(grid: dict[str, Any]) -> tuple:
@@ -579,6 +570,7 @@ def _normalize_mixed_area(options: dict[str, Any]) -> None:
 def _polish_axes(options: dict[str, Any], *, dark: bool, width: int) -> None:
     if not _is_cartesian(options):
         return
+    tone = tone_for(dark)
 
     # 折线（无面积）且没有柱状系列时，让数值轴贴合数据范围。
     # 传感器温度 70–80℃、股票价格等从 0 开始会把真实波动压成一条平线；
@@ -612,15 +604,13 @@ def _polish_axes(options: dict[str, Any], *, dark: bool, width: int) -> None:
             if axis_label is not None:
                 _set_missing(axis_label, "fontFamily", FONT_FAMILY)
                 _set_missing(axis_label, "fontSize", 12)
-                if not dark:
-                    _set_missing(axis_label, "color", "#4b5563")
+                _set_missing(axis_label, "color", tone["axis_label"])
 
             name_style = _ensure_dict(axis, "nameTextStyle")
             if name_style is not None:
                 _set_missing(name_style, "fontFamily", FONT_FAMILY)
                 _set_missing(name_style, "fontSize", 12)
-                if not dark:
-                    _set_missing(name_style, "color", "#374151")
+                _set_missing(name_style, "color", tone["axis_name"])
 
             if _axis_is_category(axis):
                 if axis_key == "xAxis":
@@ -749,7 +739,7 @@ def _polish_tooltip(options: dict[str, Any], *, dark: bool) -> None:
             _set_missing(text_style, "fontFamily", FONT_FAMILY)
             _set_missing(text_style, "fontSize", 13)
             if dark:
-                _set_missing(text_style, "color", "#f1f5f9")
+                _set_missing(text_style, "color", tone_for(True)["tooltip_text"])
 
         if str(tooltip.get("trigger") or "").lower() == "axis":
             axis_pointer = _ensure_dict(tooltip, "axisPointer")
@@ -832,7 +822,7 @@ def _polish_label(
     _set_missing(label, "fontSize", 11)
     position = str(label.get("position") or "").lower()
     if position in {"top", "right", "outside", "bottom"} and label.get("color") is None:
-        label["color"] = "#e2e8f0" if dark else "#334155"
+        label["color"] = tone_for(dark)["data_label"]
 
     if series_type == "pie":
         label_line = _ensure_dict(series, "labelLine")
@@ -959,16 +949,17 @@ def _polish_treemap(options: dict[str, Any], *, dark: bool) -> None:
 
         label = _ensure_dict(node, "label")
         if label is not None:
+            tone = tone_for(dark)
             _set_missing(label, "fontFamily", FONT_FAMILY)
             _set_missing(label, "fontSize", 12)
             if label.get("color") is None:
                 # 深色文字 + 浅色描边在黄/粉/蓝/绿块上都比白字清楚
-                label["color"] = "#1f2937"
-                _set_missing(label, "textBorderColor", "rgba(255, 255, 255, 0.9)")
+                label["color"] = tone["treemap_label"]
+                _set_missing(label, "textBorderColor", tone["treemap_label_border"])
                 _set_missing(label, "textBorderWidth", 2)
             elif str(label.get("color") or "").lower() in {"white", "#fff", "#ffffff"}:
                 # 用户显式用白字时，至少补深色描边保证浅色块可读
-                _set_missing(label, "textBorderColor", "rgba(15, 23, 42, 0.55)")
+                _set_missing(label, "textBorderColor", tone["treemap_label_border_alt"])
                 _set_missing(label, "textBorderWidth", 2)
 
         if not _is_flat_treemap(node):
@@ -1049,6 +1040,25 @@ def polish_options(
     return original
 
 
+def _hex_luminance(color: str) -> float | None:
+    """估算 #rgb/#rrggbb 颜色的相对亮度（0 黑 ~ 1 白），非法颜色返回 None。"""
+    text = str(color or "").strip().lower()
+    match = re.fullmatch(r"#([0-9a-f]{3}|[0-9a-f]{6})", text)
+    if not match:
+        return None
+    hex_part = match.group(1)
+    if len(hex_part) == 3:
+        hex_part = "".join(ch * 2 for ch in hex_part)
+    r, g, b = (int(hex_part[i : i + 2], 16) for i in (0, 2, 4))
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+
+
+def _bg_is_dark(options: dict[str, Any]) -> bool:
+    """深色背景检测：覆盖 set_dark_mode() 等不改 theme 属性的暗色来源。"""
+    luminance = _hex_luminance(str(options.get("backgroundColor") or ""))
+    return luminance is not None and luminance < 0.35
+
+
 def polish_chart(chart: Any) -> bool:
     """在 chart.render() 前润色 ``chart.options``。
 
@@ -1062,10 +1072,11 @@ def polish_chart(chart: Any) -> bool:
         return False
 
     theme = str(getattr(chart, "theme", "") or "").lower()
+    dark = "dark" in theme or _bg_is_dark(options)
     polish_options(
         options,
         width=getattr(chart, "width", None),
-        dark="dark" in theme,
+        dark=dark,
     )
     try:
         setattr(chart, "_datavis_polished", True)
