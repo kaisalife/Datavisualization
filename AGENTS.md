@@ -222,17 +222,24 @@ $env:BACKEND_URL="http://localhost:5000"
 - 当前技能：`high-frequency-timeseries`（股票秒级/传感器高频：聚合/采样）、
   `financial-candlestick`（OHLC/K 线）、`many-series-timeseries`（多设备 Top-N）、
   `multimodal-extracted-table`（图片/PDF/Office 抽表：保真表头/单位，不臆造缺失值）、
-  `pareto-quality`（帕累托/主次因素：Bar 排行 + 累计占比双轴 Line + 80% 参考线，
-  require_keywords 门控）。
+  `pareto-quality`（帕累托/主次因素：Bar 排行 + 累计占比双轴 Line + 80% 参考线）、
+  `gauge-kpi-snapshot`（单对象单指标达标率/完成率：Gauge + 阈值配色，同一指标只出一张）、
+  `spc-stability`（过程稳定性：X-MR 控制限 + 超限点 markPoint）；后四个都带
+  `require_keywords` 门控。
+- frontmatter 的 `user_keywords` **支持折行**（多行行内数组）；解析器会拼到 `]` 为止。
+  `matches()` 会对传入的 chart_type/analysis_task 再做一次归一化；关键词匹配前统一拆成
+  列表——写坏成字符串时也按逗号拆，绝不能逐字符匹配（否则任何中文 prompt 都会误命中）。
 - **写技能正文前先在 pyecharts 2.1 实测代码范式**：帕累托双轴的右轴必须
   `bar.extend_axis(yaxis=opts.AxisOpts(...))` 创建——挂在 line 图上 set_global_opts
-  会被 `overlap()` 吞掉；`bar_max_width` 是 snake_case（`barMaxWidth` 直接 TypeError）。
+  会被 `overlap()` 吞掉；`bar_max_width` 是 snake_case（`barMaxWidth` 直接 TypeError）；
+  轴缩放参数是 `opts.AxisOpts(is_scale=True)`，写 `scale=True` 会 TypeError（真机踩过）。
 - 行业场景用例（业务系统原始导出 + 业务话术 + 业务验收断言）放
   `tests/fixtures/industry/<场景名>/`（数据 + README 基准 + 造数脚本），真机 e2e 在
   `tests/test_file/test_industry_e2e.py`（needs_llm 手工档，重放 success 代码断言
   chart.options 的业务口径：聚合总量/排序/累计占比终点/参考线/双轴/类目保真）。
-  整体规划见 `docs/行业场景扩展规划.md`（P0：pareto-quality 已交付；SPC/时段热力/
-  漏斗/KPI 仪表待做）。
+  已交付：`pareto_quality`（双轴+80% 线）、`gauge_kpi`（96.0% 完成率）、
+  `spc_stability`（30 卷面密度、X-MR 控制限、3 个超限点）。整体规划见
+  `docs/行业场景扩展规划.md`（P0 还剩时段热力/漏斗待做）。
 - series 的 `extra_semantics` 带 `source_kind` / `source_path`，技能可按数据来源选择；
   不要把“图片/PDF 就特殊处理”写进图表代码。
 - 技能是场景工作流，RAG 是 pyecharts API 示例，两者互补：技能告诉你“怎么处理这类数据”，
@@ -500,6 +507,9 @@ DDL、多语句（`select 1; drop table x`）在 `validate_source_configs` 阶�
 - 类别 >12：按维度聚合排行（率/均价取平均，其余求和），最多 20 行；
 - **宽表「时间 + 多个指标」保留在同一条 series**（如多设备温度），planner 才能在同一张图
   比较多条指标；只有长表透视时多个指标才各一条 series；多个维度选基数最小且 ≥2 的维度；
+  「编号/操作员/负责人/备注」这类**记录属性列不参与透视**（`_is_id_label` 过滤）：
+  按它们透视会得到稀疏矩阵（每个时间点只落在一个列里），把单指标拆成多列、
+  控制限/聚合口径一起拆散；过滤后没有可用维度就回退「时间 + 多指标」；
 - 只有一个类别时回退到普通「时间 + 指标」序列；
 - 普通时间序列按自然时间排序（`1月 < 2月 < 10月`），同一时间点多行按指标语义聚合
   （率/均价取平均，其余求和），避免折线来回折、x 轴重复；

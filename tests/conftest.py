@@ -27,6 +27,8 @@ CORE_TEST_FILES = {
     "test_generation_validation.py",
     "test_skill_registry.py",
     "test_industry_pareto.py",
+    "test_industry_gauge.py",
+    "test_industry_spc.py",
     "test_user_skills.py",
     "test_skill_injection.py",
     "test_series_shape.py",
