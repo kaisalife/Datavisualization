@@ -116,19 +116,25 @@ $env:BACKEND_URL="http://localhost:5000"
 5. **JS ↔ Rust 桥**：JS 只能 `fetch("http://127.0.0.1:<随机端口>/api", {method:"POST", body:{action,data}})`，
    由 `src/handlers.rs` 分发；对后端的 HTTP 调用集中在 `src/api/client.rs`。新增交互要同时改 JS + handlers
    （必要时加 `api/types.rs`）。
-6. **配置优先级**：`AppSettings::load()` 先读 `front-winui/settings.json`（已 gitignore），不存在才用
+6. **技能管理界面**：侧栏「技能」按钮 → `#skillManagerModal`（`js/skills.js`）：
+   列表（内置/用户/「覆盖内置」标记）、正文编辑器、AI 润色按钮。桥接五个 action：
+   `listSkills` / `loadSkill` / `saveSkill` / `deleteSkill` / `polishSkill`
+   （Rust 侧 `handle_*` → `MainMessage::Skills*` → `js_*` 回调），润色与图表生成共用
+   `settings.active_model_config()` 的模型凭证。界面只做「润色草稿 → 人工确认 → 保存」，
+   草稿不落盘；改 `js/skills.js` 或 HTML/CSS 必须重新 `cargo build`。
+7. **配置优先级**：`AppSettings::load()` 先读 `front-winui/settings.json`（已 gitignore），不存在才用
    `BACKEND_URL` / `API_KEY` / `MODEL_*` 环境变量。改环境变量前先删或改 settings.json，否则不生效。
-7. **数据预览面板**：输入框旁「预览」按钮把当前文件/数据库/API 配置经 `previewData` 交给 Rust，Rust 同步调
+8. **数据预览面板**：输入框旁「预览」按钮把当前文件/数据库/API 配置经 `previewData` 交给 Rust，Rust 同步调
    `POST /api/data-profile`（图片/PDF 会走视觉模型，可能耗时几十秒；数据库/API 用 `db_config` /
    `api_config` JSON 表单字段），再把返回 JSON 交给 `js/preview.js` 的 `window.app.showDataPreview` 渲染。
    下载按钮走 `downloadDataExport`，Rust 只接受
    `/api/data-profile/export` 开头的相对地址，落盘到 `%USERPROFILE%\Downloads`（同名自动加序号）。
    预览面板的原始表依赖 `/api/data-profile` 的 `save_raw=True`；图表任务本身仍不保存原始表。
-8. **上下文卡片「补充说明」**：计划卡带待确认项时，`js/charts.js` 会渲染按钮，点击后从
+9. **上下文卡片「补充说明」**：计划卡带待确认项时，`js/charts.js` 会渲染按钮，点击后从
    `state.lastFiles` 恢复本次数据源并填入“在…基础上调整：”；`sendPrompt` 发送前会保存
    `state.files` 的浅拷贝，`newChat` 清空。不要假设任务结束后 `state.files` 还在。
    历史对话恢复时传 `interactive:false`，避免把当前 `lastFiles` 套到旧任务上。
-9. **剪贴板截图**：`js/preview.js` 监听 `paste`，把图片读成 data URL 经 `saveClipboardImage` 交给 Rust；
+10. **剪贴板截图**：`js/preview.js` 监听 `paste`，把图片读成 data URL 经 `saveClipboardImage` 交给 Rust；
    Rust 解码（上限 8MB）后写到 `%TEMP%\datavisual_clipboard`，再回调 `window.app.addClipboardFile(path)`
    加入文件列表。剪贴板同时带文本（Excel/网页复制单元格）且在输入框内粘贴时，保留正常文本粘贴。
 
@@ -258,9 +264,15 @@ $env:BACKEND_URL="http://localhost:5000"
   只靠索引选图型，别把它当主路径。
 - **API** `api/skills_api.py`：`GET/POST /api/skills`、`GET/PUT/DELETE /api/skills/<name>`；
   保存/删除后进程内 `reload()` 立即生效，无需重启。内置技能 GET 可读正文（前端当模板）。
+- **AI 润色** `service/skills/skill_polisher.py`：`POST /api/skills/polish`
+  （prompt + 可选 name/model_url/model_api_key/model_type）→ 真实模型按内置规范
+  （frontmatter 字段 + 四段正文 + pyecharts 2.1 硬约束）写成 SKILL.md **草稿**，
+  复用 `UserSkillStore` 的解析/校验但不落盘；用户确认后再走 `POST /api/skills` 保存。
+  **用同步 `invoke` 而不是 `asyncio.run`**：该环境 httpx 连接池会跨事件循环复用已关闭
+  的连接，同一进程第二次润色会报 `Event loop is closed`（真机踩过）。
 - 正文模板与校验规则见 API docstring；同一份 SKILL.md 结构与内置技能完全一致
   （frontmatter + 正文渐进披露，含 `require_keywords` 门控）。
-- 回归：`tests/test_user_skills.py`（存储校验 / 组合注册表覆盖语义 / API CRUD 三层，17 例）。
+- 回归：`tests/test_user_skills.py`（存储校验 / 组合注册表覆盖语义 / API CRUD / AI 润色四层，27 例）。
 
 ## 图表生成规范
 
