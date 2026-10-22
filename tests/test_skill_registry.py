@@ -117,6 +117,46 @@ def test_context_for_plan_injects_only_selected_body(tmp_path: Path):
     assert "多设备/多指标时序" not in context
 
 
+# ---------- require_keywords 门控（防形态撞车） ----------
+
+
+def test_pareto_skill_requires_scenario_keywords(tmp_path: Path):
+    """普通 Bar+comparison 排行（城市销售额）不得命中帕累托技能。"""
+    registry = get_skill_registry()
+    ranking_series = _series(tmp_path, rows=11, columns=["判定数量"], source_kind="file")
+    ranking_series = type(ranking_series)(
+        **{
+            **{f: getattr(ranking_series, f) for f in ranking_series.__dataclass_fields__},
+            "axis_kind": "category",
+            "extra_semantics": {
+                "shape": {"rows": 11, "time_like": False},
+                "source_kind": "file",
+            },
+        }
+    )
+
+    plain = registry.select(
+        plan={"chart_type": "Bar", "analysis_task": "comparison"},
+        series=ranking_series,
+        user_prompt="对比各城市销售额",
+    )
+    assert all(skill.name != "pareto-quality" for skill in plain)
+
+    pareto = registry.select(
+        plan={"chart_type": "Bar", "analysis_task": "comparison"},
+        series=ranking_series,
+        user_prompt="做主次因素排列找不良项帕累托",
+    )
+    assert any(skill.name == "pareto-quality" for skill in pareto)
+
+
+def test_require_keywords_meta_is_read_from_frontmatter():
+    skill = get_skill_registry().get("pareto-quality")
+    assert skill is not None
+    assert skill.metadata.get("require_keywords") in {True, "true"}
+    assert "帕累托" in skill.metadata.get("user_keywords")
+
+
 def test_empty_skill_directory_is_safe(tmp_path: Path):
     registry = SkillRegistry(tmp_path)
     assert registry.index_text() == "(无技能)"

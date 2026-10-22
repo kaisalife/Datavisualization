@@ -12,6 +12,8 @@ frontmatter 支持（均为可选，除 name/description）：
 - min_rows: 最少行数
 - min_series: 最少指标列数
 - user_keywords: 用户需求关键词（用于规划/生成时的轻量匹配）
+- require_keywords: true 时 user_keywords 变成硬门槛——用户没提场景词就不命中，
+  用于防止形态撞车（如普通排行与帕累托同为 Bar+comparison）
 """
 from __future__ import annotations
 
@@ -158,6 +160,16 @@ class Skill:
         }
         if source_kinds and _normalize(source_kind) not in source_kinds:
             return False
+
+        # require_keywords: 只有用户提到场景词才命中（防止形态撞车——
+        # 比如"城市销售额排行"和"不良项主次因素"都是 Bar+comparison，
+        # 帕累托类技能只应在用户说出业务语义时生效）。
+        if self.metadata.get("require_keywords"):
+            keywords = [
+                str(k) for k in (self.metadata.get("user_keywords") or []) if str(k)
+            ]
+            if keywords and not any(k in user_prompt for k in keywords):
+                return False
 
         # user_keywords 只参与 score 排序，不是硬约束：
         # 同一张表的用户可能不写“股票/传感器”，但仍应命中数据约束。

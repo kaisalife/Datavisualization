@@ -207,13 +207,26 @@ $env:BACKEND_URL="http://localhost:5000"
 
 - YAML frontmatter 声明 `name` / `description` / `chart_types` / `analysis_tasks` /
   `time_like` / `min_rows` / `min_series` / `user_keywords`；正文才是完整指南。
+  加 `require_keywords: true` 可把 user_keywords 变成硬门槛——用户没提场景词就不命中，
+  防止形态撞车（普通排行与帕累托同为 Bar+comparison 时，只有业务话术命中才注入）。
 - 规划主 prompt 只注入**技能索引**（名称 + 一句话用途）；LLM 认为匹配时调用
   `load_skill(name)` 读取正文，普通图表不加载。
 - 生成阶段由 `service/skills/registry.py:SkillRegistry.select()` 按 plan.chart_type、
   analysis_task 和 series 形态自动选择，只把命中的正文注入 `{skill_context}`。
 - 当前技能：`high-frequency-timeseries`（股票秒级/传感器高频：聚合/采样）、
   `financial-candlestick`（OHLC/K 线）、`many-series-timeseries`（多设备 Top-N）、
-  `multimodal-extracted-table`（图片/PDF/Office 抽表：保真表头/单位，不臆造缺失值）。
+  `multimodal-extracted-table`（图片/PDF/Office 抽表：保真表头/单位，不臆造缺失值）、
+  `pareto-quality`（帕累托/主次因素：Bar 排行 + 累计占比双轴 Line + 80% 参考线，
+  require_keywords 门控）。
+- **写技能正文前先在 pyecharts 2.1 实测代码范式**：帕累托双轴的右轴必须
+  `bar.extend_axis(yaxis=opts.AxisOpts(...))` 创建——挂在 line 图上 set_global_opts
+  会被 `overlap()` 吞掉；`bar_max_width` 是 snake_case（`barMaxWidth` 直接 TypeError）。
+- 行业场景用例（业务系统原始导出 + 业务话术 + 业务验收断言）放
+  `tests/fixtures/industry/<场景名>/`（数据 + README 基准 + 造数脚本），真机 e2e 在
+  `tests/test_file/test_industry_e2e.py`（needs_llm 手工档，重放 success 代码断言
+  chart.options 的业务口径：聚合总量/排序/累计占比终点/参考线/双轴/类目保真）。
+  整体规划见 `docs/行业场景扩展规划.md`（P0：pareto-quality 已交付；SPC/时段热力/
+  漏斗/KPI 仪表待做）。
 - series 的 `extra_semantics` 带 `source_kind` / `source_path`，技能可按数据来源选择；
   不要把“图片/PDF 就特殊处理”写进图表代码。
 - 技能是场景工作流，RAG 是 pyecharts API 示例，两者互补：技能告诉你“怎么处理这类数据”，

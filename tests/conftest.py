@@ -26,6 +26,7 @@ CORE_TEST_FILES = {
     "test_chart_data_check.py",
     "test_generation_validation.py",
     "test_skill_registry.py",
+    "test_industry_pareto.py",
     "test_skill_injection.py",
     "test_series_shape.py",
     "test_series_split.py",
