@@ -40,7 +40,12 @@ def _llm_env() -> tuple[str, str, str, str]:
 
 @pytest.fixture(scope="session")
 async def real_agent():
-    """真实 BaseAgent（.env 模型，mcp_config 空跳过 MCP，本地工具池可用）。"""
+    """真实 BaseAgent（.env 模型，mcp_config 空跳过 MCP，本地工具池可用）。
+
+    session 级复用配合 pytest.ini 的 ``asyncio_default_test_loop_scope=session``：
+    所有异步测试共享一个事件循环，与生产服务一致，openai/httpx 的 keep-alive
+    连接不会跨循环失效。
+    """
     base_url, api_key, model, session = _llm_env()
     if not all((base_url, api_key, model)):
         pytest.skip(".env 未配置 BASE_URL/API_KEY/MODEL_NAME")
