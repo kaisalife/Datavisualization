@@ -225,3 +225,43 @@ def test_planning_prompt_contains_skill_index():
     assert "load_skill" in text
     assert "high-frequency-timeseries" in text
     assert "不要一次加载全部技能" in text
+
+
+def test_multiline_user_keywords_are_parsed_as_list():
+    """frontmatter 的折行关键词列表必须解析成 list，不能退化成字符串。"""
+    registry = get_skill_registry()
+
+    for name in ("pareto-quality", "gauge-kpi-snapshot", "spc-stability"):
+        keywords = registry.get(name).metadata.get("user_keywords")
+        assert isinstance(keywords, list), (name, type(keywords), keywords)
+        assert len(keywords) >= 5
+        assert all(isinstance(item, str) and "," not in item for item in keywords)
+
+
+def test_frontmatter_multiline_list_stops_at_next_key():
+    from service.skills.registry import _parse_frontmatter
+
+    meta = _parse_frontmatter(
+        "chart_types: [Bar]\n"
+        "user_keywords: [甲, 乙,\n"
+        "  丙]\n"
+        "min_rows: 3"
+    )
+
+    assert meta["user_keywords"] == ["甲", "乙", "丙"]
+    assert meta["min_rows"] == 3
+
+
+def test_require_keywords_matches_phrases_not_characters():
+    """关键词门控必须整词匹配：普通排行不能被帕累托技能误命中。"""
+    skill = get_skill_registry().get("pareto-quality")
+    common = dict(
+        chart_type="Bar",
+        analysis_task="comparison",
+        time_like=False,
+        rows=10,
+        series_count=1,
+    )
+
+    assert not skill.matches(user_prompt="各城市销售额排行", **common)
+    assert skill.matches(user_prompt="不良项主次因素分析", **common)

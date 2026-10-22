@@ -18,6 +18,7 @@ frontmatter 支持（均为可选，除 name/description）：
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -36,15 +37,45 @@ def _normalize(value: Any) -> str:
     return str(value or "").strip().lower().replace("_", "").replace("-", "").replace(" ", "")
 
 
+# frontmatter 新字段的起始行（多行列表拼接时用于止损）
+_FRONTMATTER_KEY_RE = re.compile(r"^[A-Za-z_][\w-]*\s*:")
+
+
+def _keyword_list(value: Any) -> list[str]:
+    """把 user_keywords 归一成列表。
+
+    正常解析是多行/行内 YAML 数组；万一 frontmatter 写坏变成了字符串，
+    也要按逗号拆开，绝不能逐字符匹配（那样任何中文 prompt 都会误命中）。
+    """
+    if isinstance(value, str):
+        return [
+            item.strip().strip("'\"")
+            for item in value.strip().strip("[]").split(",")
+            if item.strip().strip("'\"")
+        ]
+    return [str(item).strip() for item in (value or []) if str(item).strip()]
+
+
 def _parse_frontmatter(text: str) -> dict[str, Any]:
     """解析简单的 key: value / 行内列表 frontmatter，不引入额外依赖。
 
     技能 frontmatter 只用于声明类型、任务、阈值和关键词，不承载复杂 YAML 结构；
     需要更复杂配置时应放进正文，而不是把 frontmatter 变成第二套 DSL。
+
+    行内列表**允许折行**（关键词多时常见）::
+
+        user_keywords: [帕累托, 主次因素, 二八,
+          柏拉图, 不良, 缺陷]
+
+    折行只在本行以 ``[`` 开头且未闭合时发生；遇到下一个 ``key:`` 立即停止，
+    避免畸形 frontmatter 吞掉后面的字段。
     """
     meta: dict[str, Any] = {}
-    for line in text.splitlines():
-        line = line.strip()
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        index += 1
         if not line or line.startswith("#") or ":" not in line:
             continue
         key, raw = line.split(":", 1)
@@ -52,6 +83,16 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
         raw = raw.strip()
         if not key:
             continue
+
+        # 未闭合的行内列表：继续拼接后续行，直到遇到 ']' 或新的 key:
+        if raw.startswith("[") and not raw.endswith("]"):
+            while index < len(lines) and not raw.rstrip().endswith("]"):
+                nxt = lines[index].strip()
+                if not nxt or _FRONTMATTER_KEY_RE.match(nxt):
+                    break
+                raw = f"{raw} {nxt}"
+                index += 1
+
         if raw.startswith("[") and raw.endswith("]"):
             items = []
             for item in raw[1:-1].split(","):
@@ -123,6 +164,8 @@ class Skill:
         source_kind: str = "",
     ) -> bool:
         """按 frontmatter 的通用约束判断是否适用，不在代码里写死场景。"""
+        chart_type = _normalize(chart_type)
+        analysis_task = _normalize(analysis_task)
         chart_types = {
             _normalize(item) for item in (self.metadata.get("chart_types") or [])
         }
@@ -165,9 +208,7 @@ class Skill:
         # 比如"城市销售额排行"和"不良项主次因素"都是 Bar+comparison，
         # 帕累托类技能只应在用户说出业务语义时生效）。
         if self.metadata.get("require_keywords"):
-            keywords = [
-                str(k) for k in (self.metadata.get("user_keywords") or []) if str(k)
-            ]
+            keywords = _keyword_list(self.metadata.get("user_keywords"))
             if keywords and not any(k in user_prompt for k in keywords):
                 return False
 
@@ -213,8 +254,8 @@ class Skill:
         }
         if source_kinds and _normalize(source_kind) in source_kinds:
             score += 2
-        for keyword in self.metadata.get("user_keywords") or []:
-            if str(keyword) and str(keyword) in user_prompt:
+        for keyword in _keyword_list(self.metadata.get("user_keywords")):
+            if keyword in user_prompt:
                 score += 1
         return score
 
