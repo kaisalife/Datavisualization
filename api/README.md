@@ -28,6 +28,7 @@ api/
 | `POST` | `/api/task/<task_id>/cancel` | `task_api.py` | ✅ | 请求取消任务 |
 | `GET`  | `/api/chart/<chart_id>` | `chart_api.py` | ❌ | 获取生成的图表 HTML |
 | `POST` | `/api/optimize-chart` | `chart_api.py` | ✅ | 单图二次优化（异步，只跑优化 agent） |
+| `GET`  | `/api/task-assets/<task_id>` | `chart_api.py` | ✅ | 任务图表资产清单（前端资产卡） |
 | `POST` | `/api/complete-viz-code` | `code_api.py` | ✅ | 现有 Python 文件追加可视化代码 |
 | `POST` | `/api/data-profile` | `data_api.py` | ✅ | 数据预览 / 图片·PDF 抽表 |
 | `GET`  | `/api/data-profile/export` | `data_api.py` | ✅ | 导出预览数据（CSV / ZIP） |
@@ -186,6 +187,29 @@ X-API-Key: <your_key>
 
 前置条件：生成时已写入图表资产（`runtime/charts/<数据集>/assets.json`）；自备读取
 模式（无 series 数据文件）的图表暂不支持优化，任务会以 failed 终止并给出原因。
+
+---
+
+### GET /api/task-assets/{task_id}
+
+任务的图表资产清单（前端资产卡 + 优化入口选图）。
+
+```
+200 OK
+{"task_id": "...", "assets": [{
+    "chart_id": "chart_p1_20261022_153000.html",
+    "title": "月度销售额趋势",       # chart_title，缺省回退 plan_name
+    "chart_type": "Line",
+    "plan_id": "p1",
+    "version": 0,                   # 优化版本：原图 0，第一次优化 1…
+    "origin_chart_id": "",          # 优化产物指向被优化的原图
+    "optimize_prompt": "",          # 优化指令摘要（原图为空）
+    "created_at": "2026-10-22T15:30:00"
+}]}
+```
+
+数据从该任务登记的 `assets.json` 记录过滤（产物文件仍存在才返回）；登记机制
+之前的历史任务从任务 `raw.successful_charts` 现场合成兜底。任务不存在返回 `404`。
 
 ---
 

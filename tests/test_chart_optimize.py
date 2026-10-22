@@ -355,3 +355,65 @@ class TestOptimizeChartApiRoutes:
         assert body["task_id"] == submitted["task"]
         assert submitted["model"].chart_id == "chart_p1.html"
         assert submitted["model"].user_prompt == "只显示 Top5"
+
+
+class TestTaskAssetsApi:
+    @pytest.fixture
+    def client(self):
+        import app as app_module
+
+        return app_module.app.test_client()
+
+    def _set_task(self, monkeypatch, tasks: dict):
+        import api.chart_api as chart_api
+
+        lock = __import__("threading").Lock()
+        monkeypatch.setattr(chart_api, "get_tasks", lambda: tasks)
+        monkeypatch.setattr(chart_api, "get_tasks_lock", lambda: lock)
+
+    def test_unknown_task_404(self, client, monkeypatch):
+        self._set_task(monkeypatch, {})
+        resp = client.get("/api/task-assets/nope")
+
+        assert resp.status_code == 404
+
+    def test_cards_from_registry(self, client, monkeypatch, output_folder):
+        chart = _make_chart(output_folder, "chart_p1_a.html")
+        record_chart(
+            output_folder, task_id="task1", plan=PLAN, chart_path=str(chart),
+            origin_chart_id="", version=0,
+        )
+
+        # find_task_assets 在函数内从 constants 导入 get_charts_dir
+        import service.runtime.constants as constants
+
+        monkeypatch.setattr(constants, "get_charts_dir", lambda: output_folder.parent)
+        self._set_task(monkeypatch, {"task1": {"status": "success", "raw": {}}})
+        resp = client.get("/api/task-assets/task1")
+
+        assert resp.status_code == 200
+        cards = resp.get_json()["assets"]
+        assert len(cards) == 1
+        assert cards[0]["chart_id"] == "chart_p1_a.html"
+        assert cards[0]["chart_type"] == "Line"
+        assert "output_folder" not in cards[0]  # 不暴露路径细节
+
+    def test_fallback_from_raw_success(self, client, monkeypatch):
+        old = {
+            "task2": {
+                "status": "success",
+                "raw": {"successful_charts": [{
+                    "plan": {"plan_id": "p9", "plan_name": "旧图",
+                             "chart_title": "月度销售额", "chart_type": "Bar"},
+                    "chart_path": "C:\\x\\chart_p9_1.html",
+                }], "failed_plans": []},
+            },
+        }
+        self._set_task(monkeypatch, old)
+
+        resp = client.get("/api/task-assets/task2")
+
+        assert resp.status_code == 200
+        cards = resp.get_json()["assets"]
+        assert cards[0]["chart_id"] == "chart_p9_1.html"
+        assert cards[0]["title"] == "月度销售额"

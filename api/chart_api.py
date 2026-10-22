@@ -189,6 +189,49 @@ def optimize_chart():
         return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
 
 
+@chart_bp.route("/task-assets/<task_id>", methods=["GET"])
+@monitor_response("chart_api:task_assets")
+def task_assets(task_id):
+    """任务资产清单：该任务产出的图表卡片（供前端资产管理与二次优化选图）。
+
+    数据从 assets.json 按 task_id 过滤；旧任务（登记机制之前的）从任务 raw
+    结果现场合成兜底。任意时刻可只读调用。
+    """
+    auth_error = check_api_key()
+    if auth_error:
+        return auth_error
+
+    if not task_id:
+        return jsonify(ErrorResponse(detail="Invalid task ID").model_dump()), 400
+
+    with get_tasks_lock():
+        task = get_tasks().get(task_id)
+    if task is None:
+        return jsonify(ErrorResponse(detail=f"Task not found: {task_id}").model_dump()), 404
+
+    from service.runtime.chart_assets import asset_card, find_task_assets
+
+    cards = find_task_assets(task_id)
+    if not cards:
+        # 兜底：登记机制之前的任务，从 raw 结果合成
+        raw = task.get("raw") or {}
+        for item in raw.get("successful_charts", []):
+            plan = item.get("plan") or {}
+            chart_name = Path(item.get("chart_path") or "").name
+            if not chart_name:
+                continue
+            cards.append(asset_card({
+                "chart_id": chart_name,
+                "plan_id": plan.get("plan_id", ""),
+                "plan_name": plan.get("plan_name", ""),
+                "chart_title": plan.get("chart_title", ""),
+                "chart_type": plan.get("chart_type", ""),
+                "version": 0,
+            }))
+
+    return jsonify({"task_id": task_id, "assets": cards})
+
+
 @chart_bp.route("/chart/<chart_id>", methods=["GET"])
 @monitor_response("chart_api:get_chart")
 def get_chart(chart_id):

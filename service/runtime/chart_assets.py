@@ -89,6 +89,7 @@ def record_chart(
         "conversation_id": str(conversation_id or ""),
         "plan_id": str(plan_get(plan, "plan_id", "") if plan else ""),
         "plan_name": str(plan_get(plan, "plan_name", "") if plan else ""),
+        "chart_title": str(plan_get(plan, "chart_title", "") if plan else ""),
         "chart_type": str(plan_get(plan, "chart_type", "") if plan else ""),
         "series_id": str(plan_get(plan, "series_id", "") if plan else ""),
         "origin_chart_id": str(origin_chart_id or ""),
@@ -149,3 +150,40 @@ def next_optimize_version(assets: list[dict[str, Any]], origin_chart_id: str) ->
         1 for item in assets
         if str(item.get("origin_chart_id") or "") == str(origin_chart_id)
     )
+
+
+def asset_card(item: dict[str, Any]) -> dict[str, Any]:
+    """资产记录 -> 前端卡片字段（只暴露展示/交互所需，不含路径细节）。"""
+    title = str(item.get("chart_title") or item.get("plan_name") or "")
+    return {
+        "chart_id": str(item.get("chart_id") or ""),
+        "title": title,
+        "chart_type": str(item.get("chart_type") or ""),
+        "plan_id": str(item.get("plan_id") or ""),
+        "version": int(item.get("version") or 0),
+        "origin_chart_id": str(item.get("origin_chart_id") or ""),
+        "optimize_prompt": str(item.get("optimize_prompt") or ""),
+        "created_at": str(item.get("created_at") or ""),
+    }
+
+
+def find_task_assets(task_id: str, charts_root: str | Path | None = None) -> list[dict[str, Any]]:
+    """按 task_id 过滤全部资产记录并输出卡片（rglob assets.json，量级为目录数）。"""
+    task_id = str(task_id or "")
+    if not task_id:
+        return []
+    if charts_root is None:
+        from service.runtime.constants import get_charts_dir
+
+        charts_root = get_charts_dir()
+    root = Path(charts_root)
+    if not root.is_dir():
+        return []
+    cards: list[dict[str, Any]] = []
+    for assets_file in sorted(root.rglob(ASSETS_FILENAME)):
+        for item in load_assets(assets_file.parent):
+            if str(item.get("task_id") or "") == task_id:
+                card = asset_card(item)
+                if card["chart_id"] and Path(item.get("chart_path", "")).is_file():
+                    cards.append(card)
+    return cards
