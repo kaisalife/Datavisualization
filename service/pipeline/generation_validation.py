@@ -21,6 +21,9 @@ from service.pipeline.chart_data_check import chart_data_issues, chart_type_mism
 logger = get_logger(__name__)
 
 # 错误码 -> 给 debug/用户的处理建议
+# 数据视角类错误码共用的建议：series 本身缺视角时，规划期可造派生 view
+_VIEW_HINT = "如现有 series 无法表达需求，规划期可用 run_view 派生一条聚合视角的系列（data-view-usage 技能）"
+
 _ERROR_HINTS = {
     "CODE_SYNTAX": "检查括号、缩进、字符串引号与 Python 语法",
     "CODE_NAME_ERROR": "检查变量/函数名是否拼错，选项类是否带 opts. 前缀",
@@ -32,10 +35,10 @@ _ERROR_HINTS = {
     "CODE_SECURITY_REJECTED": "移除文件写入/网络/危险调用；这是不可自动修复的静态拒绝",
     "CODE_HTML_MISSING": "确认代码调用了 render()，且 pyecharts 图表对象正确",
     "CODE_HTML_INVALID": "确认 render 产物是完整 HTML，包含 ECharts 容器",
-    "CHART_DATA_EMPTY": "检查数据筛选、聚合与列名，确认 series 至少有一个数据点",
-    "CHART_DATA_ALL_NULL": "检查 y_axis 列是否全为空值，必要时清洗或改用其他指标",
-    "CHART_DATA_MOSTLY_EMPTY": "图表过半数据点为空，检查筛选条件或缺失值处理",
-    "CHART_DATA_ALL_ZERO": "所有数值都是 0，确认筛选/聚合结果是否符合预期",
+    "CHART_DATA_EMPTY": f"检查数据筛选、聚合与列名，确认 series 至少有一个数据点；{_VIEW_HINT}",
+    "CHART_DATA_ALL_NULL": f"检查 y_axis 列是否全为空值，必要时清洗或改用其他指标；{_VIEW_HINT}",
+    "CHART_DATA_MOSTLY_EMPTY": f"图表过半数据点为空，检查筛选条件或缺失值处理；{_VIEW_HINT}",
+    "CHART_DATA_ALL_ZERO": f"所有数值都是 0，确认筛选/聚合结果是否符合预期；{_VIEW_HINT}",
     "CHART_TYPE_MISMATCH": "生成代码应严格使用 plan.chart_type；Histogram 用 Bar、Area 用 Line 是允许的",
     "CODE_RUNTIME_ERROR": "查看完整 traceback，定位失败步骤后修复",
 }

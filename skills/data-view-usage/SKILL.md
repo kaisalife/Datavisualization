@@ -62,6 +62,50 @@ user_keywords: [按月合计, 按年合计, 汇总视图, 派生, 聚合, Top前
 - 一个任务最多造 1–2 条视图："为每个可能都造一条"是反模式，它把明细表
   拆散成碎片，并不比直接画明细图更有信息量。
 
+## 内置插件（SQL 不适合的两种变换）
+
+`describe_dataset` 的 `plugins` 字段给出当前可用插件名与版本。写
+`ViewSpec(kind="plugin", plugin="<名>", plugin_version=<版本>, inputs=["table_0"], params={...})`：
+
+### `ohlc_resample`（K 线重采样）
+
+日线/分钟线 → 周线/月线等更粗周期的 OHLC。SQL 里 first/last 依赖行序不可靠，
+用它才确定。params 全部必填、无隐性默认：
+
+```json
+{
+  "kind": "plugin", "plugin": "ohlc_resample", "plugin_version": 1,
+  "inputs": ["table_0"], "title": "周线K线",
+  "params": {
+    "time_column": "日期", "freq": "W",
+    "open": "开盘", "high": "最高", "low": "最低", "close": "收盘",
+    "volume": "成交量"
+  }
+}
+```
+
+- `freq`：`D`/`W`/`M`/`Q`/`Y`；`volume` 可选（给出则按桶求和）；
+- 输出首列 = 时间桶标签（`2026-01-05` / `2026-W03` / `2026-01`），列名沿用 params；
+- 列名必须与数据实际列名一致（先 describe 确认，不要猜）。
+
+### `ts_bucket`（高频时序分桶聚合）
+
+秒级/分钟级采样（传感器、监控、逐笔）聚到固定时间桶，多条指标各自指定聚合方式：
+
+```json
+{
+  "kind": "plugin", "plugin": "ts_bucket", "plugin_version": 1,
+  "inputs": ["table_0"], "title": "每5秒温度均值",
+  "params": {
+    "time_column": "时间", "bucket": "1min",
+    "metrics": {"温度": "mean", "电流": "max"}
+  }
+}
+```
+
+- `bucket` 形如 `1min`/`5s`/`1H`/`1D`；聚合方式限 mean/sum/min/max/count/first/last；
+- 输出首列 = 桶起始时间，其后每列沿用 `metrics` 的键名，按时间升序。
+
 ## 生成阶段
 
 不需要新增约定：run_view 产出的系列与 identity series 同构，注入的 `df`

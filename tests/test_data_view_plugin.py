@@ -138,9 +138,11 @@ class TestScanThinShell:
             PluginRegistry().get("任意")
         assert e2.value.code == PLUGIN_NOT_FOUND
 
-    def test_scan_project_plugin_dir_no_plugins_yet(self):
-        """默认插件目录当前没有插件（P0 骨架），扫描必须是空 dict 而非报错。"""
-        assert PluginRegistry().scan() == {}
+    def test_scan_project_plugin_dir_builtins(self):
+        """默认插件目录（P2 起带内置插件）：扫描返回两个内置插件，且不报错。"""
+        versions = PluginRegistry().scan()
+        assert versions.get("ohlc_resample") == 1
+        assert versions.get("ts_bucket") == 1
 
     def test_scan_registers_real_file(self, tmp_path):
         """目录扫描薄壳：真实文件登记成功（部分环境对 temp 目录 .py 有干扰，容忍失败）。"""

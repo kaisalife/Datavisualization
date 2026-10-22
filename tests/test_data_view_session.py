@@ -115,6 +115,9 @@ class TestDescribe:
         dtypes = {c["name"]: c["dtype"] for c in info["tables"][0]["columns"]}
         assert "销售额" in dtypes and "float" in dtypes["销售额"]
         assert info["views"] == []
+        # 内置插件快照（供 agent 引用 plugin + plugin_version）
+        assert info["plugins"].get("ohlc_resample") == 1
+        assert info["plugins"].get("ts_bucket") == 1
 
     def test_views_listed_after_materialize(self, session_dir: Path, tmp_path: Path):
         run_view("ds_ab12cd34ef56", _spec(), mode="materialize", datasets_root=tmp_path)

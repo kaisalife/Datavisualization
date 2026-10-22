@@ -165,8 +165,20 @@ def describe_dataset(dataset_id: str, datasets_root: Path | None = None) -> dict
         "dataset_id": dataset_id,
         "tables": tables,
         "views": list_views(session_dir)[:_MAX_TABLES],
+        "plugins": _describe_plugins(),
         "engine_version": DATA_VIEW_VERSION,
     }
+
+
+def _describe_plugins() -> dict[str, int]:
+    """已注册插件快照（名称 -> 版本；供 agent 引用 spec.plugin/plugin_version）。"""
+    try:
+        from service.data_view.registry import get_default_registry
+
+        return get_default_registry().describe()
+    except Exception as e:  # 插件层故障不挡 describe 主功能
+        logger.warning("数据视图插件列表获取失败", error=str(e))
+        return {}
 
 
 def run_view(

@@ -17,6 +17,8 @@ user_keywords: [K线, K 线, 蜡烛图, 股票, 行情, 开盘, 收盘, OHLC, ca
 - `chart_type` 用 `Candlestick`，`analysis_task` 用 `trend`。
 - `x_axis` 是时间列；`y_axis` 按 `[开盘, 收盘, 最低, 最高]` 的顺序列出四列。
 - 成交量是辅助信息：可以在同一 plan 里说明，但不要默认把成交量塞进价格 y 轴。
+- 数据是更细粒度（分钟/日线）而用户要周线/月线 K 时，先用 `run_view` 的
+  `ohlc_resample` 插件重采样出 OHLC 系列，再规划 Candlestick（用法见 `data-view-usage` 技能）。
 
 ## 生成阶段
 1. 用 `from pyecharts.charts import Candlestick`，不要 import 不存在的类。
