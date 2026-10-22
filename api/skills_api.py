@@ -16,6 +16,10 @@ from Entity import ErrorResponse
 from api.common import check_api_key, monitor_response
 
 from service.observability import get_logger
+from service.skills.skill_polisher import (
+    build_polish_chat,
+    polish_skill_sync as polish_skill_draft,
+)
 from service.skills.user_skills import SkillValidationError, UserSkillStore
 
 logger = get_logger("api.skills")
@@ -93,6 +97,69 @@ def _builtin_text(name: str) -> str:
         return path.read_text(encoding="utf-8-sig")
     except OSError:
         return ""
+
+
+@skills_bp.route("/skills/polish", methods=["POST"])
+@monitor_response("skills_api:polish_skill")
+def polish_skill():
+    """把用户的一句话需求润色成规范 SKILL.md 草稿（**不保存**，前端确认后再 POST /api/skills）。
+
+    请求（JSON）:
+        ``prompt``（必填）：用户粗糙描述；
+        ``name``（可选）：技能 slug，frontmatter 会使用它；
+        ``model_url`` / ``model_api_key`` / ``model_type``（可选）：请求级模型凭证
+        （缺省回落到 .env 的 SKILL_POLISH_* / BASE_URL / API_KEY / MODEL_NAME）。
+
+    响应:
+        ``{"content": SKILL.md 全文, "skill": {name,title,description,...}}``
+
+    错误:
+        400 输入/生成结果不合规（detail 带具体原因，可直接展示给用户）；
+        502 模型调用失败。
+    """
+    auth_error = check_api_key()
+    if auth_error:
+        return auth_error
+
+    payload = _payload()
+    raw_prompt = str(payload.get("prompt") or "").strip()
+    name_hint = str(payload.get("name") or "").strip()
+    if not raw_prompt:
+        return jsonify(ErrorResponse(detail="必须提供 prompt（你的需求描述）").model_dump()), 400
+    if len(raw_prompt) > 4000:
+        return jsonify(ErrorResponse(detail="prompt 过长（上限 4000 字符）").model_dump()), 400
+
+    try:
+        chat = build_polish_chat(
+            model_url=str(payload.get("model_url") or ""),
+            model_api_key=str(payload.get("model_api_key") or ""),
+            model_type=str(payload.get("model_type") or ""),
+        )
+    except RuntimeError as e:
+        return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
+
+    try:
+        draft = polish_skill_draft(chat, raw_prompt, name_hint)
+    except SkillValidationError as e:
+        return (
+            jsonify(
+                ErrorResponse(
+                    detail=f"生成的技能不合规：{e}；可修改描述后重试，或手工编辑后保存"
+                ).model_dump()
+            ),
+            400,
+        )
+    except Exception as e:  # 模型/网关错误
+        logger.warning("技能润色失败", error=str(e), error_type=type(e).__name__)
+        return (
+            jsonify(
+                ErrorResponse(detail=f"模型调用失败: {type(e).__name__}: {e}").model_dump()
+            ),
+            502,
+        )
+
+    logger.info("技能润色草稿已生成", name=draft["skill"].get("name"))
+    return jsonify(draft), 200
 
 
 @skills_bp.route("/skills/<name>", methods=["GET"])

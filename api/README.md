@@ -44,6 +44,7 @@ api/
 | `GET`  | `/api/skills` | `skills_api.py` | ✅ | 技能索引（内置 + 用户，含来源/覆盖） |
 | `GET`  | `/api/skills/<name>` | `skills_api.py` | ✅ | 读技能完整 SKILL.md（内置只读） |
 | `POST` | `/api/skills` | `skills_api.py` | ✅ | 保存用户技能（name + content，即时生效） |
+| `POST` | `/api/skills/polish` | `skills_api.py` | ✅ | AI 润色：一句话需求 → SKILL.md 草稿（不保存） |
 | `PUT`  | `/api/skills/<name>` | `skills_api.py` | ✅ | 更新用户技能正文 |
 | `DELETE` | `/api/skills/<name>` | `skills_api.py` | ✅ | 删除用户技能（同名覆盖内置时删除即恢复内置） |
 | `GET`  | `/api/health` | `health_api.py` | ❌ | 存活探针（liveness） |

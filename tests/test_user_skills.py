@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -290,3 +291,147 @@ class TestSkillsApi:
         body = resp.get_json()
         assert body["source"] == "builtin"
         assert body["content"].startswith("---")
+
+
+# ---------- AI 润色（一句话需求 → SKILL.md 草稿，不落盘） ----------
+
+
+class _FakePolishChat:
+    """假模型：返回带代码围栏 + 寒暄的 SKILL.md，验证清洗与校验链路。"""
+
+    def __init__(self, content: str):
+        self.content = content
+
+    def invoke(self, prompt):  # noqa: ARG002
+        return SimpleNamespace(content=self.content)
+
+
+class TestSkillPolisher:
+    def test_prompt_carries_skill_spec_and_pyecharts_constraints(self):
+        from service.skills.skill_polisher import build_polish_prompt
+
+        text = build_polish_prompt().invoke(
+            {"prompt": "做个风机达标率图", "name": "wind-kpi"}
+        ).to_string()
+
+        for needle in ("frontmatter", "chart_types", "require_keywords",
+                       "extend_axis", "bar_max_width", "TreeMap", "## 适用判断"):
+            assert needle in text, needle
+
+    def test_normalize_strips_fences_and_chatter(self):
+        from service.skills.skill_polisher import normalize_skill_markdown
+
+        raw = (
+            "好的，下面是技能文件：\n```markdown\n"
+            "---\nname: wind-kpi\ndescription: 风机达标率\n---\n\n正文\n"
+            "```\n"
+        )
+        cleaned = normalize_skill_markdown(raw)
+        assert cleaned.startswith("---")
+        assert cleaned.endswith("正文")
+        assert "```" not in cleaned
+
+    def test_validate_draft_rejects_name_mismatch(self):
+        from service.skills.skill_polisher import validate_draft
+        from service.skills.user_skills import SkillValidationError
+
+        with pytest.raises(SkillValidationError, match="不一致"):
+            validate_draft(VALID_SKILL, expected_name="other-name")
+
+    def test_validate_draft_rejects_missing_frontmatter(self):
+        from service.skills.skill_polisher import validate_draft
+        from service.skills.user_skills import SkillValidationError
+
+        with pytest.raises(SkillValidationError, match="frontmatter"):
+            validate_draft("就是一段正文")
+
+    def test_polish_skill_returns_validated_draft(self):
+        from service.skills.skill_polisher import polish_skill_sync
+
+        chat = _FakePolishChat(f"```\n{VALID_SKILL}\n```")
+        draft = polish_skill_sync(chat, "风机达标率用仪表盘", "wind-turbine-kpi")
+
+        assert draft["content"].startswith("---")
+        assert draft["skill"]["name"] == "wind-turbine-kpi"
+        assert draft["skill"]["chart_types"] == ["Gauge"]
+
+    def test_polish_skill_empty_output_is_clear_error(self):
+        from service.skills.skill_polisher import polish_skill_sync
+        from service.skills.user_skills import SkillValidationError
+
+        with pytest.raises(SkillValidationError, match="没有返回内容"):
+            polish_skill_sync(_FakePolishChat(""), "风机达标率", "wind-kpi")
+
+
+class TestSkillPolishApi:
+    @pytest.fixture
+    def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        import app as app_module
+
+        monkeypatch.setenv("USER_SKILLS_DIR", str(tmp_path / "skills_user_polish"))
+        monkeypatch.delenv("SERVICE_API_KEY", raising=False)
+        get_skill_registry.cache_clear()
+        yield app_module.app.test_client()
+        get_skill_registry.cache_clear()
+
+    def test_polish_returns_draft_without_saving(self, client, monkeypatch):
+        import api.skills_api as skills_api
+
+        monkeypatch.setattr(
+            skills_api,
+            "build_polish_chat",
+            lambda **_: _FakePolishChat(VALID_SKILL),
+        )
+
+        resp = client.post(
+            "/api/skills/polish",
+            data=json.dumps({"prompt": "风机达标率用仪表盘", "name": "wind-turbine-kpi"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["content"].startswith("---")
+        assert body["skill"]["chart_types"] == ["Gauge"]
+        # 润色不落盘：技能目录里还没有它
+        listed = {item["name"] for item in client.get("/api/skills").get_json()["skills"]}
+        assert "wind-turbine-kpi" not in listed
+
+    def test_polish_empty_prompt_400(self, client):
+        resp = client.post(
+            "/api/skills/polish",
+            data=json.dumps({"prompt": "  "}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 400
+
+    def test_polish_invalid_draft_400_with_reason(self, client, monkeypatch):
+        import api.skills_api as skills_api
+
+        monkeypatch.setattr(
+            skills_api, "build_polish_chat", lambda **_: _FakePolishChat("没有 frontmatter")
+        )
+
+        resp = client.post(
+            "/api/skills/polish",
+            data=json.dumps({"prompt": "随便", "name": "x-skill"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 400
+        assert "不合规" in resp.get_json()["detail"]
+
+    def test_polish_model_error_502(self, client, monkeypatch):
+        import api.skills_api as skills_api
+
+        class _Boom:
+            def invoke(self, prompt):
+                raise RuntimeError("gateway down")
+
+        monkeypatch.setattr(skills_api, "build_polish_chat", lambda **_: _Boom())
+
+        resp = client.post(
+            "/api/skills/polish",
+            data=json.dumps({"prompt": "随便", "name": "x-skill"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 502
+        assert "gateway down" in resp.get_json()["detail"]
