@@ -42,6 +42,7 @@ impl Component for MainModel {
             include_str!("js/api.js"),
             include_str!("js/trace.js"),
             include_str!("js/preview.js"),
+            include_str!("js/skills.js"),
         ].concat();
         let html = include_str!("app.html")
             .replace("__CSS__", css)
@@ -133,6 +134,11 @@ impl Component for MainModel {
             MainMessage::CodeCompleted(code) => self.handle_code_completed(code),
             MainMessage::DataProfileLoaded(profile) => self.handle_data_profile_loaded(profile),
             MainMessage::DbTablesLoaded(result) => self.handle_db_tables_loaded(result),
+            MainMessage::SkillsLoaded(result) => self.handle_skills_loaded(result),
+            MainMessage::SkillLoaded(result) => self.handle_skill_loaded(result),
+            MainMessage::SkillSaved(result) => self.handle_skill_saved(result),
+            MainMessage::SkillDeleted(result) => self.handle_skill_deleted(result),
+            MainMessage::SkillPolished(result) => self.handle_skill_polished(result),
             MainMessage::ClipboardImageSaved(path) => self.handle_clipboard_image_saved(path),
         }
     }

@@ -284,6 +284,128 @@ impl ApiClient {
         }
     }
 
+    /// 技能索引（内置 + 用户）
+    pub async fn list_skills(&self) -> Result<serde_json::Value> {
+        let url = format!("{}/api/skills", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .header("X-API-Key", &self.api_key)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&body)
+                .context(format!("解析技能列表失败: {}", body))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
+    /// 读取单个技能全文
+    pub async fn get_skill(&self, name: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/api/skills/{}", self.base_url, name);
+        let resp = self
+            .client
+            .get(&url)
+            .header("X-API-Key", &self.api_key)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&body)
+                .context(format!("解析技能内容失败: {}", body))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
+    /// 保存 / 更新用户技能（后端会校验 frontmatter 与名称）
+    pub async fn save_skill(&self, name: &str, content: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/api/skills/{}", self.base_url, name);
+        let body = serde_json::json!({ "content": content });
+        let resp = self
+            .client
+            .put(&url)
+            .header("X-API-Key", &self.api_key)
+            .json(&body)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&text)
+                .context(format!("解析保存结果失败: {}", text))
+        } else {
+            anyhow::bail!(format_http_error(status, &text))
+        }
+    }
+
+    /// 删除用户技能
+    pub async fn delete_skill(&self, name: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/api/skills/{}", self.base_url, name);
+        let resp = self
+            .client
+            .delete(&url)
+            .header("X-API-Key", &self.api_key)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&text)
+                .context(format!("解析删除结果失败: {}", text))
+        } else {
+            anyhow::bail!(format_http_error(status, &text))
+        }
+    }
+
+    /// AI 润色：一句话需求 → SKILL.md 草稿（不保存）
+    pub async fn polish_skill(
+        &self,
+        prompt: &str,
+        name: &str,
+        model_url: Option<&str>,
+        model_api_key: Option<&str>,
+        model_type: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/api/skills/polish", self.base_url);
+        let body = serde_json::json!({
+            "prompt": prompt,
+            "name": name,
+            "model_url": model_url.unwrap_or(""),
+            "model_api_key": model_api_key.unwrap_or(""),
+            "model_type": model_type.unwrap_or(""),
+        });
+        let resp = self
+            .client
+            .post(&url)
+            .header("X-API-Key", &self.api_key)
+            .json(&body)
+            .timeout(Duration::from_secs(180))
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status.is_success() {
+            serde_json::from_str::<serde_json::Value>(&text)
+                .context(format!("解析润色结果失败: {}", text))
+        } else {
+            anyhow::bail!(format_http_error(status, &text))
+        }
+    }
+
     /// 下载数据预览导出（CSV / ZIP）。
     ///
     /// `path` 必须是后端 `/api/data-profile/export` 相对路径，避免前端任意 URL 拉取。

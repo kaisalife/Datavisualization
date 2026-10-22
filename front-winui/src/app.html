@@ -44,7 +44,7 @@
         <div class="file-tree" id="fileTree"><div class="files-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><div>打开项目文件夹<br>浏览数据文件</div></div></div>
       </div>
 
-      <div class="sidebar-footer"><button class="settings-btn" onclick="sendToRust('toggleSettings',{})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</button></div>
+      <div class="sidebar-footer"><button class="settings-btn" onclick="openSkillManager()" title="技能管理"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>技能</button><button class="settings-btn" onclick="sendToRust('toggleSettings',{})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</button></div>
     </aside>
 
     <div class="chat-area">
@@ -137,6 +137,40 @@
     <div class="settings-header"><div class="settings-title">设置</div><div class="modal-close" onclick="sendToRust('toggleSettings',{})">✕</div></div>
     <div class="settings-body" id="settingsBody"></div>
     <div class="settings-footer"><button class="btn btn-ghost" onclick="sendToRust('toggleSettings',{})">取消</button><button class="btn btn-primary" onclick="saveSettings()">保存</button></div>
+  </div>
+</div>
+
+<div class="settings-modal" id="skillManagerModal" onclick="if(event.target===this)closeSkillManager()">
+  <div class="settings-modal-inner skill-manager-inner" onclick="event.stopPropagation()">
+    <div class="settings-header">
+      <div class="settings-title">技能管理</div>
+      <div class="modal-close" onclick="closeSkillManager()">✕</div>
+    </div>
+    <div class="skill-manager-body">
+      <div class="skill-list-pane">
+        <div class="skill-list-actions">
+          <button class="btn btn-ghost skill-new-btn" onclick="startNewSkill()">+ 新建技能</button>
+        </div>
+        <div class="skill-list" id="skillList"></div>
+      </div>
+      <div class="skill-editor-pane">
+        <div class="skill-editor-row">
+          <input id="skillName" class="skill-input" placeholder="技能名：小写字母/数字/连字符，例如 wind-kpi" />
+          <span class="skill-source-badge" id="skillSourceBadge"></span>
+        </div>
+        <div class="skill-polish-row">
+          <textarea id="skillPrompt" class="skill-prompt" placeholder="用一句话描述你的需求（AI 会润色成规范技能），例如：风电场里按机组看发电量完成率，没达标要显眼"></textarea>
+          <button class="btn btn-primary skill-polish-btn" id="skillPolishBtn" onclick="aiPolishSkill()">AI 润色</button>
+        </div>
+        <textarea id="skillContent" class="skill-content" spellcheck="false" placeholder="SKILL.md 全文（可用 AI 润色生成后手工修改）"></textarea>
+        <div class="skill-editor-actions">
+          <span class="skill-meta" id="skillMeta"></span>
+          <span class="skill-spacer"></span>
+          <button class="btn btn-ghost" id="skillDeleteBtn" onclick="deleteCurrentSkill()" style="display:none">删除</button>
+          <button class="btn btn-primary" onclick="saveCurrentSkill()">保存技能</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 

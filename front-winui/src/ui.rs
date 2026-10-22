@@ -190,6 +190,46 @@ impl MainModel {
         ));
     }
 
+    /// 技能列表
+    pub(crate) fn js_skills_loaded(&mut self, json: &str) {
+        self.js(&format!(
+            "window.app.renderSkillList('{}')",
+            Self::js_escape(json)
+        ));
+    }
+
+    /// 单个技能全文
+    pub(crate) fn js_skill_loaded(&mut self, json: &str) {
+        self.js(&format!(
+            "window.app.renderSkillDetail('{}')",
+            Self::js_escape(json)
+        ));
+    }
+
+    /// 保存成功
+    pub(crate) fn js_skill_saved(&mut self, json: &str) {
+        self.js(&format!(
+            "window.app.onSkillSaved('{}')",
+            Self::js_escape(json)
+        ));
+    }
+
+    /// 删除成功
+    pub(crate) fn js_skill_deleted(&mut self, json: &str) {
+        self.js(&format!(
+            "window.app.onSkillDeleted('{}')",
+            Self::js_escape(json)
+        ));
+    }
+
+    /// AI 润色结果
+    pub(crate) fn js_skill_polished(&mut self, json: &str) {
+        self.js(&format!(
+            "window.app.onSkillPolished('{}')",
+            Self::js_escape(json)
+        ));
+    }
+
     /// 把剪贴板图片加入前端文件列表
     pub(crate) fn js_add_clipboard_file(&mut self, path: &str) {
         self.js(&format!(

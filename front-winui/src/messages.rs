@@ -28,5 +28,10 @@ pub enum MainMessage {
     CodeCompleted(String),
     DataProfileLoaded(serde_json::Value),
     DbTablesLoaded(serde_json::Value),
+    SkillsLoaded(serde_json::Value),
+    SkillLoaded(serde_json::Value),
+    SkillSaved(serde_json::Value),
+    SkillDeleted(serde_json::Value),
+    SkillPolished(serde_json::Value),
     ClipboardImageSaved(String),
 }

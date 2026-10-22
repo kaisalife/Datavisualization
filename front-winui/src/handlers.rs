@@ -47,6 +47,11 @@ impl MainModel {
             "previewData" => self.handle_preview_data(msg.data, sender),
             "downloadDataExport" => self.handle_download_data_export(msg.data, sender),
             "saveClipboardImage" => self.handle_save_clipboard_image(msg.data, sender),
+            "listSkills" => self.handle_list_skills(sender),
+            "loadSkill" => self.handle_load_skill(msg.data, sender),
+            "saveSkill" => self.handle_save_skill(msg.data, sender),
+            "deleteSkill" => self.handle_delete_skill(msg.data, sender),
+            "polishSkill" => self.handle_polish_skill(msg.data, sender),
             _ => {
                 println!("[Bridge] 未知 action: {}", msg.action);
                 Ok(false)
@@ -1761,6 +1766,224 @@ impl MainModel {
     ) -> std::result::Result<bool, Error> {
         let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
         self.js_show_db_tables(&json);
+        Ok(true)
+    }
+
+    // ===== 技能管理（用户自定义技能 + AI 润色） =====
+
+    fn handle_list_skills(
+        &mut self,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.list_skills().await {
+                    Ok(result) => sender.post(MainMessage::SkillsLoaded(result)),
+                    Err(e) => sender.post(MainMessage::ShowToast {
+                        message: format!("加载技能失败: {}", e),
+                        toast_type: "error".to_string(),
+                    }),
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    fn handle_load_skill(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let name = data
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.get_skill(&name).await {
+                    Ok(result) => sender.post(MainMessage::SkillLoaded(result)),
+                    Err(e) => sender.post(MainMessage::ShowToast {
+                        message: format!("读取技能失败: {}", e),
+                        toast_type: "error".to_string(),
+                    }),
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    fn handle_save_skill(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let name = data
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let content = data
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if name.is_empty() || content.trim().is_empty() {
+            self.js_show_toast("技能名与内容不能为空", "error");
+            return Ok(true);
+        }
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.save_skill(&name, &content).await {
+                    Ok(result) => sender.post(MainMessage::SkillSaved(result)),
+                    Err(e) => sender.post(MainMessage::ShowToast {
+                        message: format!("保存失败: {}", e),
+                        toast_type: "error".to_string(),
+                    }),
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    fn handle_delete_skill(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let name = data
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.delete_skill(&name).await {
+                    Ok(result) => sender.post(MainMessage::SkillDeleted(result)),
+                    Err(e) => sender.post(MainMessage::ShowToast {
+                        message: format!("删除失败: {}", e),
+                        toast_type: "error".to_string(),
+                    }),
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    fn handle_polish_skill(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let prompt = data
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let name = data
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if prompt.is_empty() {
+            self.js_show_toast("请先写一句需求描述", "error");
+            return Ok(true);
+        }
+
+        // 与图表生成共用同一套模型配置（设置里启用的模型）
+        let model_cfg = self.settings.active_model_config();
+        let (model_url, model_type, model_api_key) = match &model_cfg {
+            Some(m) => (
+                Some(m.model_url.clone()),
+                Some(m.model_type.clone()),
+                Some(m.model_api_key.clone()),
+            ),
+            None => (None, None, None),
+        };
+
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client
+                    .polish_skill(
+                        &prompt,
+                        &name,
+                        model_url.as_deref(),
+                        model_api_key.as_deref(),
+                        model_type.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(result) => sender.post(MainMessage::SkillPolished(result)),
+                    Err(e) => sender.post(MainMessage::ShowToast {
+                        message: format!("AI 润色失败: {}", e),
+                        toast_type: "error".to_string(),
+                    }),
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    pub(crate) fn handle_skills_loaded(
+        &mut self,
+        result: serde_json::Value,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+        self.js_skills_loaded(&json);
+        Ok(true)
+    }
+
+    pub(crate) fn handle_skill_loaded(
+        &mut self,
+        result: serde_json::Value,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+        self.js_skill_loaded(&json);
+        Ok(true)
+    }
+
+    pub(crate) fn handle_skill_saved(
+        &mut self,
+        result: serde_json::Value,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+        self.js_skill_saved(&json);
+        Ok(true)
+    }
+
+    pub(crate) fn handle_skill_deleted(
+        &mut self,
+        result: serde_json::Value,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+        self.js_skill_deleted(&json);
+        Ok(true)
+    }
+
+    pub(crate) fn handle_skill_polished(
+        &mut self,
+        result: serde_json::Value,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+        self.js_skill_polished(&json);
         Ok(true)
     }
 
