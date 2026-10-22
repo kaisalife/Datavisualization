@@ -8,6 +8,7 @@ LLM 自主完成"读数据 -> 生成 pyecharts 代码 -> 执行 -> 看输出迭�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Dict, List
@@ -24,6 +25,38 @@ def _check_cancelled(task_id):
         return False
     from api.common import is_cancelled
     return is_cancelled(task_id)
+
+
+async def execute_plans_concurrently(
+    plans: list,
+    *,
+    task_id: str | None,
+    concurrency: int,
+    runner,
+) -> tuple[list[dict], bool]:
+    """并发执行 plans，保持输入顺序返回结果。
+
+    Args:
+        plans: plan 列表
+        task_id: 用于取消检查
+        concurrency: 并发度（<=0 时按 1）
+        runner: ``async def runner(idx, plan) -> dict``，结果至少包含
+            ``{"idx": int, "cancelled": bool, "logs": [...]}``
+
+    Returns:
+        (按 idx 排序的结果列表, 是否有 plan 因取消未执行)
+    """
+    semaphore = asyncio.Semaphore(max(1, int(concurrency)))
+
+    async def _run(idx: int, plan_item):
+        async with semaphore:
+            if _check_cancelled(task_id):
+                return {"idx": idx, "cancelled": True, "logs": []}
+            return await runner(idx, plan_item)
+
+    results = await asyncio.gather(*(_run(idx, plan) for idx, plan in enumerate(plans)))
+    cancelled = any(item.get("cancelled") for item in results)
+    return sorted(results, key=lambda item: item["idx"]), cancelled
 
 
 @trace(category="pipeline")
@@ -123,13 +156,16 @@ async def run_agent_pipeline(
     successful_charts = []
     failed_plans = []
 
-    for idx, plan_item in enumerate(plans):
-        if _check_cancelled(task_id):
-            agent_logs.append("❌ 任务已被用户取消")
-            raise RuntimeError("Task cancelled by user")
+    # 图表之间互不依赖：并发执行（与 legacy 流水线一致），串行会把 N 张图的总耗时
+    # 变成累加。并发度读 CHART_CONCURRENCY（默认 3），也受 plan 数量约束。
+    from service.runtime.utils import get_env_int
 
+    concurrency = max(1, min(len(plans), get_env_int("CHART_CONCURRENCY", 3)))
+    agent_logs.append(f"⚡ 图表并发度: {concurrency}")
+
+    async def _execute_plan(idx: int, plan_item: dict) -> dict:
         plan_name = plan_get(plan_item, "plan_name", f"图表{idx + 1}")
-        agent_logs.append(f"📊 执行 plan {idx + 1}/{len(plans)}: {plan_name}")
+        logs = [f"📊 执行 plan {idx + 1}/{len(plans)}: {plan_name}"]
 
         try:
             with stage_timer.stage(
@@ -157,24 +193,54 @@ async def run_agent_pipeline(
         generation = plan_get(plan_item, "generation", {}) or {}
         validation = generation.get("validation", {}) if isinstance(generation, dict) else {}
         if success and chart_path:
-            successful_charts.append({
-                "plan": plan_item,
-                "chart_path": chart_path,
-                "code": code,
-                "generation": generation,
-                "validation": validation,
-            })
-            agent_logs.append(f"✅ plan {idx + 1} 成功: {chart_path}")
-        else:
-            failed_plans.append({
+            logs.append(f"✅ plan {idx + 1} 成功: {chart_path}")
+            return {
+                "idx": idx,
+                "cancelled": False,
+                "success": True,
+                "chart": {
+                    "plan": plan_item,
+                    "chart_path": chart_path,
+                    "code": code,
+                    "generation": generation,
+                    "validation": validation,
+                },
+                "logs": logs,
+            }
+
+        codes = [e.get("code") for e in validation.get("errors", []) if e.get("code")]
+        code_text = f" [{', '.join(codes)}]" if codes else ""
+        logs.append(f"❌ plan {idx + 1} 失败{code_text}: {(error or '未知')[:100]}")
+        return {
+            "idx": idx,
+            "cancelled": False,
+            "success": False,
+            "failed": {
                 "plan": plan_item,
                 "error": error,
                 "generation": generation,
                 "validation": validation,
-            })
-            codes = [e.get("code") for e in validation.get("errors", []) if e.get("code")]
-            code_text = f" [{', '.join(codes)}]" if codes else ""
-            agent_logs.append(f"❌ plan {idx + 1} 失败{code_text}: {(error or '未知')[:100]}")
+            },
+            "logs": logs,
+        }
+
+    results, cancelled = await execute_plans_concurrently(
+        plans,
+        task_id=task_id,
+        concurrency=concurrency,
+        runner=_execute_plan,
+    )
+
+    for item in results:
+        agent_logs.extend(item["logs"])
+        if item.get("success") and item.get("chart"):
+            successful_charts.append(item["chart"])
+        elif item.get("failed"):
+            failed_plans.append(item["failed"])
+
+    if cancelled:
+        agent_logs.append("❌ 任务已被用户取消")
+        raise RuntimeError("Task cancelled by user")
 
     context_cards = build_context_cards(
         getattr(model_, "user_prompt", ""),

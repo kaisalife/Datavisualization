@@ -183,3 +183,73 @@ class TestDegradedPropagation:
 
         assert profile.degraded is True
         assert "llm_tabular_failed" in profile.degraded_reason
+class TestPlanConcurrency:
+    """agent/auto 流水线的图表并发执行（不依赖 LLM）。"""
+
+    @pytest.mark.asyncio
+    async def test_plans_run_concurrently_and_keep_order(self):
+        import time
+
+        from service.pipeline.agent_pipeline import execute_plans_concurrently
+
+        active = 0
+        peak = 0
+
+        async def runner(idx, _plan):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.1)
+            active -= 1
+            return {"idx": idx, "cancelled": False, "logs": [f"p{idx}"]}
+
+        started = time.perf_counter()
+        results, cancelled = await execute_plans_concurrently(
+            [{}, {}, {}], task_id=None, concurrency=3, runner=runner
+        )
+        elapsed = time.perf_counter() - started
+
+        assert peak == 3, "3 个 plan 应同时执行"
+        assert elapsed < 0.25, f"并发执行耗时异常: {elapsed:.2f}s"
+        assert [item["logs"][0] for item in results] == ["p0", "p1", "p2"]
+        assert cancelled is False
+
+    @pytest.mark.asyncio
+    async def test_concurrency_one_is_serial(self):
+        from service.pipeline.agent_pipeline import execute_plans_concurrently
+
+        active = 0
+        peak = 0
+
+        async def runner(idx, _plan):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.02)
+            active -= 1
+            return {"idx": idx, "cancelled": False, "logs": []}
+
+        results, cancelled = await execute_plans_concurrently(
+            [{}, {}, {}], task_id=None, concurrency=1, runner=runner
+        )
+
+        assert peak == 1
+        assert len(results) == 3
+        assert cancelled is False
+
+    @pytest.mark.asyncio
+    async def test_cancelled_before_start_skips_runner(self, monkeypatch):
+        import api.common as common
+        from service.pipeline.agent_pipeline import execute_plans_concurrently
+
+        monkeypatch.setattr(common, "is_cancelled", lambda _task_id: True)
+
+        async def runner(idx, _plan):  # pragma: no cover - 不应执行
+            raise AssertionError("cancelled plan should not run")
+
+        results, cancelled = await execute_plans_concurrently(
+            [{}], task_id="t1", concurrency=2, runner=runner
+        )
+
+        assert cancelled is True
+        assert results[0]["cancelled"] is True

@@ -656,6 +656,10 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   `TASK_RETENTION_SECONDS`（默认 3600 秒）+ `TASK_MAX_ENTRIES`（默认 500 条，按时间从旧到新淘汰）。
   进行中的任务永不清理。**不要**把回收逻辑塞进 `get_tasks()`，它会在读路径上隐式改数据。
 - 进程退出时 `atexit` 调 `executor.shutdown(wait=False, cancel_futures=True)`，避免排队任务拖住停止。
+- **图表并发**：`viz_mode=agent/auto` 的图表也并发执行（`CHART_CONCURRENCY`，默认 3，
+  上限受 plan 数量约束），与 legacy 的 `execute_chart_plans` 一致；串行会把 N 张图的
+  耗时变成累加。并发前提：assets 登记有锁、每张图产物路径独立（plan_id 唯一）、
+  `stage_timer` 只做展示用途（并发时 `current` 会被后启动的阶段覆盖，`finished` 不受影响）。
 - **队列过载保护**：提交生成/优化任务前 `ensure_queue_capacity()` 检查 pending+running 数量，
   超过 `TASK_QUEUE_LIMIT`（默认 20，0 = 不限制）直接返回 429，避免无界 ThreadPool 队列
   把几十个任务排到几小时后（每个任务都要打多轮 LLM）。
