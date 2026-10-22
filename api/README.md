@@ -245,6 +245,14 @@ X-API-Key: <your_key>
         "columns": ["城市", "销售额"],
         "csv_url": "/api/data-profile/export?session_id=ds_0123456789ab&raw=0"
       }
+    ],
+    "views": [
+      {
+        "view_id": "vw_9f2c1d3e8a4b6c70",
+        "spec_summary": "select 月份, sum(销售额) ... group by 月份 order by 月份",
+        "rows": 12,
+        "columns": ["月份", "销售额"]
+      }
     ]
   },
   "file_count": 1
@@ -259,7 +267,9 @@ Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列�
 预览产生的 series 会话目录会保留（超过 24 小时后由下一次 `allocate_session_dir` 清理），
 便于前端下载：
 - `raw_tables[]` 是**归一化后、拆分 series 前**的原始表（抽表结果），用于核对 OCR/表格识别；
-- `exports[]` 是拆分后的语义 series，适合直接拿去画图。
+- `exports[]` 是拆分后的语义 series，适合直接拿去画图；
+- `views[]` 是该会话已物化的派生数据视图（`run_view` 的产物；刚预览完时为空，
+  规划 agent 用 `run_view` 补视角后这里会多出对应条目）。
 
 ---
 

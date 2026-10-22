@@ -33,6 +33,9 @@ CORE_TEST_FILES = {
     "test_data_view_engine.py",
     "test_data_view_cache.py",
     "test_data_view_plugin.py",
+    "test_data_view_session.py",
+    "test_data_view_mcp.py",
+    "test_plan_view_tool.py",
 }
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 def build_plan_tool_pool(state) -> list:
-    """构建阶段 2 agent 工具池（5 个工具）。
+    """构建阶段 2 agent 工具池（7 个工具）。
 
     Args:
         state: PlanSessionState（共享 series 目录/画像/日志/plans）
@@ -19,12 +19,16 @@ def build_plan_tool_pool(state) -> list:
         ListSeriesTool,
         LoadSkillTool,
     )
+    from service.pipeline.plan_view_tool import DescribeDatasetTool, RunViewTool
 
     ctx = ToolContext(auto_confirm=True)
+    datasets_dir = getattr(state.catalog, "datasets_dir", "") if state.catalog else ""
     local_tools = [
         ListSeriesTool(state.catalog),
         GetSeriesTool(state.catalog),
         PreviewSeriesTool(state.catalog),
+        DescribeDatasetTool(datasets_dir),
+        RunViewTool(state),
         LoadSkillTool(),
         CreatePlanTool(state),
     ]

@@ -195,6 +195,59 @@ def validate_spec(spec: ViewSpec) -> None:
     raise DataViewError(f"未知 spec kind: {spec.kind}（只支持 sql / plugin）", SPEC_INVALID)
 
 
+def _first_present(data: dict, *keys: str) -> tuple[Any, str]:
+    """从 dict 里取第一个存在的键值（供 camelCase 别名回退）。"""
+    for key in keys:
+        if key in data and data[key] is not None:
+            return data[key], key
+    return None, ""
+
+
+def spec_from_dict(data: dict) -> ViewSpec:
+    """从 dict（LLM 输出 / 接口 JSON）构造 ViewSpec 并静态校验。
+
+    宽容别名：``plugin_version``/``version``、``allow_unordered``/``allowUnordered``、
+    ``allow_empty``/``allowEmpty``。缺 kind、inputs 非列表等结构问题当场抛
+    ``SPEC_INVALID``，语义校验交给 ``validate_spec``。
+
+    Args:
+        data: spec 的 JSON dict。
+
+    Returns:
+        ViewSpec（已通过 ``validate_spec``）。
+
+    Raises:
+        DataViewError: 非 dict 输入或缺少必要字段（``SPEC_INVALID``）。
+    """
+    if not isinstance(data, dict):
+        raise DataViewError("spec 必须是 JSON 对象（dict）", SPEC_INVALID)
+    kind, _ = _first_present(data, "kind")
+    inputs_raw = data.get("inputs") or []
+    if not isinstance(inputs_raw, list) or not all(isinstance(x, str) for x in inputs_raw):
+        raise DataViewError("inputs 必须是字符串列表", SPEC_INVALID)
+    params = data.get("params")
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        raise DataViewError("params 必须是 JSON 对象（dict）", SPEC_INVALID)
+    plugin_version, _ = _first_present(data, "plugin_version", "version")
+    allow_unordered, _ = _first_present(data, "allow_unordered", "allowUnordered")
+    allow_empty, _ = _first_present(data, "allow_empty", "allowEmpty")
+    spec = ViewSpec(
+        kind=str(kind or "").strip(),
+        sql=data.get("sql"),
+        plugin=data.get("plugin") or data.get("name"),
+        plugin_version=int(plugin_version) if isinstance(plugin_version, (int, float)) else None,
+        params=params,
+        inputs=[str(x).strip() for x in inputs_raw],
+        allow_unordered=bool(allow_unordered),
+        allow_empty=bool(allow_empty),
+        title=str(data.get("title") or "").strip(),
+    )
+    validate_spec(spec)
+    return spec
+
+
 def spec_summary(spec: ViewSpec) -> str:
     """给 manifest / agent 的单行摘要（截断长 SQL，避免上下文膨胀）。"""
     if spec.kind == "sql":

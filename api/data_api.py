@@ -156,6 +156,7 @@ def data_profile():
         result["session_id"] = session_id
         result["exports"] = _build_exports(profile, session_id)
         result["raw_tables"] = _build_raw_exports(session_id)
+        result["views"] = _build_views_list(session_id)
         return jsonify({"profile": result, "file_count": len(saved_paths)}), 200
     except Exception as e:
         return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
@@ -246,6 +247,21 @@ def _build_exports(profile, session_id: str) -> list[dict]:
             }
         )
     return exports
+
+
+def _build_views_list(session_id: str) -> list[dict]:
+    """列出会话里已物化的派生 view（spec 摘要 + 行数，供前端/复核核对）。"""
+    if not session_id:
+        return []
+    session_dir = _resolve_session(session_id)
+    if session_dir is None:
+        return []
+    try:
+        from service.data_view.cache import list_views
+
+        return list_views(session_dir)
+    except Exception:
+        return []
 
 
 def _build_raw_exports(session_id: str) -> list[dict]:

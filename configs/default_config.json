@@ -14,6 +14,13 @@
         "agent_tools/tool_run_code.py"
       ],
       "transport": "stdio"
+    },
+    "data_view": {
+      "command": "python",
+      "args": [
+        "agent_tools/tool_data_view.py"
+      ],
+      "transport": "stdio"
     }
   }
 }
