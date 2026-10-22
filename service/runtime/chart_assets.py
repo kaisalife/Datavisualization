@@ -16,6 +16,7 @@ ORM 时代的对应物不存在——图表本体是 HTML + 自包含代码，�
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,11 @@ from typing import Any
 from service.observability import get_logger
 
 logger = get_logger(__name__)
+
+# 同一任务的图表是并发生成的（chart_executor 信号量），每个成功图都会登记 assets。
+# 读-改-写必须串行，否则两张图同时完成时后写者会覆盖前者的记录，
+# 前端就找不到可二次优化的图。写操作很少，全局锁足够。
+_ASSETS_LOCK = threading.RLock()
 
 ASSETS_FILENAME = "assets.json"
 
@@ -99,12 +105,13 @@ def record_chart(
     if extra:
         record.update(extra)
     try:
-        assets = load_assets(output_folder)
-        assets.append(record)
-        path = _assets_file(output_folder)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(assets, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        with _ASSETS_LOCK:
+            assets = load_assets(output_folder)
+            assets.append(record)
+            path = _assets_file(output_folder)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(assets, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
         return record
     except Exception as e:
         logger.warning(

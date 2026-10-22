@@ -746,7 +746,8 @@ MCP 的 `run_code` 工具都走它）：
   （`service/runtime/chart_assets.py`，弱依赖、含路径穿越校验）；登记字段有
   plan/series 数据路径/代码路径，二次优化全靠它反查。优化产物登记为
   `<原 plan_id>_opt<N>`（`origin_chart_id` 指向原图，`version` 递增），原图/原代码
-  **永不覆盖**。
+  **永不覆盖**。同一任务的图表并发生成（信号量 3），`record_chart` 的读-改-写由
+  `_ASSETS_LOCK` 串行化；否则两张图同时完成会互相覆盖，前端就找不到可优化的图。
 - **优化 API**：`POST /api/optimize-chart`（chart_id + user_prompt，202 建任务）；
   资产早失败校验（缺 plan/series/代码直接 4xx）；`GET /api/task-assets/<task_id>`
   返回前端资产卡（title/chart_type/version/origin，旧任务从 raw 结果兜底合成）。

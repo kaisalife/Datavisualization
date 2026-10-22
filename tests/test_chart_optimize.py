@@ -68,6 +68,39 @@ class TestChartAssets:
 
         assert len(load_assets(output_folder)) == 2
 
+    def test_concurrent_records_do_not_lose_entries(self, output_folder, monkeypatch):
+        """并发图表同时登记时，assets.json 不能互相覆盖（读-改-写需串行）。"""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        import service.runtime.chart_assets as assets
+
+        original_load = assets.load_assets
+
+        def slow_load(folder):
+            data = original_load(folder)
+            time.sleep(0.01)  # 放大读-改-写窗口，无线程锁时几乎必丢记录
+            return data
+
+        monkeypatch.setattr(assets, "load_assets", slow_load)
+
+        def record(index: int) -> None:
+            chart = _make_chart(output_folder, f"chart_c{index}.html")
+            assets.record_chart(
+                output_folder,
+                plan={**PLAN, "plan_id": f"c{index}"},
+                chart_path=str(chart),
+            )
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(record, range(10)))
+
+        records = original_load(output_folder)
+        assert len(records) == 10
+        assert {item["chart_id"] for item in records} == {
+            f"chart_c{index}.html" for index in range(10)
+        }
+
     def test_find_by_chart_id(self, output_folder, tmp_path):
         chart = _make_chart(output_folder)
         record_chart(output_folder, plan=PLAN, chart_path=str(chart))
