@@ -448,6 +448,67 @@ def _merge_pdf_page_tables(
     return merged_tables
 
 
+def _is_numeric_like(value) -> bool:
+    """判断单元格是否是可直接参与画图的数值（含千分位/百分号/货币符号）。"""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    text = str(value or "").strip()
+    if not text:
+        return False
+    text = (
+        text.replace(",", "")
+        .replace("，", "")
+        .replace("¥", "")
+        .replace("￥", "")
+        .replace("$", "")
+        .replace("%", "")
+        .strip()
+    )
+    if text.startswith("(") and text.endswith(")"):
+        text = "-" + text[1:-1]
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _table_score(payload: dict) -> tuple[int, int, int]:
+    """主表评分：数值单元格数优先，其次非空单元格与列数。
+
+    视觉模型在单表模式下有时仍返回 ``tables`` 数组（页眉键值对 + 主表），
+    按"第一张"取会拿到只有两行的键值对。这里用确定性评分选数据量最大的一张。
+    """
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    numeric = 0
+    filled = 0
+    for row in rows:
+        if isinstance(row, dict):
+            values = [row.get(col) for col in columns]
+        elif isinstance(row, (list, tuple)):
+            values = list(row)
+        else:
+            continue
+        for value in values:
+            if value in (None, ""):
+                continue
+            filled += 1
+            if _is_numeric_like(value):
+                numeric += 1
+    return numeric, filled, len(columns)
+
+
+def _pick_primary_payload(items: list[dict]) -> list[dict]:
+    """单表模式：在候选表里选最像"可画图数据表"的一张。"""
+    if len(items) <= 1:
+        return items
+    best = max(range(len(items)), key=lambda index: _table_score(items[index]))
+    return [items[best]]
+
+
 def extract_tables_from_image(
     llm,
     image_url: str,
@@ -496,7 +557,8 @@ def extract_tables_from_image(
 
     limit = max_tables or get_env_int("VISION_MAX_TABLES", _DEFAULT_MAX_TABLES)
     if not multi_table:
-        # 单表模式即使模型返回了 tables 数组，也只保留第一张
+        # 单表模式即使模型返回了 tables 数组，也只保留「最像数据表」的一张
+        items = _pick_primary_payload(items)
         limit = 1
     dataframes: list[pd.DataFrame] = []
     for item in items[:limit]:

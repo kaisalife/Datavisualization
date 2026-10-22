@@ -215,6 +215,35 @@ class TestMultimodalMultiTable:
         assert tables[0].name == "table"
         assert list(tables[0].df.columns) == ["城市", "2024 年"]
 
+    def test_single_mode_picks_most_data_like_table(self, png: Path):
+        """模型同时给出页眉键值对和主表时，按数值单元格数选主表。"""
+        content = json.dumps(
+            {
+                "tables": [
+                    {
+                        "title": "报表信息",
+                        "columns": ["报表日期"],
+                        "rows": [{"报表日期": "2024-01-01"}],
+                    },
+                    {
+                        "title": "区域销售",
+                        "columns": ["城市", "2023 年", "2024 年"],
+                        "rows": [
+                            {"城市": "北京", "2023 年": 1200, "2024 年": 1500},
+                            {"城市": "上海", "2023 年": 1100, "2024 年": 1400},
+                        ],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+        tables = MultimodalReader.read(str(png), llm=_FakeLLM(content))
+
+        assert len(tables) == 1
+        assert list(tables[0].df.columns) == ["城市", "2023 年", "2024 年"]
+        assert len(tables[0].df) == 2
+
     def test_env_flag_enables_multi_table(self, png: Path, monkeypatch):
         monkeypatch.setenv("VISION_MULTI_TABLE", "1")
 
