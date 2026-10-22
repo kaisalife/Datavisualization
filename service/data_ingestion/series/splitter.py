@@ -21,7 +21,11 @@ from typing import Any
 import pandas as pd
 
 from service.data_ingestion.models import RawTable
-from service.data_ingestion.profiler import _infer_column_semantics, _is_time_label
+from service.data_ingestion.profiler import (
+    _infer_column_semantics,
+    _is_id_label,
+    _is_time_label,
+)
 from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
 from service.data_ingestion.series.shape import compute_series_shape
 
@@ -138,6 +142,11 @@ def _split_long_with_dimension(
         return []
 
     time_col = time_cols[0]
+    # 「编号/操作员/备注」是记录属性，不是可对比维度：按它们透视会得到稀疏矩阵
+    # （每个时间点只落在一个列里），把单指标拆散、聚合口径也一起拆散。
+    dim_cols = [c for c in dim_cols if not _is_id_label(c)]
+    if not dim_cols:
+        return []
     cardinalities = {c: int(df[c].nunique(dropna=True)) for c in dim_cols}
     candidates = [c for c, n in cardinalities.items() if 2 <= n <= _PIVOT_MAX_CATEGORIES]
     if candidates:

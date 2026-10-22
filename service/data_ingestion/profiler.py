@@ -32,7 +32,14 @@ _EN_TIME_ANY = {"date", "time", "timestamp", "datetime"}
 _EN_TIME_SUFFIX = {"year", "month", "day", "hour", "quarter", "week"}
 
 _EN_ID_WORDS = {"id", "uuid", "guid", "code"}
-_CN_ID_WORDS = ("编号", "代码", "编码")
+# 「操作员/负责人」这类人员列是记录属性，不是可对比维度：
+# 把它当维度透视会得到稀疏矩阵（每个时间点只落在一个操作员列），
+# 指标被拆成多列、控制限/聚合口径都会被拆散。
+_CN_ID_WORDS = (
+    "编号", "代码", "编码",
+    "操作员", "操作工", "负责人", "经办人", "审核人", "记录人", "检验员",
+    "备注",
+)
 
 
 def _is_id_label(name: str) -> bool:

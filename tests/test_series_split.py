@@ -396,3 +396,41 @@ def test_natural_key_does_not_rewrite_plain_words():
     assert "一" in _natural_key("万一")
     assert _natural_key("一月") < _natural_key("二月") < _natural_key("十一月")
 
+
+def test_sparse_attribute_dimension_is_not_pivoted():
+    """「操作员」这类人员列是记录属性（id 语义），不是对比维度。
+
+    把它当维度透视会得到稀疏矩阵（每个时间点只落在一个操作员列），
+    单指标被拆成三列、控制限口径也被拆散。人员列应识别为 id，退回
+    「时间 x 多指标」形态。
+    """
+    df = pd.DataFrame(
+        {
+            "记录时间": [f"2026-09-{i:02d}" for i in range(1, 7)],
+            "操作员": ["张三", "李四", "王五", "张三", "李四", "王五"],
+            "面密度": [20.0, 20.1, 19.9, 20.05, 20.02, 20.08],
+        }
+    )
+
+    spec = split_raw_table(df, "sparse_attr")[0]
+
+    assert spec["axis_kind"] == "time_series"
+    assert "操作员" not in spec["column_label_columns"]
+    assert "面密度" in spec["column_label_columns"]
+    assert spec["df"]["面密度"].tolist() == [20.0, 20.1, 19.9, 20.05, 20.02, 20.08]
+
+
+def test_dense_dimension_still_pivots():
+    """稠密维度（每个时间点都有全部类别）仍然按原逻辑透视。"""
+    df = pd.DataFrame(
+        {
+            "月份": ["1月", "1月", "2月", "2月"],
+            "城市": ["北京", "上海", "北京", "上海"],
+            "销售额": [100, 90, 110, 95],
+        }
+    )
+
+    spec = split_raw_table(df, "dense")[0]
+
+    assert spec["axis_kind"] == "categorical_comparison" or spec["axis_kind"] == "time_series"
+    assert "北京" in spec["column_label_columns"] and "上海" in spec["column_label_columns"]
