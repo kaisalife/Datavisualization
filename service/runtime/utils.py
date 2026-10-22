@@ -107,16 +107,28 @@ def _find_balanced_json(text: str) -> str | None:
 
 
 def _try_load_json(json_str: str):
-    """双重尝试解析：先原样，再做常见转义规范化。"""
-    json_str = json_str.replace('{{', '{').replace('}}', '}')
+    """多次尝试解析：先原样，再做常见转义/双花括号规范化。
+
+    **必须先试原样**：合法 JSON 里嵌套对象结尾就是 ``}}``（如 ``{"data": {...}}``），
+    无条件 ``replace("}}", "}")`` 会把合法内容改坏，导致带包装层的输出整段解析失败。
+    """
     try:
         return json.loads(json_str, strict=False)
     except json.JSONDecodeError:
-        try:
-            fixed = json_str.replace('\\\\', '\\').replace("\\'", "'").replace('\\"', '"')
-            return json.loads(fixed, strict=False)
-        except json.JSONDecodeError:
-            return None
+        pass
+
+    # 兼容模型把单层花括号写成 {{...}}（prompt 里的转义残留）
+    normalized = json_str.replace('{{', '{').replace('}}', '}')
+    try:
+        return json.loads(normalized, strict=False)
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        fixed = normalized.replace('\\\\', '\\').replace("\\'", "'").replace('\\"', '"')
+        return json.loads(fixed, strict=False)
+    except json.JSONDecodeError:
+        return None
 
 
 def extract_json_from_response(response_text: str) -> dict:

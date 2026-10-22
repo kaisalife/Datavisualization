@@ -70,6 +70,8 @@ def data_profile():
     vision_cfg = {
         "base_url": (request.form.get("model_url") or "").strip(),
         "api_key": (request.form.get("model_api_key") or "").strip(),
+        # 请求级模型名必须透传：前端设置里启用的模型可能不是 glm-4.5v
+        "model": (request.form.get("model_type") or "").strip(),
     }
     if not any(vision_cfg.values()):
         vision_cfg = None

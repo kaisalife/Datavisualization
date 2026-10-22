@@ -20,6 +20,10 @@ import pandas as pd
 from service.data_ingestion import vision_cache
 from service.data_ingestion.models import RawTable, safe_table_name
 from service.data_ingestion.profiler import _is_time_label
+from service.data_ingestion.readers.table_payload import (
+    is_explicit_empty_table,
+    parse_table_response,
+)
 from service.observability import get_logger
 from service.runtime.utils import get_env_int, get_llm_extra_headers
 
@@ -56,16 +60,18 @@ def _load_env_llm(vision_cfg: dict | None = None):
     """构造视觉模型客户端。
 
     凭证优先级：VISION_* 环境变量 > 请求带来的模型配置 > .env 的 BASE_URL/API_KEY。
-    模型名：VISION_MODEL_NAME 环境变量，缺省 glm-4.5v（智谱；其它厂商需显式指定）。
+    模型名优先级：``VISION_MODEL_NAME`` > 请求里的 ``model_type``（前端设置里启用的
+    模型）> ``MODEL_NAME`` > ``glm-4.5v``。请求级模型名必须生效：换厂商时前端只下发
+    ``model_type``，写死缺省值会把 glm-4.5v 发到别家网关（400/模型不存在）。
 
     Args:
-        vision_cfg: {"base_url": str, "api_key": str}（来自请求的模型配置，可为空）
+        vision_cfg: {"base_url": str, "api_key": str, "model": str}（来自请求，可为空）
 
     Returns:
         ChatOpenAI 实例
 
     Raises:
-        RuntimeError: 凭证缺失或模型名不合规
+        RuntimeError: 凭证缺失
     """
     from dotenv import load_dotenv
 
@@ -82,7 +88,12 @@ def _load_env_llm(vision_cfg: dict | None = None):
         or str(cfg.get("api_key") or "").strip()
         or os.getenv("API_KEY", "").strip()
     )
-    model = os.getenv("VISION_MODEL_NAME", "").strip() or "glm-4.5v"
+    model = (
+        os.getenv("VISION_MODEL_NAME", "").strip()
+        or str(cfg.get("model") or "").strip()
+        or os.getenv("MODEL_NAME", "").strip()
+        or "glm-4.5v"
+    )
     if not base_url or not api_key:
         raise RuntimeError(
             "未配置视觉模型凭证：请在 .env 设置 VISION_BASE_URL/VISION_API_KEY，"
@@ -267,26 +278,58 @@ def _pdf_page_data_urls(path: Path, max_pages: int) -> list[str]:
 
 
 def _parse_tables_payload(text: str) -> list[dict]:
-    """解析视觉模型输出：兼容单表 ``{columns,rows}`` 与多表 ``{tables:[...]}``。"""
-    from service.data_ingestion.readers.llm_tabular_reader import extract_json_from_response
+    """解析视觉模型输出（JSON / Markdown / HTML），实现见 ``table_payload``。"""
+    return parse_table_response(text)
 
-    data = extract_json_from_response(text)
-    if not isinstance(data, dict):
-        return []
 
-    nested = data.get("tables")
-    if isinstance(nested, list):
-        items = [
-            item
-            for item in nested
-            if isinstance(item, dict) and item.get("columns") and item.get("rows")
-        ]
-        if items:
-            return items
+def _vision_response_text(resp) -> str:
+    """取模型文本；推理模型把 max_tokens 花光时给出可操作的报错。"""
+    content = resp["content"] if isinstance(resp, dict) else getattr(resp, "content", resp)
+    text = _content_to_text(content).strip()
+    if text:
+        return text
 
-    if data.get("columns") and data.get("rows"):
-        return [data]
-    return []
+    if isinstance(resp, dict):
+        reasoning = str(resp.get("reasoning_content") or "")
+    else:
+        reasoning = str((getattr(resp, "additional_kwargs", {}) or {}).get("reasoning_content") or "")
+    if reasoning:
+        raise RuntimeError(
+            "模型只返回了 reasoning_content，max_tokens 可能被推理耗尽；"
+            "请调大 VISION_MAX_TOKENS"
+        )
+    raise RuntimeError("视觉模型返回空内容")
+
+
+_REPAIR_PROMPT = (
+    "你上一条回复无法被解析成表格。请只输出 JSON，不要 Markdown 表格、不要解释文字。\n"
+    '单表格式：{"columns": ["列名"], "rows": [{"列名": 值}]}\n'
+    '多表格式：{"tables": [{"columns": [...], "rows": [...]}]}\n'
+    '如果图中确实没有可用表格，输出 {"columns": [], "rows": []}。'
+)
+
+
+def _repair_enabled(repair_retry: bool | None) -> bool:
+    """解析修复重试开关。
+
+    不用 ``get_env_int``：它把 0 当非法值回退默认，``VISION_REPAIR_RETRY=0`` 反而失效。
+    """
+    if repair_retry is not None:
+        return bool(repair_retry)
+    raw = os.getenv("VISION_REPAIR_RETRY", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _retry_for_parseable_table(llm, messages: list, previous_text: str) -> str:
+    """解析失败时追问一次：把不可解析的回复回填，要求只输出 JSON。"""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    retry_messages = list(messages) + [
+        AIMessage(content=previous_text),
+        HumanMessage(content=_REPAIR_PROMPT),
+    ]
+    resp = llm.invoke(retry_messages)
+    return _vision_response_text(resp)
 
 
 # PDF 跨页续表合并：只在证据明确时合并，避免把「按月拆开的独立快照表」拼在一起
@@ -411,6 +454,7 @@ def extract_tables_from_image(
     hint: str = "",
     multi_table: bool = False,
     max_tables: int | None = None,
+    repair_retry: bool | None = None,
 ) -> list[pd.DataFrame]:
     """调用视觉模型抽取单张图片中的表格。
 
@@ -420,6 +464,8 @@ def extract_tables_from_image(
         hint: 用户分析意图
         multi_table: True 时要求逐张输出所有表；False 只取一张主表
         max_tables: 最多保留几张（默认 ``VISION_MAX_TABLES`` 或 5）
+        repair_retry: 模型输出解析不了时是否追问一次（默认 ``VISION_REPAIR_RETRY``=1）；
+            模型**明确**回答「没有表」时不追问
 
     Returns:
         DataFrame 列表（无表时为空列表）
@@ -429,29 +475,31 @@ def extract_tables_from_image(
     messages = build_multimodal_tabularize_messages(
         image_url, hint=hint, multi_table=multi_table
     )
-    resp = llm.invoke(messages)
-    content = resp["content"] if isinstance(resp, dict) else getattr(resp, "content", resp)
-    text = _content_to_text(content).strip()
+    text = _vision_response_text(llm.invoke(messages))
 
-    # 推理模型（reasoning_content）可能把 max_tokens 全用在思考上，最终 content 为空
-    if not text:
-        if isinstance(resp, dict):
-            reasoning = str(resp.get("reasoning_content") or "")
+    items = _parse_tables_payload(text)
+    # 模型输出成 Markdown/HTML/夹带解释时值得再问一次；明确空表说明模型认为没有数据
+    if not items and _repair_enabled(repair_retry) and not is_explicit_empty_table(text):
+        try:
+            repaired = _retry_for_parseable_table(llm, messages, text)
+        except Exception as e:  # 追问失败不影响原始报错路径
+            logger.warning("多模态表格解析修复重试失败", error=str(e))
         else:
-            reasoning = str((getattr(resp, "additional_kwargs", {}) or {}).get("reasoning_content") or "")
-        if reasoning:
-            raise RuntimeError(
-                "模型只返回了 reasoning_content，max_tokens 可能被推理耗尽；"
-                "请调大 VISION_MAX_TOKENS"
-            )
-        raise RuntimeError("视觉模型返回空内容")
+            repaired_items = _parse_tables_payload(repaired)
+            if repaired_items:
+                logger.info(
+                    "多模态表格解析修复重试成功",
+                    original_chars=len(text),
+                    repaired_chars=len(repaired),
+                )
+                items = repaired_items
 
     limit = max_tables or get_env_int("VISION_MAX_TABLES", _DEFAULT_MAX_TABLES)
     if not multi_table:
         # 单表模式即使模型返回了 tables 数组，也只保留第一张
         limit = 1
     dataframes: list[pd.DataFrame] = []
-    for item in _parse_tables_payload(text)[:limit]:
+    for item in items[:limit]:
         df = _to_dataframe(item)
         if df is not None and not df.empty:
             dataframes.append(df)

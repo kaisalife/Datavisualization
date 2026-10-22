@@ -32,7 +32,7 @@ from service.runtime.constants import get_vision_cache_dir
 
 logger = get_logger(__name__)
 
-_CACHE_VERSION = "v2"
+_CACHE_VERSION = "v3"
 _META_NAME = "meta.json"
 _DEFAULT_TTL_DAYS = 14
 

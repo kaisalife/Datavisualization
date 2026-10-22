@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -313,3 +314,263 @@ class TestRouterMultimodal:
         assert _is_degenerate(degen) is True
         assert _is_degenerate(good) is False
         assert _is_degenerate([]) is True
+
+
+# ---------------------------------------------------------------------------
+# 模型输出容错：Markdown / HTML / 包装 JSON
+# ---------------------------------------------------------------------------
+
+
+class TestTablePayload:
+    @staticmethod
+    def _parse(text: str):
+        from service.data_ingestion.readers.table_payload import parse_table_response
+
+        return parse_table_response(text)
+
+    def test_markdown_table_is_parsed(self):
+        payloads = self._parse(
+            "这是识别结果：\n"
+            "| 城市 | 销售额（万元） |\n"
+            "| --- | ---: |\n"
+            "| 北京 | 1200 |\n"
+            "| 上海 | 1100 |\n"
+        )
+        assert len(payloads) == 1
+        assert payloads[0]["columns"] == ["城市", "销售额（万元）"]
+        assert payloads[0]["rows"][0] == {"城市": "北京", "销售额（万元）": "1200"}
+        assert len(payloads[0]["rows"]) == 2
+
+    def test_markdown_tolerates_escaped_pipe_and_emphasis(self):
+        payloads = self._parse(
+            "| **名称** | `规格` | 数量 |\n"
+            "| :--- | :---: | --- |\n"
+            "| A \\| B | 10x20 | 3 |\n"
+        )
+        assert payloads[0]["columns"] == ["名称", "规格", "数量"]
+        assert payloads[0]["rows"][0]["名称"] == "A | B"
+
+    def test_multiple_markdown_tables(self):
+        payloads = self._parse(
+            "| 城市 | 销量 |\n| --- | --- |\n| 北京 | 1 |\n\n"
+            "| 产品 | 库存 |\n| --- | --- |\n| A | 30 |\n"
+        )
+        assert [p["columns"] for p in payloads] == [["城市", "销量"], ["产品", "库存"]]
+
+    def test_markdown_duplicate_headers_are_suffixed(self):
+        payloads = self._parse("| 值 | 值 |\n| --- | --- |\n| 1 | 2 |\n")
+        assert payloads[0]["columns"] == ["值", "值_2"]
+        assert payloads[0]["rows"][0] == {"值": "1", "值_2": "2"}
+
+    def test_html_table_with_merged_cells(self):
+        payloads = self._parse(
+            "<table>"
+            "<tr><th>城市</th><th>季度</th><th>销售额</th></tr>"
+            "<tr><td rowspan='2'>北京</td><td>Q1</td><td>100</td></tr>"
+            "<tr><td>Q2</td><td>120</td></tr>"
+            "</table>"
+        )
+        assert payloads[0]["columns"] == ["城市", "季度", "销售额"]
+        assert [row["城市"] for row in payloads[0]["rows"]] == ["北京", "北京"]
+        assert [row["销售额"] for row in payloads[0]["rows"]] == ["100", "120"]
+
+    def test_html_multilevel_header_is_joined_with_underscore(self):
+        payloads = self._parse(
+            "<table>"
+            "<tr><th colspan='2'>2023 年</th><th>备注</th></tr>"
+            "<tr><th>Q1</th><th>Q2</th><th></th></tr>"
+            "<tr><td>100</td><td>120</td><td>已审</td></tr>"
+            "</table>"
+        )
+        assert payloads[0]["columns"] == ["2023 年_Q1", "2023 年_Q2", "备注"]
+        assert payloads[0]["rows"][0]["2023 年_Q1"] == "100"
+
+    def test_json_wrapped_in_data_key(self):
+        payloads = self._parse(
+            '{"data": {"columns": ["城市"], "rows": [{"城市": "北京"}]}}'
+        )
+        assert payloads[0]["columns"] == ["城市"]
+
+    def test_rows_as_lists_are_supported(self):
+        payloads = self._parse('{"columns": ["城市", "销量"], "rows": [["北京", 12]]}')
+        assert payloads[0]["rows"][0] == {"城市": "北京", "销量": 12}
+
+    def test_explicit_empty_table_is_detected(self):
+        from service.data_ingestion.readers.table_payload import is_explicit_empty_table
+
+        assert is_explicit_empty_table('{"columns": [], "rows": []}') is True
+        assert is_explicit_empty_table('{"tables": []}') is True
+        assert is_explicit_empty_table('{"tables": [{"columns": ["a"], "rows": [{"a": 1}]}]}') is False
+        assert is_explicit_empty_table("抱歉，我无法识别") is False
+
+    def test_garbage_returns_no_payload(self):
+        assert self._parse("抱歉，这张图里没有表格。") == []
+
+    def test_markdown_response_flows_through_reader(self, png: Path):
+        """端到端：模型返回 Markdown 表格时，不再直接判定为"没有表"。"""
+        llm = _FakeLLM(
+            "| 城市 | 销量 |\n| --- | --- |\n| 北京 | 12 |\n| 上海 | 9 |\n"
+        )
+        tables = MultimodalReader.read(str(png), llm=llm)
+        assert tables[0].df["城市"].tolist() == ["北京", "上海"]
+        assert tables[0].df["销量"].tolist() == ["12", "9"]
+
+
+# ---------------------------------------------------------------------------
+# 视觉模型选择：请求级 model_type 必须生效
+# ---------------------------------------------------------------------------
+
+
+class TestVisionModelSelection:
+    @pytest.fixture(autouse=True)
+    def _isolated_env(self, monkeypatch):
+        import dotenv
+
+        # 根 .env 有 MODEL_NAME，会让"缺省值"用例不稳定；这里不读 .env
+        monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
+        monkeypatch.setenv("VISION_BASE_URL", "https://gw.example/v1")
+        monkeypatch.setenv("VISION_API_KEY", "test-key")
+        for name in ("VISION_MODEL_NAME", "MODEL_NAME"):
+            monkeypatch.delenv(name, raising=False)
+
+    @staticmethod
+    def _capture(monkeypatch) -> dict:
+        import langchain_openai
+
+        captured: dict = {}
+
+        class _Recorder:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr(langchain_openai, "ChatOpenAI", _Recorder)
+        return captured
+
+    def test_request_model_wins_over_env_model_name(self, monkeypatch):
+        from service.data_ingestion.readers.multimodal_reader import _load_env_llm
+
+        monkeypatch.setenv("MODEL_NAME", "glm-4.5")
+        captured = self._capture(monkeypatch)
+
+        _load_env_llm({"model": "deepseek-v4.1-flash"})
+
+        assert captured["model"] == "deepseek-v4.1-flash"
+
+    def test_vision_model_name_env_wins(self, monkeypatch):
+        from service.data_ingestion.readers.multimodal_reader import _load_env_llm
+
+        monkeypatch.setenv("VISION_MODEL_NAME", "qwen-vl-max")
+        captured = self._capture(monkeypatch)
+
+        _load_env_llm({"model": "deepseek-v4.1-flash"})
+
+        assert captured["model"] == "qwen-vl-max"
+
+    def test_model_name_env_is_fallback(self, monkeypatch):
+        from service.data_ingestion.readers.multimodal_reader import _load_env_llm
+
+        monkeypatch.setenv("MODEL_NAME", "glm-4.7")
+        captured = self._capture(monkeypatch)
+
+        _load_env_llm({})
+
+        assert captured["model"] == "glm-4.7"
+
+    def test_default_model_when_nothing_configured(self, monkeypatch):
+        from service.data_ingestion.readers.multimodal_reader import _load_env_llm
+
+        captured = self._capture(monkeypatch)
+
+        _load_env_llm(None)
+
+        assert captured["model"] == "glm-4.5v"
+
+    @pytest.mark.asyncio
+    async def test_ingest_data_source_forwards_model_type(self, monkeypatch, tmp_path: Path):
+        """生成链路：前端启用的模型名要进入 vision_cfg，而不是只剩 url/key。"""
+        import service.pipeline.data_source as ds
+
+        captured: dict = {}
+
+        async def fake_ingest(source):
+            captured["vision"] = source.options.get("vision")
+            return SimpleNamespace(
+                series_catalog=None, table_name="x", row_count=1, schema=[]
+            )
+
+        monkeypatch.setattr(ds, "ingest", fake_ingest)
+
+        class _Model:
+            file_paths = [str(tmp_path / "x.png")]
+            user_prompt = "看这个表"
+            model_url = "https://gw.example/v1"
+            model_api_key = "k"
+            model_type = "deepseek-v4.1-flash"
+            multi_table = False
+
+        await ds.ingest_data_source(_Model(), "x", [])
+
+        assert captured["vision"] == {
+            "base_url": "https://gw.example/v1",
+            "api_key": "k",
+            "model": "deepseek-v4.1-flash",
+        }
+
+
+# ---------------------------------------------------------------------------
+# 解析失败修复重试
+# ---------------------------------------------------------------------------
+
+
+class _SequencedLLM:
+    """按顺序返回多条内容的假模型（模拟第一次输出不可解析）。"""
+
+    def __init__(self, contents):
+        self.contents = list(contents)
+        self.calls = 0
+        self.messages: list = []
+
+    def invoke(self, messages):
+        self.messages.append(messages)
+        index = min(self.calls, len(self.contents) - 1)
+        self.calls += 1
+        return _FakeReply(self.contents[index])
+
+
+class TestRepairRetry:
+    def test_unparsable_then_valid_json_is_retried(self, png: Path):
+        llm = _SequencedLLM(
+            ["抱歉，我没能整理成表格。", _payload(["城市"], [{"城市": "北京"}])]
+        )
+
+        tables = MultimodalReader.read(str(png), llm=llm)
+
+        assert llm.calls == 2
+        assert tables[0].df["城市"].tolist() == ["北京"]
+        repair_text = llm.messages[1][-1].content
+        assert "只输出 JSON" in repair_text
+
+    def test_explicit_empty_table_is_not_retried(self, png: Path):
+        llm = _SequencedLLM(['{"columns": [], "rows": []}'])
+
+        with pytest.raises(ValueError, match="未从图片中提取到结构化表格"):
+            MultimodalReader.read(str(png), llm=llm)
+
+        assert llm.calls == 1
+
+    def test_retry_can_be_disabled_by_env(self, png: Path, monkeypatch):
+        monkeypatch.setenv("VISION_REPAIR_RETRY", "0")
+        llm = _SequencedLLM(
+            ["抱歉，我没能整理成表格。", _payload(["城市"], [{"城市": "北京"}])]
+        )
+
+        with pytest.raises(ValueError, match="未从图片中提取到结构化表格"):
+            MultimodalReader.read(str(png), llm=llm)
+        assert llm.calls == 1
+
+    def test_repair_failure_keeps_original_error(self, png: Path):
+        llm = _SequencedLLM(["抱歉，我没能整理成表格。", "还是不行"])
+
+        with pytest.raises(ValueError, match="未从图片中提取到结构化表格"):
+            MultimodalReader.read(str(png), llm=llm)
+        assert llm.calls == 2

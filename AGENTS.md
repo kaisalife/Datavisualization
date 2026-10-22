@@ -556,10 +556,23 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
 
 - **模型凭证优先级**：`VISION_BASE_URL`/`VISION_API_KEY` > 请求带来的 `model_url`/`model_api_key`
   > `.env` 的 `BASE_URL`/`API_KEY`。`.env` 目前是空模板，实际凭证由前端 `settings.json` 下发。
+- **模型名优先级**：`VISION_MODEL_NAME` > 请求里的 `model_type`（前端启用的模型）> `MODEL_NAME`
+  > `glm-4.5v`。**请求级 `model_type` 必须透传**：`api/data_api.py` 的预览与
+  `service/pipeline/data_source.py` 的生成链路都要放进 `vision_cfg["model"]`，
+  否则换厂商时会拿默认 `glm-4.5v` 打别家网关（模型不存在）。真机验证：opencode 网关 +
+  `model_type=deepseek-v4.1-flash` → 日志 `多模态表格化使用模型 model=deepseek-v4.1-flash`。
 - **列名保真**：有表头就逐字沿用（含单位），不得补全业务含义——真机踩过把 `2023 年` 写成
   `2023年销售额`（用户 prompt 里提到销售额）。评估里对列名做严格比对。
-- **模型名**：`VISION_MODEL_NAME`，缺省 `glm-4.5v`（智谱）。换厂商必须显式改（如 `gpt-4o`、`qwen-vl-max`），
-  否则会拿文本模型跑图片。
+- **输出解析容错**（`readers/table_payload.py`）：先 JSON（支持 `{"tables":[...]}`、
+  `{"data":{...}}` 包装、`rows` 为数组），再 Markdown 表格（含转义 `\|`、粗体/反引号），
+  最后 HTML `<table>`（colspan/rowspan 展开并用 `_` 拼多级表头、重复列名加 `_2`）。
+  视觉模型经常无视"只输出 JSON"，只认 JSON 会把整张表丢掉。
+- **解析修复重试**：输出非空但解析不出表时，追问一次（回填上一条回复 + "只输出 JSON"），
+  默认开启 `VISION_REPAIR_RETRY=1`；模型**明确**返回 `{"columns": [], "rows": []}` 时不重试。
+  注意不要用 `get_env_int` 读这个开关——它把 0 当非法值回退默认，`=0` 会失效。
+- **表格结构约定**（prompt 与 `ExcelReader` 对齐）：多级表头用 `_` 连接
+  （`2023 年_销售额`）；合并单元格向下/向右填充；合计/小计/平均行不输出（避免重复计量，
+  整表只有汇总值时保留）；图表截图按图例拆列、列名加"（估算）"。
 - **图片预处理**：Pillow 按 EXIF 转正、最大边 `VISION_MAX_IMAGE_SIDE`(2000)，截图类存 PNG，
   超过 4MB 再降级 JPEG；PDF 用 pypdfium2 渲染前 `VISION_MAX_PDF_PAGES`(5) 页。
   扫描版 PDF（无文字层）逐页走视觉抽表，命名 `_p1`/`_p2`；两页各一张表的真机用例已纳入评估。

@@ -51,6 +51,8 @@ async def ingest_data_source(model_, first_file_stem: str, agent_logs: list):
             vision_cfg = {
                 "base_url": getattr(model_, "model_url", None) or "",
                 "api_key": getattr(model_, "model_api_key", None) or "",
+                # 视觉模型默认跟随前端启用的模型；否则换厂商会拿 glm-4.5v 打别家网关
+                "model": getattr(model_, "model_type", None) or "",
             }
             if not any(vision_cfg.values()):
                 vision_cfg = None
