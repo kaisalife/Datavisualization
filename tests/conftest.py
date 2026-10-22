@@ -29,6 +29,10 @@ CORE_TEST_FILES = {
     "test_skill_injection.py",
     "test_series_shape.py",
     "test_series_split.py",
+    "test_data_view_spec.py",
+    "test_data_view_engine.py",
+    "test_data_view_cache.py",
+    "test_data_view_plugin.py",
 }
 
 
