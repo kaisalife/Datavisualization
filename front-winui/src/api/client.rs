@@ -154,6 +154,50 @@ impl ApiClient {
         }
     }
 
+    /// 单图二次优化：对已生成的图表按新指令重渲染（不重跑数据接入与规划）。
+    pub async fn optimize_chart(
+        &self,
+        request: &OptimizeChartRequest,
+    ) -> Result<GenerateChartResponse> {
+        let url = format!("{}/api/optimize-chart", self.base_url);
+
+        let mut form = reqwest::multipart::Form::new()
+            .text("chart_id", request.chart_id.clone())
+            .text("user_prompt", request.user_prompt.clone());
+
+        if let Some(config) = &request.config {
+            form = form.text("config", config.clone());
+        }
+        if let Some(model_url) = &request.model_url {
+            form = form.text("model_url", model_url.clone());
+        }
+        if let Some(model_type) = &request.model_type {
+            form = form.text("model_type", model_type.clone());
+        }
+        if let Some(model_api_key) = &request.model_api_key {
+            form = form.text("model_api_key", model_api_key.clone());
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("X-API-Key", &self.api_key)
+            .multipart(form)
+            .send()
+            .await
+            .context("网络请求失败（后端是否已启动？）")?;
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if status == StatusCode::ACCEPTED || status == StatusCode::OK {
+            serde_json::from_str::<GenerateChartResponse>(&body)
+                .context(format!("解析响应失败: {}", body))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
     /// 上传文件并获取数据预览（同步等待解析完成）。
     ///
     /// 图片 / PDF 会调用视觉模型抽表，耗时可能较长，因此单独放宽请求超时。

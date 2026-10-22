@@ -20,6 +20,7 @@ const state = {
   lastChartData: null,
   backendUrl: '',
   config: null,
+  optimizeTarget: null,   // 二次优化目标 {chartId, title}
 };
 
 // JS -> Rust 桥接

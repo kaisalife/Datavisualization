@@ -57,6 +57,23 @@ pub enum VizMode {
     Scientific,
 }
 
+/// 单图二次优化请求（对应后端 multipart form /api/optimize-chart）
+#[derive(Debug, Clone)]
+pub struct OptimizeChartRequest {
+    /// 被优化的图表 HTML 文件名
+    pub chart_id: String,
+    /// 优化指令（改标题 / 配色 / Top-N…）
+    pub user_prompt: String,
+    /// 图表配置（JSON string，可选）
+    pub config: Option<String>,
+    /// 模型 URL（可选，覆盖默认）
+    pub model_url: Option<String>,
+    /// 模型类型
+    pub model_type: Option<String>,
+    /// 模型 API Key
+    pub model_api_key: Option<String>,
+}
+
 impl VizMode {
     pub fn as_str(&self) -> &str {
         match self {

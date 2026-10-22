@@ -68,6 +68,11 @@
         <div class="chat-input-inner">
           <div class="chat-input-box" id="chatInputBox">
             <div class="file-chips" id="fileChips"></div>
+            <div class="optimize-chip" id="optimizeChip" style="display:none">
+              <span class="optimize-chip-ic">🛠️</span>
+              <span class="optimize-chip-label" id="optimizeChipLabel"></span>
+              <button class="optimize-chip-x" onclick="clearOptimizeTarget()" title="取消优化">×</button>
+            </div>
             <div class="chat-input-row">
               <textarea class="chat-input" id="prompt-input" placeholder="描述你想要的图表，按 Enter 发送..." rows="1" oninput="autoResize(this)" onkeydown="handleInputKey(event)"></textarea>
               <div class="input-actions">

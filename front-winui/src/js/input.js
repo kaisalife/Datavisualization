@@ -19,10 +19,43 @@ function toggleMultiTable() {
   if (chip) chip.classList.toggle('active', state.multiTable);
 }
 
+// ===== 二次优化：选中某张已生成的图，输入区进入优化模式 =====
+function setOptimizeTarget(chartId, title) {
+  state.optimizeTarget = { chartId: chartId, title: title || chartId };
+  renderOptimizeChip();
+  const input = document.getElementById('prompt-input');
+  if (input) {
+    input.value = '优化“' + (title || chartId) + '”：';
+    if (typeof autoResize === 'function') autoResize(input);
+    input.focus();
+    if (input.scrollIntoView) input.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function clearOptimizeTarget() {
+  state.optimizeTarget = null;
+  renderOptimizeChip();
+}
+
+function renderOptimizeChip() {
+  const chip = document.getElementById('optimizeChip');
+  const label = document.getElementById('optimizeChipLabel');
+  if (!chip || !label) return;
+  if (state.optimizeTarget) {
+    label.textContent = '优化：' + state.optimizeTarget.title + '（只改图形，不重跑数据）';
+    chip.style.display = 'flex';
+  } else {
+    chip.style.display = 'none';
+    label.textContent = '';
+  }
+}
+
 function sendPrompt() {
   const input = document.getElementById('prompt-input');
   const prompt = input.value.trim();
   if (!prompt || state.isGenerating) return;
+  const optimizeTarget = state.optimizeTarget;
+  if (optimizeTarget) clearOptimizeTarget();
   const filesToSend = state.files.filter(f => typeof f === 'string');
   // 保留本次输入的数据源，供“补充说明并重试”恢复，不必重新选文件
   state.lastFiles = state.files.map(f => (typeof f === 'object' ? { ...f } : f));
@@ -41,8 +74,11 @@ function sendPrompt() {
   }
   const content = document.createElement('div');
   content.className = 'msg-content';
+  const bubbleText = optimizeTarget
+    ? '🛠 优化《' + optimizeTarget.title + '》：' + prompt
+    : prompt;
   content.innerHTML = '<div class="msg-name">你</div><div class="msg-bubble"></div>' + fileHtml;
-  content.querySelector('.msg-bubble').textContent = prompt;
+  content.querySelector('.msg-bubble').textContent = bubbleText;
   userMsg.innerHTML = '<div class="msg-avatar user">K</div>';
   userMsg.appendChild(content);
   document.getElementById('chatInner').appendChild(userMsg);
@@ -52,7 +88,9 @@ function sendPrompt() {
   state.files = [];
   renderFileChips();
   // 发送到 Rust
-  if (state.mode === 'code') {
+  if (optimizeTarget) {
+    sendToRust('optimizeChart', { chartId: optimizeTarget.chartId, prompt: prompt });
+  } else if (state.mode === 'code') {
     sendToRust('completeCode', { prompt: prompt, files: filesToSend });
   } else {
     sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, multiTable: state.multiTable, dbConfig: state.selectedDb, apiConfig: state.apiConfig || null, config: state.config || null });
@@ -67,6 +105,8 @@ function newChat() {
   state.lastFiles = [];
   state.selectedDb = null;
   state.apiConfig = null;
+  state.optimizeTarget = null;
+  renderOptimizeChip();
   renderFileChips();
   sendToRust('newChat', {});
 }

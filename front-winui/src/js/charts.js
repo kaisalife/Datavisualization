@@ -9,6 +9,11 @@ function renderChartGrid(container, items) {
     const status = item.status || 'success';
     const badgeCls = status === 'success' ? 'badge-success' : 'badge-failed';
     const badgeTxt = status === 'success' ? '✓' : '✗';
+    // chartId：后端直接给；旧消息从预览路径解析（/api/chart/<文件名>）
+    if (!item.chartId && item.path) {
+      const m = String(item.path).match(/\/api\/chart\/(.+)$/);
+      if (m) { try { item.chartId = decodeURIComponent(m[1]); } catch (e) { item.chartId = m[1]; } }
+    }
     const thumb = document.createElement('div');
     thumb.className = 'chart-card-thumb';
     if (status === 'success' && item.path) {
@@ -30,6 +35,18 @@ function renderChartGrid(container, items) {
     badge.className = 'chart-card-badge ' + badgeCls;
     badge.textContent = badgeTxt;
     thumb.appendChild(badge);
+    // 二次优化入口：点击后输入区进入优化模式（只改图形实现，不重跑数据）
+    if (status === 'success' && item.chartId) {
+      const ob = document.createElement('button');
+      ob.className = 'optimize-btn';
+      ob.textContent = '🛠 优化';
+      ob.title = '基于这张图提出修改（标题/配色/TopN…），只跑优化 agent';
+      ob.onclick = function(ev) {
+        ev.stopPropagation();
+        setOptimizeTarget(item.chartId, item.title || item.chartId);
+      };
+      thumb.appendChild(ob);
+    }
     const info = document.createElement('div');
     info.className = 'chart-card-info';
     const typeEl = document.createElement('div');

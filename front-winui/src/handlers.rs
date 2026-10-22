@@ -18,6 +18,7 @@ impl MainModel {
         println!("[Bridge] 分发 action: {}", msg.action);
         match msg.action.as_str() {
             "sendPrompt" => self.handle_send_prompt(msg.data, sender),
+            "optimizeChart" => self.handle_optimize_chart(msg.data, sender),
             "cancelTask" => self.handle_cancel_task(sender),
             "newChat" => self.handle_new_chat(),
             "loadHistory" => self.handle_load_history(sender),
@@ -149,96 +150,181 @@ impl MainModel {
                         sender.post(MainMessage::AppendLog(format!("任务已提交: {}", task_id)));
                         sender.post(MainMessage::SetStatus("生成中...".to_string()));
                         sender.post(MainMessage::TaskStarted(task_id.clone()));
+                        Self::watch_task_flow(&client, &sender, &task_id).await;
+                    }
+                    Err(e) => {
+                        sender.post(MainMessage::TaskFailed(format!("提交失败: {}", e)));
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
 
-                        let ws_url = client.ws_task_url(&task_id);
-                        let api_key = client.api_key().to_string();
-                        let ws_task =
-                            tokio::task::spawn_blocking(move || {
-                                connect_websocket_blocking(&ws_url, &api_key)
+    /// 提交任务后的统一收尾：WS 等待优先，失败回退轮询，结果统一转 MainMessage。
+    ///
+    /// 图表生成与单图优化共用（响应结构一致：GenerateChartResponse → TaskCompleted）。
+    async fn watch_task_flow(
+        client: &api::client::ApiClient,
+        sender: &ComponentSender<MainModel>,
+        task_id: &str,
+    ) {
+        let ws_url = client.ws_task_url(task_id);
+        let api_key = client.api_key().to_string();
+        let ws_task = tokio::task::spawn_blocking(move || {
+            connect_websocket_blocking(&ws_url, &api_key)
+        });
+        let ws_result =
+            tokio::time::timeout(std::time::Duration::from_secs(300), ws_task).await;
+        let mut need_poll = false;
+        match ws_result {
+            Ok(Ok(Ok(notification))) => {
+                if notification.status == "success" {
+                    let (html_files, charts, codes, agent_logs, context_cards) = match notification.result {
+                        Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs, r.context_cards),
+                        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+                    };
+                    for log in agent_logs {
+                        sender.post(MainMessage::AppendLog(log));
+                    }
+                    sender.post(MainMessage::TaskCompleted {
+                        charts, html_files, codes, context_cards,
+                    });
+                } else if notification.status == "cancelled" {
+                    sender.post(MainMessage::TaskCancelled);
+                } else {
+                    let err = notification.error.unwrap_or_else(|| "任务失败".to_string());
+                    sender.post(MainMessage::TaskFailed(format!("任务失败: {}", err)));
+                }
+            }
+            Ok(Ok(Err(e))) => {
+                sender.post(MainMessage::AppendLog(format!(
+                    "WebSocket 等待失败，回退到轮询: {}",
+                    e
+                )));
+                need_poll = true;
+            }
+            Ok(Err(_)) => {
+                sender.post(MainMessage::AppendLog(
+                    "WebSocket 任务异常退出，回退到轮询".to_string(),
+                ));
+                need_poll = true;
+            }
+            Err(_) => {
+                sender.post(MainMessage::AppendLog(
+                    "WebSocket 等待超时（5 分钟），回退到轮询".to_string(),
+                ));
+                need_poll = true;
+            }
+        }
+        if need_poll {
+            match client
+                .poll_task_until_done(task_id, |elapsed| {
+                    let percent = ((elapsed as f64 / 300.0) * 100.0).min(95.0);
+                    sender.post(MainMessage::SetProgress {
+                        percent,
+                        text: format!("生成中... 已等待 {}s", elapsed),
+                    });
+                })
+                .await
+            {
+                Ok(task_resp) => {
+                    use api::types::TaskStatus;
+                    match task_resp.status {
+                        TaskStatus::Success => {
+                            let (html_files, charts, codes, agent_logs, context_cards) = match task_resp.result {
+                                Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs, r.context_cards),
+                                None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+                            };
+                            for log in agent_logs {
+                                sender.post(MainMessage::AppendLog(log));
+                            }
+                            sender.post(MainMessage::TaskCompleted {
+                                charts, html_files, codes, context_cards,
                             });
-                        let ws_result =
-                            tokio::time::timeout(std::time::Duration::from_secs(300), ws_task).await;
-                        let mut need_poll = false;
-                        match ws_result {
-                            Ok(Ok(Ok(notification))) => {
-                                if notification.status == "success" {
-                                    let (html_files, charts, codes, agent_logs, context_cards) = match notification.result {
-                                        Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs, r.context_cards),
-                                        None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-                                    };
-                                    for log in agent_logs {
-                                        sender.post(MainMessage::AppendLog(log));
-                                    }
-                                    sender.post(MainMessage::TaskCompleted {
-                                        charts, html_files, codes, context_cards,
-                                    });
-                                } else if notification.status == "cancelled" {
-                                    sender.post(MainMessage::TaskCancelled);
-                                } else {
-                                    let err = notification.error.unwrap_or_else(|| "任务失败".to_string());
-                                    sender.post(MainMessage::TaskFailed(format!("任务失败: {}", err)));
-                                }
-                            }
-                            Ok(Ok(Err(e))) => {
-                                sender.post(MainMessage::AppendLog(format!(
-                                    "WebSocket 等待失败，回退到轮询: {}",
-                                    e
-                                )));
-                                need_poll = true;
-                            }
-                            Ok(Err(_)) => {
-                                sender.post(MainMessage::AppendLog(
-                                    "WebSocket 任务异常退出，回退到轮询".to_string(),
-                                ));
-                                need_poll = true;
-                            }
-                            Err(_) => {
-                                sender.post(MainMessage::AppendLog(
-                                    "WebSocket 等待超时（5 分钟），回退到轮询".to_string(),
-                                ));
-                                need_poll = true;
-                            }
                         }
-                        if need_poll {
-                            match client
-                                .poll_task_until_done(&task_id, |elapsed| {
-                                    let percent = ((elapsed as f64 / 300.0) * 100.0).min(95.0);
-                                    sender.post(MainMessage::SetProgress {
-                                        percent,
-                                        text: format!("生成中... 已等待 {}s", elapsed),
-                                    });
-                                })
-                                .await
-                            {
-                                Ok(task_resp) => {
-                                    use api::types::TaskStatus;
-                                    match task_resp.status {
-                                        TaskStatus::Success => {
-                                            let (html_files, charts, codes, agent_logs, context_cards) = match task_resp.result {
-                                                Some(r) => (r.html_file_paths, r.charts, r.codes, r.agent_logs, r.context_cards),
-                                                None => (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-                                            };
-                                            for log in agent_logs {
-                                                sender.post(MainMessage::AppendLog(log));
-                                            }
-                                            sender.post(MainMessage::TaskCompleted {
-                                                charts, html_files, codes, context_cards,
-                                            });
-                                        }
-                                        TaskStatus::Cancelled => {
-                                            sender.post(MainMessage::TaskCancelled);
-                                        }
-                                        _ => {
-                                            let err = task_resp.error.unwrap_or_else(|| "任务失败".to_string());
-                                            sender.post(MainMessage::TaskFailed(format!("任务失败: {}", err)));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    sender.post(MainMessage::TaskFailed(format!("轮询失败: {}", e)));
-                                }
-                            }
+                        TaskStatus::Cancelled => {
+                            sender.post(MainMessage::TaskCancelled);
                         }
+                        _ => {
+                            let err = task_resp.error.unwrap_or_else(|| "任务失败".to_string());
+                            sender.post(MainMessage::TaskFailed(format!("任务失败: {}", err)));
+                        }
+                    }
+                }
+                Err(e) => {
+                    sender.post(MainMessage::TaskFailed(format!("轮询失败: {}", e)));
+                }
+            }
+        }
+    }
+
+    /// 单图二次优化：对选中图表按优化指令重渲染（不重跑数据接入与规划）
+    fn handle_optimize_chart(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        if self.is_generating {
+            return Ok(false);
+        }
+        let chart_id = data
+            .get("chartId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let prompt = data
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if chart_id.is_empty() {
+            self.js_add_message("assistant", "请先选择要优化的图表卡片。");
+            return Ok(true);
+        }
+        if prompt.trim().is_empty() {
+            self.js_add_message("assistant", "请输入优化指令。");
+            return Ok(true);
+        }
+
+        self.js_start_task_message(&format!(
+            "正在优化图表 {}，只调整图形实现，不重新读取数据与规划。",
+            chart_id
+        ));
+        self.is_generating = true;
+        self.js_set_generating(true);
+        self.js_set_status("优化中...");
+
+        let client = self.client.clone();
+        let sender = sender.clone();
+        let model_cfg = self.settings.active_model_config();
+        let (model_url, model_type, model_api_key) = match &model_cfg {
+            Some(m) => (Some(m.model_url.clone()), Some(m.model_type.clone()), Some(m.model_api_key.clone())),
+            None => (None, None, None),
+        };
+        let config = data
+            .get("config")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                let request = api::types::OptimizeChartRequest {
+                    chart_id,
+                    user_prompt: prompt,
+                    config,
+                    model_url,
+                    model_type,
+                    model_api_key,
+                };
+                match client.optimize_chart(&request).await {
+                    Ok(resp) => {
+                        let task_id = resp.task_id.clone();
+                        sender.post(MainMessage::AppendLog(format!("优化任务已提交: {}", task_id)));
+                        sender.post(MainMessage::TaskStarted(task_id.clone()));
+                        Self::watch_task_flow(&client, &sender, &task_id).await;
                     }
                     Err(e) => {
                         sender.post(MainMessage::TaskFailed(format!("提交失败: {}", e)));
@@ -945,6 +1031,7 @@ impl MainModel {
                     let filename = filename_from_path(hf);
                     serde_json::json!({
                         "chartType": ct,
+                        "chartId": filename.clone(),
                         "path": self.client.chart_url(&filename),
                         "title": filename,
                         "status": "success",
