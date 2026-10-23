@@ -91,11 +91,14 @@ class DataProfile:
             return None
         return self.series_catalog.by_id(series_id)
 
-    def to_prompt_dict(self) -> dict:
+    def to_prompt_dict(self, include_series: bool = True) -> dict:
         """生成给 LLM prompt 用的精简 dict (去掉内部路径等敏感信息)。
 
         schema 每列附 semantic_role；顶层 semantic_hints.detected_patterns
         供 designer prompt 做图表类型推荐。附 series 索引。
+
+        Args:
+            include_series: 调用方已单独传入 series_index 时置 False，避免重复。
         """
         schema_with_role = []
         for col in self.schema:
@@ -112,7 +115,9 @@ class DataProfile:
             "stats": self.stats,
             "semantic_hints": {"detected_patterns": self.detected_patterns},
             "series_index": (
-                self.series_catalog.to_index_prompt() if self.series_catalog else "(未提供)"
+                self.series_catalog.to_index_prompt()
+                if include_series and self.series_catalog
+                else "(未提供)"
             ),
             "related_tables": [
                 {"table_name": t.table_name, "schema": t.schema, "row_count": t.row_count}
@@ -120,8 +125,13 @@ class DataProfile:
             ],
         }
 
-    def to_prompt_str(self) -> str:
-        """生成给 LLM prompt 用的可读字符串。"""
+    def to_prompt_str(self, include_series: bool = True) -> str:
+        """生成给 LLM prompt 用的可读字符串。
+
+        Args:
+            include_series: 是否包含 series 索引。规划/生成 prompt 已单独提供
+                series 信息时置 False，避免同一索引重复占用 token。
+        """
         import json
 
         lines = [
@@ -138,7 +148,7 @@ class DataProfile:
         lines.append("Preview (前 10 行):")
         lines.append(json.dumps(self.preview, ensure_ascii=False, indent=2, default=str))
 
-        if self.series_catalog is not None and self.series_catalog.series:
+        if include_series and self.series_catalog is not None and self.series_catalog.series:
             lines.append("")
             lines.append("可用数据系列 (series):")
             lines.append(self.series_catalog.to_index_prompt())

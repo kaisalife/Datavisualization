@@ -1,5 +1,7 @@
+import asyncio
+
 from langchain_openai import ChatOpenAI
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.prompts import ChatPromptTemplate
@@ -25,13 +27,19 @@ class BaseAgent(Runnable):
         self.verbose = verbose
         self.client: Optional[MultiServerMCPClient] = None
         self.tools: Optional[List] = None
+        self._mcp_lock: Optional[asyncio.Lock] = None
         self.task_id: str = ""
         self.total_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
         self.signature = f"{self.model_name}@{self.model_url[:20]}..." if self.model_url else f"{self.model_name}@(no url)"
 
     @trace(category="init")
     async def initialize(self) -> None:
-        """Initialize MCP client and AI model"""
+        """初始化 LLM；MCP 工具按需加载。
+
+        核心 plan/chart/debug 路径都显式传入本地工具池，不需要 MCP；
+        而 MCP 工具发现会启动 stdio 子进程（实测约 4.4s），因此推迟到
+        ``arun_with_tools`` 未显式传 tools 时再加载。
+        """
         logger.info("agent_init_start", signature=self.signature)
 
         # Validate OpenAI configuration
@@ -42,31 +50,9 @@ class BaseAgent(Runnable):
         if not self.model_url:
             logger.warning("agent_model_url_missing", model=self.model_name)
 
-        try:
-            # Create MCP client
-            self.client = MultiServerMCPClient(self.mcp_config)
-
-            # Get tools
-            self.tools = await self.client.get_tools()
-            if not self.tools:
-                logger.warning("mcp_tools_empty", mcp_config=self.mcp_config)
-            else:
-                logger.info("mcp_tools_loaded", count=len(self.tools))
-                if self.verbose:
-                    try:
-                        tool_names = []
-                        for t in self.tools:
-                            name = getattr(t, "name", None) or getattr(t, "__name__", "<unknown>")
-                            tool_names.append(name)
-                        logger.info("mcp_tool_names", tools=tool_names)
-                    except Exception:
-                        pass
-        except Exception as e:
-            raise RuntimeError(
-                f"❌ Failed to initialize MCP client: {e}\n"
-                f"   Please ensure MCP services are running at the configured ports.\n"
-                f"   Run: python agent_tools/start_mcp_services.py"
-            )
+        # 每次初始化都重置 MCP 状态，避免复用 agent 时拿到上一轮的旧工具。
+        self.client = None
+        self.tools = None
 
         try:
             self.chat = ChatOpenAI(
@@ -81,6 +67,49 @@ class BaseAgent(Runnable):
         except Exception as e:
             raise RuntimeError(f"❌ Failed to initialize AI model: {e}")
         logger.info("agent_init_done", model=self.model_name, signature=self.signature)
+
+    async def _ensure_mcp_tools(self) -> List:
+        """按需加载 MCP 工具（无 MCP 配置时返回空列表）。
+
+        Returns:
+            MCP 工具列表；加载失败抛 RuntimeError，保持与旧 initialize 一致
+            的错误语义，但只在真正需要 MCP 工具时发生。
+        """
+        if self.tools is not None:
+            return self.tools
+        if not self.mcp_config:
+            self.tools = []
+            return self.tools
+
+        if self._mcp_lock is None:
+            self._mcp_lock = asyncio.Lock()
+        async with self._mcp_lock:
+            if self.tools is not None:
+                return self.tools
+            try:
+                self.client = MultiServerMCPClient(self.mcp_config)
+                self.tools = await self.client.get_tools()
+            except Exception as e:
+                raise RuntimeError(
+                    f"❌ Failed to initialize MCP client: {e}\n"
+                    f"   Please ensure MCP services are running at the configured ports.\n"
+                    f"   Run: python agent_tools/start_mcp_services.py"
+                ) from e
+
+            if not self.tools:
+                logger.warning("mcp_tools_empty", mcp_config=self.mcp_config)
+            else:
+                logger.info("mcp_tools_loaded", count=len(self.tools))
+                if self.verbose:
+                    try:
+                        tool_names = []
+                        for t in self.tools:
+                            name = getattr(t, "name", None) or getattr(t, "__name__", "<unknown>")
+                            tool_names.append(name)
+                        logger.info("mcp_tool_names", tools=tool_names)
+                    except Exception:
+                        pass
+        return self.tools
 
     def _track_usage(self, response) -> None:
         """提取 LLM 响应的 usage_metadata，累加并推送 token 事件到前端。"""
@@ -189,6 +218,7 @@ class BaseAgent(Runnable):
         max_iterations: int = 10,
         config: Optional[RunnableConfig] = None,
         tools: Optional[List] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         """工具调用循环（agent loop）。
 
@@ -203,8 +233,10 @@ class BaseAgent(Runnable):
             input: ChatPromptValue / dict / str / 消息列表
             max_iterations: 最大工具调用轮次，防止无限循环
             config: 可选运行时配置
-            tools: 可选工具列表（LangChain BaseTool），默认用 self.tools（MCP 工具）。
-                传入自定义工具池（如本地 ReadDataFileTool/RunCodeTool）可覆盖。
+            tools: 可选工具列表（LangChain BaseTool）。显式传入时直接使用（核心路径
+                都传本地工具池，不会加载 MCP）；为 None 时按需加载 MCP 工具。
+            should_stop: 每轮工具执行完后调用的提前结束判定。返回 True 时不再发起
+                下一轮 LLM 调用，直接返回当前 content 与日志（供 plan 达到目标数时使用）。
 
         Returns:
             {"content": 最终回答, "agent_logs": [...], "tool_calls": [...]}
@@ -213,7 +245,7 @@ class BaseAgent(Runnable):
 
         if self.chat is None:
             raise RuntimeError("Agent not initialized. Call initialize() first.")
-        use_tools = tools if tools is not None else self.tools
+        use_tools = tools if tools is not None else await self._ensure_mcp_tools()
         if not use_tools:
             # 无工具可用，降级为普通单次调用
             return await self.ainvoke(input, config)
@@ -264,6 +296,19 @@ class BaseAgent(Runnable):
                         tool_result = f"Error executing {tool_name}: {e}"
                 agent_logs.append(f"   -> {tool_result[:200]}")
                 messages.append(ToolMessage(content=tool_result, tool_call_id=tool_id or tool_name))
+
+            if should_stop is not None:
+                try:
+                    if should_stop():
+                        agent_logs.append("🎯 已满足目标，提前结束工具循环")
+                        return {
+                            "content": content,
+                            "agent_logs": agent_logs,
+                            "tool_calls": tool_calls_log,
+                        }
+                except Exception as e:
+                    # 判定回调是优化项，异常不应影响主流程，只记录后继续。
+                    agent_logs.append(f"⚠️ should_stop 判定异常，继续执行: {e}")
 
         agent_logs.append(f"⚠️ 达到最大轮次 {max_iterations}，强制停止")
         return {"content": content, "agent_logs": agent_logs, "tool_calls": tool_calls_log}

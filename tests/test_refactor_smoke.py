@@ -282,6 +282,70 @@ class TestCoreOptimizations:
         assert preview["x"].tolist() == [0, 1, 2, 3, 4]
 
     @pytest.mark.asyncio
+    async def test_plan_series_tools_read_bounded_rows(self, tmp_path, monkeypatch):
+        import agent.tools.read_table_sample_tool as sample_mod
+        import service.pipeline.plan_recipe_tools as recipe_mod
+        from agent.tools.base import ToolContext
+        from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
+
+        series = SemanticSeries(
+            series_id="s.月份",
+            name="月度销售额",
+            axis_kind="time_series",
+            row_label_column="月份",
+            column_label_columns=["销售额"],
+            data_path=str(tmp_path / "unused.parquet"),
+            source_table="t",
+        )
+        catalog = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])
+        limits = []
+
+        def _fake_load(_series, limit=None):
+            limits.append(limit)
+            return pd.DataFrame({"月份": ["1月"], "销售额": [100]})
+
+        monkeypatch.setattr(sample_mod, "load_series_df", _fake_load)
+        monkeypatch.setattr(recipe_mod, "load_series_df", _fake_load)
+        monkeypatch.setattr(recipe_mod, "recommend_chart_types", lambda *_a, **_k: {"shape": {}})
+
+        ctx = ToolContext(auto_confirm=True)
+        sample = await sample_mod.ReadSeriesSampleTool(catalog).call(
+            {"series_id": "s.月份", "limit": 7}, ctx
+        )
+        assert sample.success is True
+        assert limits[-1] == 7
+
+        detail = await recipe_mod.GetSeriesTool(catalog).call(
+            {"series_id": "s.月份"}, ctx
+        )
+        assert detail.success is True
+        assert limits[-1] == 5
+
+    def test_plan_validator_checks_metadata_not_full_table(self, tmp_path, monkeypatch):
+        import service.pipeline.plan_validator as validator
+        from service.data_ingestion.series.models import SemanticSeries
+
+        path = tmp_path / "series.parquet"
+        pd.DataFrame({"x": list(range(1000))}).to_parquet(path, index=False)
+        series = SemanticSeries(
+            series_id="s.x",
+            name="x",
+            axis_kind="generic",
+            row_label_column="x",
+            column_label_columns=[],
+            data_path=str(path),
+            source_table="t",
+        )
+
+        def _no_full_read(*_args, **_kwargs):
+            raise AssertionError("规划校验不应整表 read_parquet")
+
+        monkeypatch.setattr(validator, "load_series_df", _no_full_read)
+        ok, reason = validator._series_is_readable(series)
+        assert ok is True
+        assert reason == ""
+
+    @pytest.mark.asyncio
     async def test_ingest_files_routes_concurrently(self, tmp_path, monkeypatch):
         import threading
         import time

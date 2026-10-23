@@ -22,6 +22,7 @@ CORE_TEST_FILES = {
     "test_refactor_smoke.py",
     "test_plan_contract.py",
     "test_agent_plan_fallback.py",
+    "test_agent_loop.py",
     "test_chart_selection.py",
     "test_chart_data_check.py",
     "test_generation_validation.py",

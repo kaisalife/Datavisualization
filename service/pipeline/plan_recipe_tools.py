@@ -134,7 +134,7 @@ class GetSeriesTool(Tool):
         if series is None:
             return ToolOutput(success=False, error=f"series 不存在: {series_id}")
         try:
-            df = load_series_df(series).head(5)
+            df = load_series_df(series, limit=5)
         except Exception as e:
             return ToolOutput(success=False, error=f"series 加载失败: {e}")
 

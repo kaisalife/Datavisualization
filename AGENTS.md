@@ -180,6 +180,28 @@ $env:BACKEND_URL="http://localhost:5000"
 `agent_tools/tool_run_code.py` 跑在独立 MCP 进程里（stdio）。`configs/default_config.json` 里的
 `"command": "python"` 会被 `service/runtime/config.py` 自动替换为当前解释器绝对路径。
 
+## Agent / 规划阶段过程优化
+
+- **MCP 工具惰性加载**：`BaseAgent.initialize()` 只创建 `ChatOpenAI`，不启动 MCP 子进程；
+  只有 `arun_with_tools(..., tools=None)` 才调用 `_ensure_mcp_tools()`。plan/chart/debug/optimize
+  都显式传本地工具池，因此普通任务不再为 MCP 工具发现付约 4.4s。不要把 MCP 加载移回
+  `initialize()`；MCP 服务不可用时只在实际使用 MCP 工具时抛错，不阻塞图表任务。
+- **plan 达到目标即停**：用户明确“画 N 张图”时，`run_plan_stage` 把 `should_stop` 传给
+  `arun_with_tools`；一轮 tool_calls 全部执行完后若 `len(state.plans) >= N` 就提前返回，
+  不再多跑一轮“总结”LLM。未明确数量时 `should_stop=None`，保持原行为。
+- **RAG 加载与规划并行**：`agent_pipeline` 在进入 plan 前用 `asyncio.create_task` 把
+  `get_default_retriever()` 放进线程加载，plan 结束后再 await；首次任务不再在图表阶段串行等
+  约 8s 的模型加载。加载失败只记 warning，图表继续无 RAG 生成。
+- **规划 prompt 不重复 series 索引**：规划/生成阶段调用 `profile.to_prompt_str(include_series=False)`
+  或 `to_prompt_dict(include_series=False)`，因为 `series_index` 已单独传入；默认参数仍保留原行为。
+- **规划期禁止整表读取**：`get_series` / `preview_series` 用 `load_series_df(series, limit=...)`；
+  `plan_validator._series_is_readable()` 只读 parquet 元数据校验（失败才回退读 1 行），
+  不要为了看 5 行或校验列名加载整个 parquet。
+- 回归：`tests/test_agent_loop.py`（MCP 惰性 / should_stop）、
+  `tests/test_agent_plan_fallback.py::test_plan_stage_stops_after_explicit_target`、
+  `tests/test_plan_contract.py::test_data_profile_prompt_can_exclude_series_index`、
+  `tests/test_refactor_smoke.py` 的规划工具/校验有界读取用例。
+
 ## RAG 知识库（Qwen3-Embedding-0.6B）
 
 - 模型放在 `D:/myLangchain/QwenEmbedding`（`QWEN_EMBEDDING_PATH`），Qwen3-Embedding-0.6B，

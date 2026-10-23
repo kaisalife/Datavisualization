@@ -16,6 +16,7 @@ from service.observability import get_logger
 from service.pipeline.chart_recommend import (
     build_deterministic_plans,
     diversify_plans,
+    requested_chart_count,
 )
 from service.pipeline.plan_state import PlanSessionState
 from service.pipeline.plan_toolpool import build_plan_tool_pool
@@ -37,13 +38,17 @@ async def _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs: li
     canonical_dataset = "(未提供)"
     if profile is not None:
         try:
-            canonical_dataset = json.dumps(profile.to_prompt_dict(), ensure_ascii=False, indent=2)
+            canonical_dataset = json.dumps(
+                profile.to_prompt_dict(include_series=False),
+                ensure_ascii=False,
+                indent=2,
+            )
         except Exception as e:
             agent_logs.append(f"⚠️ DataProfile 序列化失败: {e}")
 
     plan_input = {
         "data_file_path": ", ".join(model_.file_paths or []) if model_.file_paths else "",
-        "data_preview": profile.to_prompt_str() if profile else "",
+        "data_preview": profile.to_prompt_str(include_series=False) if profile else "",
         "data_interface_info": "",
         "canonical_dataset": canonical_dataset,
         "series_index": catalog.to_index_prompt() if catalog is not None else "(未提供)",
@@ -144,9 +149,14 @@ async def run_plan_stage(
         )
 
     state = _new_state()
+    # 用户明确说“画两个图/三张图”时，提交够数量就不再多跑一轮“总结”LLM；
+    # 未明确数量时保持原行为，避免过早结束。
+    plan_target = requested_chart_count(model_.user_prompt)
+    if plan_target is not None:
+        agent_logs.append(f"🎯 plan 目标数量: {plan_target}")
     plan_message = build_planning_prompt().invoke({
         "user_prompt": model_.user_prompt,
-        "profile_str": profile.to_prompt_str() if profile else "(未提供)",
+        "profile_str": profile.to_prompt_str(include_series=False) if profile else "(未提供)",
         "series_index": catalog.to_index_prompt(),
         "skill_index": get_skill_registry().index_text(),
     })
@@ -160,7 +170,14 @@ async def run_plan_stage(
             tools = build_plan_tool_pool(state)
             with stage_timer.stage(task_id, "plan", "图表规划(agent)"):
                 result = await chat.arun_with_tools(
-                    plan_message, max_iterations=PLAN_MAX_ITERATIONS, tools=tools
+                    plan_message,
+                    max_iterations=PLAN_MAX_ITERATIONS,
+                    tools=tools,
+                    should_stop=(
+                        None
+                        if plan_target is None
+                        else lambda: len(state.plans) >= plan_target
+                    ),
                 )
             logs = result.get("agent_logs", []) if isinstance(result, dict) else []
             for line in logs:

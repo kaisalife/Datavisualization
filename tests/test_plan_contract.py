@@ -15,6 +15,7 @@ import pytest
 from Entity.plan_models import parse_plans
 from prompts.agent_planning_prompt import build_planning_prompt
 from prompts.chart_designer_prompt import get_agent_chart_designer_prompt
+from service.data_ingestion.models import DataProfile
 from service.data_ingestion.series.models import SemanticSeries, SeriesCatalog
 from service.pipeline.plan_validator import ensure_plan_contract, validate_one_plan
 
@@ -38,6 +39,30 @@ def _series(tmp_path: Path) -> SemanticSeries:
         source_table="sales",
         description="测试 series",
     )
+
+
+def test_data_profile_prompt_can_exclude_series_index(tmp_path: Path):
+    series = _series(tmp_path)
+    catalog = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])
+    profile = DataProfile(
+        table_name="sales",
+        source_kind="file",
+        source_path="sales.csv",
+        schema=[{"name": "月份", "type": "VARCHAR"}, {"name": "销售额", "type": "BIGINT"}],
+        row_count=3,
+        preview=[{"月份": "1月", "销售额": 100}],
+        stats={},
+        series_catalog=catalog,
+    )
+    index = catalog.to_index_prompt()
+
+    with_series = profile.to_prompt_str()
+    without_series = profile.to_prompt_str(include_series=False)
+
+    assert index in with_series
+    assert index not in without_series
+    assert profile.to_prompt_dict()["series_index"] == index
+    assert profile.to_prompt_dict(include_series=False)["series_index"] == "(未提供)"
 
 
 def _plan(series_id: str = "sales.月度", **overrides) -> dict:

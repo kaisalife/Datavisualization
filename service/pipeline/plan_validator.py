@@ -131,6 +131,31 @@ def _primary_series(catalog: SeriesCatalog | None):
     return catalog.series[0]
 
 
+def _series_is_readable(series) -> tuple[bool, str]:
+    """用 parquet 元数据校验 series 可读，避免规划期加载整表。
+
+    Returns:
+        (是否可读, 失败原因)。元数据读取失败时退回有界读取一行，兼容非
+        parquet 或旧格式文件。
+    """
+    data_path = str(getattr(series, "data_path", "") or "")
+    if not data_path:
+        return False, "缺少数据文件"
+    try:
+        import pyarrow.parquet as pq
+
+        schema = pq.ParquetFile(data_path).schema_arrow
+        if not schema.names:
+            return False, "parquet 没有列"
+        return True, ""
+    except Exception as metadata_error:
+        try:
+            load_series_df(series, limit=1)
+            return True, ""
+        except Exception as read_error:
+            return False, str(read_error or metadata_error)
+
+
 def _resolve_series(plan: dict, catalog: SeriesCatalog | None, agent_logs: list,
                     tried: dict | None = None, report: dict | None = None) -> dict:
     """校验并解析 plan 的 series_id，必要时降级主 series。
@@ -166,13 +191,11 @@ def _resolve_series(plan: dict, catalog: SeriesCatalog | None, agent_logs: list,
 
     if series_id in tried:
         return {"ok": tried[series_id], "degraded": not tried[series_id], "reason": ""}
-    try:
-        load_series_df(series)
-        tried[series_id] = True
+    readable, reason = _series_is_readable(series)
+    tried[series_id] = readable
+    if readable:
         return {"ok": True, "degraded": False, "reason": ""}
-    except Exception as e:
-        tried[series_id] = False
-        return _degrade(f"series 加载失败: {e}")
+    return _degrade(f"series 加载失败: {reason}")
 
 
 def validate_one_plan(plan: dict, catalog: SeriesCatalog | None, profile, agent_logs: list,

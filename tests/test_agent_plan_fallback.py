@@ -86,8 +86,8 @@ def _many_measure_series(tmp_path: Path) -> SemanticSeries:
 
 def _profile() -> SimpleNamespace:
     return SimpleNamespace(
-        to_prompt_dict=lambda: {"table_name": "单列数值"},
-        to_prompt_str=lambda: "单列数值：销售额",
+        to_prompt_dict=lambda **kwargs: {"table_name": "单列数值"},
+        to_prompt_str=lambda **kwargs: "单列数值：销售额",
     )
 
 
@@ -97,6 +97,59 @@ class _FailingChat:
 
     async def ainvoke(self, *args, **kwargs):
         raise RuntimeError("429 Endpoint is unavailable")
+
+
+@pytest.mark.asyncio
+async def test_plan_stage_stops_after_explicit_target(tmp_path: Path, monkeypatch):
+    """用户明确要 1 张图时，should_stop 在已有 1 个 plan 后返回 True。"""
+    import service.pipeline.agent_plan_stage as stage
+
+    series = _series(tmp_path)
+    catalog = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])
+    model_ = SimpleNamespace(
+        user_prompt="画一张图",
+        file_paths=[],
+        config=None,
+        mcp_prompt="",
+        skill_prompt="",
+    )
+
+    class _StopChat:
+        should_stop = None
+
+        async def arun_with_tools(self, *args, **kwargs):
+            self.should_stop = kwargs.get("should_stop")
+            return {"agent_logs": []}
+
+    class _State:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            self.plans = [{"plan_id": "1"}]
+            self.dropped = []
+
+        def plan_count(self):
+            return len(self.plans) + len(self.dropped)
+
+    monkeypatch.setattr(stage, "requested_chart_count", lambda _prompt: 1)
+    monkeypatch.setattr(stage, "PlanSessionState", _State)
+    monkeypatch.setattr(stage, "build_plan_tool_pool", lambda _state: [])
+    monkeypatch.setattr(stage, "diversify_plans", lambda plans, *args, **kwargs: plans)
+    monkeypatch.setattr(stage, "_persist_plans", lambda *args, **kwargs: None)
+
+    chat = _StopChat()
+    plans = await run_plan_stage(
+        chat,
+        model_=model_,
+        profile=_profile(),
+        output_folder=tmp_path,
+        task_id=None,
+        catalog=catalog,
+        agent_logs=[],
+    )
+
+    assert plans == [{"plan_id": "1"}]
+    assert callable(chat.should_stop)
+    assert chat.should_stop() is True
 
 
 @pytest.mark.asyncio

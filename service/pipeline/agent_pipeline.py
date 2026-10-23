@@ -105,6 +105,21 @@ async def run_agent_pipeline(
     tools = build_agent_tool_pool(output_folder, charts_folder)
     agent_logs.append(f"🔧 已装载工具: {[t.name for t in tools]}")
 
+    # RAG 模型加载（约 8s，首次任务）与规划并行：规划等 LLM 的时间足够覆盖加载，
+    # 不再让图表阶段先干等。加载失败只记 warning，图表继续无 RAG 生成。
+    async def _load_retriever_async():
+        def _sync():
+            from RAG.RAG_main import get_default_retriever
+            return get_default_retriever()
+
+        try:
+            return await asyncio.to_thread(_sync)
+        except Exception as exc:
+            agent_logs.append(f"⚠️ RAG 初始化失败: {exc}")
+            return None
+
+    rag_task = asyncio.create_task(_load_retriever_async())
+
     # ==== 阶段 1: 图表规划（已拆至 agent_plan_stage.py：prompt 注入 series 索引 + 确定性校验）====
     from service.pipeline.agent_plan_stage import run_plan_stage
     plans = await run_plan_stage(
@@ -121,17 +136,12 @@ async def run_agent_pipeline(
     from service.pipeline.chart_generator import generate_single_chart
     from prompts.agent_prompt import get_agent_generate_chart_prompt, get_agent_debug_chart_prompt
     from service.runtime.query_engine import QueryEngine
-    from RAG.RAG_main import get_default_retriever
 
     engine = QueryEngine(chat_model=chat, model_name=model_.model_type or "")
     generate_prompt = get_agent_generate_chart_prompt()
     debug_prompt = get_agent_debug_chart_prompt()
 
-    try:
-        rag_retriever = get_default_retriever()
-    except Exception as e:
-        agent_logs.append(f"⚠️ RAG 初始化失败: {e}")
-        rag_retriever = None
+    rag_retriever = await rag_task
 
     dataset_summary_json = "(未提供)"
     if profile is not None:
