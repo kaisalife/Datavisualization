@@ -25,10 +25,7 @@ planning_system_prompt = """
 - 技能是通用指导，不是硬编码规则；最终仍以真实数据和用户需求为准。
 
 ## 工作流程
-1. 先 list_series 浏览可用数据系列
-2. 分析数据形态与用户需求；用 get_series / preview_series 确认关键列与取值
-3. 为每个图表 create_plan 提交一个 plan，直到覆盖用户需求
-4. 全部提交后给出最终回答（N 个 plan 摘要），不要在未提交完时提前结束
+{workflow_steps}
 
 ## plan schema（create_plan 的 plan 字段）
 {{
@@ -94,6 +91,12 @@ series 索引已给出语义类型、时间点/类别数、指标数和建议类
 """
 
 
+DEFAULT_WORKFLOW_STEPS = """1. 先 list_series 浏览可用数据系列
+2. 分析数据形态与用户需求；用 get_series / preview_series 确认关键列与取值
+3. 为每个图表 create_plan 提交一个 plan，直到覆盖用户需求
+4. 全部提交后给出最终回答（N 个 plan 摘要），不要在未提交完时提前结束"""
+
+
 def build_planning_prompt() -> ChatPromptTemplate:
     """规划 agent 的完整 prompt（system + 初始 human 消息）。"""
     return ChatPromptTemplate([
@@ -109,4 +112,5 @@ def build_planning_prompt() -> ChatPromptTemplate:
         profile_str="(未提供)",
         series_index="(未提供)",
         skill_index="(无技能)",
+        workflow_steps=DEFAULT_WORKFLOW_STEPS,
     )

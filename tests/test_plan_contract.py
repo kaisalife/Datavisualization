@@ -41,6 +41,20 @@ def _series(tmp_path: Path) -> SemanticSeries:
     )
 
 
+def test_small_catalog_uses_compact_plan_workflow(tmp_path: Path):
+    from service.pipeline.agent_plan_stage import _plan_workflow_steps
+
+    series = _series(tmp_path)
+    one = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])
+    many = SeriesCatalog(datasets_dir=str(tmp_path), series=[series, series, series])
+
+    hint = _plan_workflow_steps(one)
+    assert hint is not None
+    assert "无需再调用 list_series" in hint
+    assert _plan_workflow_steps(many) is None
+    assert _plan_workflow_steps(None) is None
+
+
 def test_data_profile_prompt_can_exclude_series_index(tmp_path: Path):
     series = _series(tmp_path)
     catalog = SeriesCatalog(datasets_dir=str(tmp_path), series=[series])

@@ -197,9 +197,18 @@ $env:BACKEND_URL="http://localhost:5000"
 - **规划期禁止整表读取**：`get_series` / `preview_series` 用 `load_series_df(series, limit=...)`；
   `plan_validator._series_is_readable()` 只读 parquet 元数据校验（失败才回退读 1 行），
   不要为了看 5 行或校验列名加载整个 parquet。
+- **小目录跳过 list_series**：series ≤2 时 `_plan_workflow_steps()` 把规划 prompt 的工作流
+  改成“索引已列出全部系列，直接 preview/create_plan”，省掉一轮必然重复的浏览；多系列仍走
+  默认 `list_series` 流程。真机 1 系列两图 plan 从 18s 降到约 16s（且少一次 list 轮次）。
+- **生成阶段复用 profile 文本**：`run_agent_pipeline` 只调用一次 `profile.to_prompt_str()`，
+  所有计划共用同一份 `data_preview`，避免多图重复序列化 series 索引。
+- **RAG 查询缓存**：`chart_rag._cached_retrieve()` 按 `(retriever, query)` 缓存成功检索结果
+  （TTL `CHART_RAG_CACHE_TTL` 默认 600s，LRU `CHART_RAG_CACHE_MAX` 默认 128；检索异常不缓存）。
+  同类型多图第二次检索约 0.74s → 0.006s。知识库增量同步后等 TTL 过期或重启服务。
 - 回归：`tests/test_agent_loop.py`（MCP 惰性 / should_stop）、
   `tests/test_agent_plan_fallback.py::test_plan_stage_stops_after_explicit_target`、
-  `tests/test_plan_contract.py::test_data_profile_prompt_can_exclude_series_index`、
+  `tests/test_plan_contract.py::test_data_profile_prompt_can_exclude_series_index` /
+  `test_small_catalog_uses_compact_plan_workflow`、`tests/test_chart_rag.py` 的缓存用例、
   `tests/test_refactor_smoke.py` 的规划工具/校验有界读取用例。
 
 ## RAG 知识库（Qwen3-Embedding-0.6B）

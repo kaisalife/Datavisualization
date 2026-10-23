@@ -124,6 +124,20 @@ def test_filter_docs_prefers_matching_chart_type_and_falls_back():
     assert [d.page_content for d in fallback] == ["bar", "line"]
 
 
+def test_retrieval_reuses_cached_results_for_same_query():
+    retriever = _FakeRetriever([
+        SimpleNamespace(page_content="line-a", metadata={"source": "RAG_Data/Line/a.md"}),
+    ])
+
+    first = retrieve_reference_docs(retriever, {"chart_type": "Line"})
+    calls_after_first = len(retriever.queries)
+    second = retrieve_reference_docs(retriever, {"chart_type": "Line"})
+
+    assert first == second == "line-a"
+    assert len(retriever.queries) == calls_after_first
+    assert calls_after_first == 1
+
+
 def test_retrieve_uses_filtered_docs_and_dedupes():
     retriever = _FakeRetriever([
         SimpleNamespace(page_content="line-a", metadata={"source": "RAG_Data/Line/a.md"}),

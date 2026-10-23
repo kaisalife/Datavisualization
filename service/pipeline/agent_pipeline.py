@@ -156,6 +156,8 @@ async def run_agent_pipeline(
             pass
 
     user_chart_config_json = (model_.config or "(未提供)") if model_.config else "(未提供)"
+    # 同一任务的所有 plan 共用一份 profile 文本，避免每张图重复序列化 series 索引。
+    data_preview_text = profile.to_prompt_str() if profile else ""
 
     # 若 plan 未产出，构造默认 plan（agent 自主）
     if not plans:
@@ -185,7 +187,7 @@ async def run_agent_pipeline(
                     chat=chat,
                     plan=plan_item,
                     data_file_path=", ".join(file_paths) if file_paths else "",
-                    data_preview=profile.to_prompt_str() if profile else "",
+                    data_preview=data_preview_text,
                     output_folder=output_folder,
                     engine=engine,
                     generate_prompt=generate_prompt,

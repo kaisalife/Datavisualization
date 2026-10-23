@@ -8,7 +8,11 @@
 """
 from __future__ import annotations
 
+import os
+import time
+from collections import OrderedDict
 from pathlib import Path
+from threading import Lock
 
 try:
     from Entity.plan_models import plan_get
@@ -18,6 +22,75 @@ except ImportError:
 from service.observability import get_logger
 
 logger = get_logger(__name__)
+
+
+def _env_float(name: str, default: float) -> float:
+    """读取浮点环境变量；非法值回退默认值。"""
+    try:
+        return float(os.getenv(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+# 同一 query 的检索结果在进程内复用：多张图同类型时查询完全一致，
+# embedding + Chroma 查询约 0.8s，缓存可省掉重复检索。
+# TTL 默认 10 分钟，避免知识库增量同步后长时间看不到新文档。
+_CACHE_TTL = max(0.0, _env_float("CHART_RAG_CACHE_TTL", 600.0))
+_CACHE_MAX = max(0, int(_env_float("CHART_RAG_CACHE_MAX", 128)))
+_CACHE: "OrderedDict[tuple, tuple[float, list]]" = OrderedDict()
+_CACHE_LOCK = Lock()
+
+
+def _cache_get(key: tuple):
+    """读取未过期的缓存；过期条目顺手删除。"""
+    if _CACHE_TTL <= 0 or _CACHE_MAX <= 0:
+        return None
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        item = _CACHE.get(key)
+        if item is None:
+            return None
+        created_at, docs = item
+        if now - created_at > _CACHE_TTL:
+            _CACHE.pop(key, None)
+            return None
+        _CACHE.move_to_end(key)
+        return docs
+
+
+def _cache_set(key: tuple, docs: list) -> None:
+    """写入缓存并按 LRU 淘汰；只缓存成功返回的结果。"""
+    if _CACHE_TTL <= 0 or _CACHE_MAX <= 0:
+        return
+    with _CACHE_LOCK:
+        _CACHE[key] = (time.monotonic(), docs)
+        _CACHE.move_to_end(key)
+        while len(_CACHE) > _CACHE_MAX:
+            _CACHE.popitem(last=False)
+
+
+def _cached_retrieve(retriever, query: str) -> list:
+    """带 TTL/LRU 的检索入口；检索异常原样抛出，由调用方降级。
+
+    缓存键是 ``(retriever, query)``：检索器是进程内单例，不同测试/重建的
+    检索器不会互相命中。检索器不可哈希时退回 ``id``。
+    """
+    try:
+        hash(retriever)
+    except TypeError:
+        retriever_key = id(retriever)
+    else:
+        retriever_key = retriever
+    key = (retriever_key, query)
+
+    cached = _cache_get(key)
+    if cached is not None:
+        logger.debug("RAG 检索命中缓存", query=query)
+        return cached
+
+    docs = retriever.retrieve(query) or []
+    _cache_set(key, docs)
+    return docs
 
 # 图表类型 -> 检索查询（中文功能词 + 英文类型名，匹配知识库元信息）
 _CHART_QUERIES = {
@@ -255,7 +328,7 @@ def _retrieve_feature_docs(retriever, plan: dict, max_docs: int = _MAX_FEATURE_D
     picked: list = []
     for query in plan_feature_queries(plan):
         try:
-            docs = retriever.retrieve(query) or []
+            docs = _cached_retrieve(retriever, query)
         except Exception as e:
             logger.warning("Feature 文档检索失败", query=query, error=str(e))
             break
@@ -289,7 +362,7 @@ def retrieve_reference_docs(retriever, plan: dict, max_docs: int = _DEFAULT_MAX_
 
     logger.info("正在检索相关文档", search_query=search_query, chart_type=chart_type)
     try:
-        docs = retriever.retrieve(search_query)
+        docs = _cached_retrieve(retriever, search_query)
         if not docs:
             logger.warning("未找到相关示例", chart_type=chart_type)
             return ""

@@ -27,6 +27,29 @@ logger = get_logger(__name__)
 PLAN_MAX_ITERATIONS = 20
 
 
+def _plan_workflow_steps(catalog) -> str | None:
+    """小目录时返回精简工作流，省掉必然无收获的 list_series 轮次。
+
+    只在 series 数量很少（<=2）时启用：此时索引已完整列出全部系列，
+    再调用 list_series 只是重复上下文。多系列/宽表仍走默认流程。
+    """
+    if catalog is None:
+        return None
+    try:
+        count = len(catalog.series or [])
+    except Exception:
+        return None
+    if count < 1 or count > 2:
+        return None
+    return (
+        f"1. 下方 series 索引已列出全部 {count} 条可用系列，无需再调用 list_series\n"
+        "2. 直接从索引读取行/列标签与数据形态；只有列名或取值不确定时，"
+        "最多用 preview_series 抽样一次\n"
+        "3. 为每个图表 create_plan 提交一个 plan，直到覆盖用户需求\n"
+        "4. 全部提交后给出最终回答（N 个 plan 摘要），不要在未提交完时提前结束"
+    )
+
+
 # ---------------------------------------------------------------- 旧路径（回退）
 async def _legacy_plan_via_prompt(chat, model_, profile, catalog, agent_logs: list) -> list:
     """旧规划路径：一次 LLM 调用产出 plans JSON（agent 会话不可用时的回退）。"""
@@ -154,12 +177,16 @@ async def run_plan_stage(
     plan_target = requested_chart_count(model_.user_prompt)
     if plan_target is not None:
         agent_logs.append(f"🎯 plan 目标数量: {plan_target}")
-    plan_message = build_planning_prompt().invoke({
+    workflow_steps = _plan_workflow_steps(catalog)
+    plan_prompt_vars = {
         "user_prompt": model_.user_prompt,
         "profile_str": profile.to_prompt_str(include_series=False) if profile else "(未提供)",
         "series_index": catalog.to_index_prompt(),
         "skill_index": get_skill_registry().index_text(),
-    })
+    }
+    if workflow_steps:
+        plan_prompt_vars["workflow_steps"] = workflow_steps
+    plan_message = build_planning_prompt().invoke(plan_prompt_vars)
 
     # 网关偶发 400（tool_calls 未被 tool 消息回填 / reasoning_content 未回传）
     # 会让整段会话作废；先换新会话重试一次，避免直接掉到无 load_skill 工具的
