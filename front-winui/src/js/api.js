@@ -255,12 +255,31 @@ window.app = {
   showSettings(jsonStr) {
     let cfg;
     try { cfg = JSON.parse(jsonStr); } catch(e) { cfg = {}; }
+    const modal = document.getElementById('settingsModal');
+    const alreadyOpen = !!(modal && modal.classList.contains('show'));
+    if (!alreadyOpen) rememberOverlayFocus();
     renderSettings(cfg);
-    document.getElementById('settingsModal').classList.add('show');
+    if (modal) modal.classList.add('show');
+    if (!alreadyOpen) {
+      setTimeout(() => {
+        const tab = document.querySelector('#settingsModal .settings-tab.active');
+        if (tab) tab.focus();
+      }, 40);
+    }
   },
 
   hideSettings() {
-    document.getElementById('settingsModal').classList.remove('show');
+    const modal = document.getElementById('settingsModal');
+    const wasOpen = !!(modal && modal.classList.contains('show'));
+    if (modal) modal.classList.remove('show');
+    if (typeof editingModelId !== 'undefined') editingModelId = null;
+    if (typeof editingDbId !== 'undefined') editingDbId = null;
+    state.modelConfigs = (state.modelConfigs || []).filter(m => m && !m._draft);
+    state.dbConfigs = (state.dbConfigs || []).filter(db => db && !db._draft);
+    settingsBaseline = null;
+    settingsDirty = false;
+    if (typeof _updateSettingsDirty === 'function') _updateSettingsDirty();
+    if (wasOpen) restoreOverlayFocus();
   },
 
   // 数据库「测试连接」返回的表列表（settings.js 负责渲染）

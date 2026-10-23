@@ -38,5 +38,7 @@ pub enum MainMessage {
     SkillDeleted(serde_json::Value),
     SkillPolished(serde_json::Value),
     SkillPolishFailed(String),
+    /// 技能保存/删除失败：让前端恢复按钮状态，而不是一直停在“保存中/删除中”
+    SkillOperationFailed { action: String, message: String },
     ClipboardImageSaved(String),
 }

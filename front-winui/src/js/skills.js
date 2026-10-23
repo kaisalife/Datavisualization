@@ -15,10 +15,23 @@ let skillSearchQuery = '';
 let skillSelectMode = false;  // 批量管理（只允许选择用户技能）
 let skillSelectedNames = [];
 let skillVisibleNames = [];   // 当前筛选下可删除的用户技能
+let skillBaselineName = '';
+let skillBaselineContent = '';
+let skillDirty = false;
+let skillSaving = false;
+let skillDeleting = false;
+let skillEditorEpoch = 0;
+let _pendingPolishEpoch = -1;
 
 function openSkillManager() {
   const modal = document.getElementById('skillManagerModal');
   if (!modal) return;
+  if (modal.classList.contains('show')) {
+    const el = document.getElementById('skillPrompt');
+    if (el) el.focus();
+    return;
+  }
+  rememberOverlayFocus();
   modal.classList.add('show');
   skillSelectMode = false;
   skillSelectedNames = [];
@@ -31,9 +44,25 @@ function openSkillManager() {
   }, 60);
 }
 
-function closeSkillManager() {
+async function closeSkillManager() {
   const modal = document.getElementById('skillManagerModal');
-  if (modal) modal.classList.remove('show');
+  if (!modal || !modal.classList.contains('show')) return;
+  if (skillSaving || skillDeleting) {
+    window.app.showToast('正在保存或删除技能，请稍候', 'info');
+    return;
+  }
+  if (skillDirty) {
+    const ok = await showConfirm({
+      title: '放弃未保存的技能修改？',
+      message: '当前技能的正文或名称已修改，关闭后会丢失。\n模型和数据库配置不受影响。',
+      confirmText: '放弃并关闭',
+      danger: true,
+      icon: '🧩',
+    });
+    if (!ok) return;
+  }
+  modal.classList.remove('show');
+  restoreOverlayFocus();
 }
 
 function setSkillMeta(text) {
@@ -120,6 +149,36 @@ function _updateSkillStats() {
   stat.textContent = content ? (lines + ' 行 · ' + content.length + ' 字符') : 'frontmatter + 场景工作流';
 }
 
+function _setSkillBaseline(name, content) {
+  skillBaselineName = name || '';
+  skillBaselineContent = content || '';
+  skillDirty = false;
+  _updateSkillDirty();
+}
+
+function _updateSkillDirty() {
+  const name = ((document.getElementById('skillName') || {}).value || '');
+  const content = (document.getElementById('skillContent') || {}).value || '';
+  skillDirty = name !== skillBaselineName || content !== skillBaselineContent;
+  const badge = document.getElementById('skillDirtyBadge');
+  if (badge) badge.style.display = skillDirty ? 'inline-flex' : 'none';
+  const polishing = _pendingPolishEpoch !== -1;
+  const saveBtn = document.getElementById('skillSaveBtn');
+  if (saveBtn) {
+    saveBtn.disabled = polishing || skillSaving || skillDeleting || !skillDirty;
+    saveBtn.textContent = skillSaving ? '保存中...' : '保存技能';
+  }
+  const delBtn = document.getElementById('skillDeleteBtn');
+  if (delBtn) {
+    delBtn.disabled = polishing || skillSaving || skillDeleting;
+    delBtn.textContent = skillDeleting ? '删除中...' : '删除技能';
+  }
+  const polishBtn = document.getElementById('skillPolishBtn');
+  if (polishBtn && !polishBtn.getAttribute('data-polishing')) polishBtn.disabled = polishing || skillSaving || skillDeleting;
+  const pane = document.querySelector('.skill-editor-pane');
+  if (pane) pane.classList.toggle('dirty', skillDirty);
+}
+
 function startNewSkill() {
   skillSelectedName = '';
   skillOriginalName = '';
@@ -127,6 +186,9 @@ function startNewSkill() {
   skillCurrentInvalid = false;
   skillSelectMode = false;
   skillSelectedNames = [];
+  skillSaving = false;
+  skillDeleting = false;
+  skillEditorEpoch++;
   const name = document.getElementById('skillName');
   const content = document.getElementById('skillContent');
   const prompt = document.getElementById('skillPrompt');
@@ -142,6 +204,7 @@ function startNewSkill() {
   _updateSkillStats();
   setSkillMeta('技能名即目录名；保存后立即生效');
   highlightSkillItem('');
+  _setSkillBaseline('', '');
   _renderSkillListItems();
 }
 
@@ -286,14 +349,24 @@ function selectNoneSkills() {
   _renderSkillListItems();
 }
 
-function batchDeleteSkills() {
+async function batchDeleteSkills() {
+  if (skillSaving || skillDeleting) {
+    window.app.showToast('正在保存或删除技能，请稍候', 'info');
+    return;
+  }
   const names = (skillSelectedNames || []).slice();
   if (!names.length) {
     window.app.showToast('未选择用户技能', 'info');
     return;
   }
-  if (!window.confirm('确定删除选中的 ' + names.length + ' 个用户技能吗？' +
-    '覆盖内置的同名技能删除后会自动恢复内置版本。')) return;
+  const ok = await showConfirm({
+    title: '删除选中的用户技能？',
+    message: '将删除 ' + names.length + ' 个用户技能；覆盖内置的同名技能删除后会自动恢复内置版本。',
+    confirmText: '删除 ' + names.length + ' 个',
+    danger: true,
+    icon: '🧩',
+  });
+  if (!ok) return;
   skillSelectMode = false;
   skillSelectedNames = [];
   _renderSkillListItems();
@@ -355,6 +428,47 @@ function setSkillFilter(source, el) {
   _renderSkillListItems();
 }
 
+async function requestSelectSkill(name) {
+  if (skillSelectMode) {
+    _toggleSkillSelection(name);
+    return;
+  }
+  if (skillSaving || skillDeleting) {
+    window.app.showToast('正在保存或删除技能，请稍候', 'info');
+    return;
+  }
+  if (name === skillSelectedName && !skillDirty) return;
+  if (skillDirty) {
+    const ok = await showConfirm({
+      title: '放弃未保存的技能修改？',
+      message: '当前技能还有未保存的正文或名称修改，切换后会丢失。',
+      confirmText: '放弃并切换',
+      danger: true,
+      icon: '🧩',
+    });
+    if (!ok) return;
+  }
+  selectSkill(name);
+}
+
+async function requestNewSkill() {
+  if (skillSaving || skillDeleting) {
+    window.app.showToast('正在保存或删除技能，请稍候', 'info');
+    return;
+  }
+  if (skillDirty) {
+    const ok = await showConfirm({
+      title: '放弃当前草稿？',
+      message: '当前技能还有未保存的修改，新建后会丢失。',
+      confirmText: '放弃并新建',
+      danger: true,
+      icon: '🧩',
+    });
+    if (!ok) return;
+  }
+  startNewSkill();
+}
+
 function selectSkill(name) {
   if (skillSelectMode) {
     _toggleSkillSelection(name);
@@ -398,11 +512,19 @@ window.app.renderSkillDetail = function (jsonStr) {
   } else {
     setSkillMeta('内置技能只读；保存同名会创建用户覆盖，改名称会另存为新技能');
   }
+  skillSaving = false;
+  skillDeleting = false;
+  skillEditorEpoch++;
+  _setSkillBaseline(data.name || '', data.content || '');
   highlightSkillItem(skillSelectedName);
 };
 
 // AI 润色：只生成草稿，不保存
-function aiPolishSkill() {
+async function aiPolishSkill() {
+  if (skillSaving || skillDeleting) {
+    window.app.showToast('正在保存或删除技能，请稍候', 'info');
+    return;
+  }
   const prompt = (document.getElementById('skillPrompt') || {}).value || '';
   const name = (document.getElementById('skillName') || {}).value || '';
   const btn = document.getElementById('skillPolishBtn');
@@ -410,27 +532,60 @@ function aiPolishSkill() {
     window.app.showToast('先写一句需求描述，再点 AI 润色', 'error');
     return;
   }
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="skill-polish-spark">⏳</span>润色中...'; }
+  if (skillDirty) {
+    const ok = await showConfirm({
+      title: '用 AI 草稿覆盖当前内容？',
+      message: '当前 SKILL.md 或技能名称还有未保存的修改，AI 润色会用新草稿替换正文。',
+      confirmText: '继续润色',
+      danger: false,
+      icon: '✨',
+    });
+    if (!ok) return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.setAttribute('data-polishing', '1');
+    btn.innerHTML = '<span class="skill-polish-spark">⏳</span>润色中...';
+  }
   setSkillMeta('AI 正在写技能，可能需要几十秒...');
+  _pendingPolishEpoch = skillEditorEpoch;
+  _updateSkillDirty();
   sendToRust('polishSkill', { prompt: prompt, name: name.trim() });
 }
 
 function _resetPolishButton() {
   const btn = document.getElementById('skillPolishBtn');
   if (!btn) return;
+  btn.removeAttribute('data-polishing');
   btn.disabled = false;
   btn.innerHTML = '<span class="skill-polish-spark">✨</span>AI 润色';
 }
 
 window.app.onSkillPolishFailed = function (message) {
+  _pendingPolishEpoch = -1;
   _resetPolishButton();
+  _updateSkillDirty();
   setSkillMeta(message || 'AI 润色失败，请稍后重试');
 };
 
 window.app.onSkillPolished = function (jsonStr) {
-  _resetPolishButton();
   let data;
-  try { data = JSON.parse(jsonStr); } catch (e) { return; }
+  try { data = JSON.parse(jsonStr); } catch (e) {
+    _pendingPolishEpoch = -1;
+    _resetPolishButton();
+    _updateSkillDirty();
+    return;
+  }
+  // 用户在等待润色期间切换/新建了技能：丢弃过期结果，避免覆盖另一个技能的正文。
+  if (_pendingPolishEpoch !== -1 && _pendingPolishEpoch !== skillEditorEpoch) {
+    _pendingPolishEpoch = -1;
+    _resetPolishButton();
+    _updateSkillDirty();
+    window.app.showToast('已忽略过期的 AI 润色结果', 'info');
+    return;
+  }
+  _pendingPolishEpoch = -1;
+  _resetPolishButton();
   const content = document.getElementById('skillContent');
   const name = document.getElementById('skillName');
   if (content) content.value = data.content || '';
@@ -444,6 +599,7 @@ window.app.onSkillPolished = function (jsonStr) {
   _refreshSkillTagsFromContent(data.content || '');
   if (skill.title) _setSkillEditorHeading(skill.title, skill.description || '');
   _updateSkillStats();
+  _updateSkillDirty();
   setSkillMeta('草稿已生成：' + (skill.title || skill.name || '') +
     (skill.chart_types && skill.chart_types.length ? ' · ' + skill.chart_types.join('/') : '') +
     ' · 确认无误后点「保存技能」');
@@ -458,10 +614,19 @@ function useSkillPromptPreset(btn) {
   prompt.setSelectionRange(prompt.value.length, prompt.value.length);
 }
 
-function saveCurrentSkill() {
+async function saveCurrentSkill() {
+  if (skillSaving || skillDeleting) return;
+  if (_pendingPolishEpoch !== -1) {
+    window.app.showToast('AI 正在润色，请等草稿生成后再保存', 'info');
+    return;
+  }
   const nameEl = document.getElementById('skillName');
   const name = ((nameEl || {}).value || '').trim();
   const content = (document.getElementById('skillContent') || {}).value || '';
+  if (!skillDirty) {
+    window.app.showToast('没有需要保存的修改', 'info');
+    return;
+  }
   if (!name || !content.trim()) {
     window.app.showToast('技能名和 SKILL.md 内容都不能为空', 'error');
     return;
@@ -476,15 +641,23 @@ function saveCurrentSkill() {
       window.app.showToast('已存在同名用户技能「' + name + '」，请换一个名称或先删除它', 'error');
       return;
     }
-    if (existing.source === 'builtin' &&
-        !window.confirm('「' + name + '」是内置技能，保存会创建同名用户技能覆盖它。继续吗？')) {
-      return;
+    if (existing.source === 'builtin') {
+      const ok = await showConfirm({
+        title: '覆盖内置技能？',
+        message: '「' + name + '」是内置技能，保存后会创建同名用户技能覆盖它，删除用户技能即可恢复。',
+        confirmText: '保存覆盖',
+        danger: false,
+        icon: '🧩',
+      });
+      if (!ok) return;
     }
   }
   // 用户技能改名 = 保存新目录 + 删除旧目录；内置技能改名只是另存为新用户技能。
   const previousName = (skillCurrentSource === 'user' && skillOriginalName && skillOriginalName !== name)
     ? skillOriginalName
     : '';
+  skillSaving = true;
+  _updateSkillDirty();
   setSkillMeta(previousName ? '正在重命名并保存...' : '正在保存...');
   sendToRust('saveSkill', { name: name, content: content, previousName: previousName });
 }
@@ -504,8 +677,12 @@ window.app.onSkillSaved = function (jsonStr) {
   if (badge) badge.textContent = '用户技能 · 可编辑';
   const del = document.getElementById('skillDeleteBtn');
   if (del) del.style.display = '';
-  _refreshSkillTagsFromContent((document.getElementById('skillContent') || {}).value || '');
+  const currentContent = (document.getElementById('skillContent') || {}).value || '';
+  _refreshSkillTagsFromContent(currentContent);
   _updateSkillStats();
+  skillSaving = false;
+  skillDeleting = false;
+  _setSkillBaseline(skillSelectedName, currentContent);
   if (data.rename_error) {
     setSkillMeta('新技能已保存，但旧技能删除失败：' + data.rename_error);
     window.app.showToast('新技能已保存，旧技能未删除', 'error');
@@ -519,16 +696,39 @@ window.app.onSkillSaved = function (jsonStr) {
   sendToRust('listSkills', {});
 };
 
-function deleteCurrentSkill() {
-  if (!skillSelectedName) return;
-  if (!window.confirm('确定删除技能「' + skillSelectedName + '」吗？' +
-    '如果是覆盖内置的同名技能，删除后会自动恢复内置版本。')) return;
+window.app.onSkillOperationFailed = function (action, message) {
+  if (action === 'save') skillSaving = false;
+  else if (action === 'delete') skillDeleting = false;
+  _updateSkillDirty();
+  const text = message || '技能操作失败，请稍后重试';
+  setSkillMeta(text);
+  window.app.showToast(text, 'error');
+};
+
+async function deleteCurrentSkill() {
+  if (!skillSelectedName || skillDeleting || skillSaving) return;
+  if (_pendingPolishEpoch !== -1) {
+    window.app.showToast('AI 正在润色，请等草稿生成后再删除', 'info');
+    return;
+  }
+  const ok = await showConfirm({
+    title: '删除技能？',
+    message: '确定删除「' + skillSelectedName + '」吗？\n如果它是覆盖内置的同名用户技能，删除后会自动恢复内置版本。',
+    confirmText: '删除技能',
+    danger: true,
+    icon: '🧩',
+  });
+  if (!ok) return;
+  skillDeleting = true;
+  _updateSkillDirty();
   sendToRust('deleteSkill', { name: skillSelectedName });
 }
 
 window.app.onSkillDeleted = function (jsonStr) {
   let data = {};
   try { data = JSON.parse(jsonStr); } catch (e) {}
+  skillSaving = false;
+  skillDeleting = false;
   if (data.batch) {
     const failed = Array.isArray(data.failed) ? data.failed : [];
     if (failed.length) {
@@ -558,7 +758,7 @@ window.app.onSkillDeleted = function (jsonStr) {
       const item = ev.target.closest ? ev.target.closest('.skill-list-item[data-name]') : null;
       if (!item) return;
       if (skillSelectMode) _toggleSkillSelection(item.getAttribute('data-name'));
-      else selectSkill(item.getAttribute('data-name'));
+      else requestSelectSkill(item.getAttribute('data-name'));
     });
     list.addEventListener('keydown', ev => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
@@ -566,10 +766,12 @@ window.app.onSkillDeleted = function (jsonStr) {
       if (item && ev.target === item) {
         ev.preventDefault();
         if (skillSelectMode) _toggleSkillSelection(item.getAttribute('data-name'));
-        else selectSkill(item.getAttribute('data-name'));
+        else requestSelectSkill(item.getAttribute('data-name'));
       }
     });
   }
   const content = document.getElementById('skillContent');
-  if (content) content.addEventListener('input', _updateSkillStats);
+  if (content) content.addEventListener('input', () => { _updateSkillStats(); _updateSkillDirty(); });
+  const nameInput = document.getElementById('skillName');
+  if (nameInput) nameInput.addEventListener('input', _updateSkillDirty);
 })();

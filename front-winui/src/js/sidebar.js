@@ -278,14 +278,22 @@ function selectNoneConvs() {
   renderConversations();
 }
 
-function batchDeleteSelected() {
+async function batchDeleteSelected() {
   if (!state.selectedIds || state.selectedIds.length === 0) {
     window.app.showToast('未选择对话', 'info');
     return;
   }
-  const n = state.selectedIds.length;
-  if (!window.confirm('确定删除选中的 ' + n + ' 个对话吗？该操作不可撤销。')) return;
-  sendToRust('batchDelete', { ids: state.selectedIds });
+  const ids = state.selectedIds.slice();
+  const n = ids.length;
+  const ok = await showConfirm({
+    title: '删除选中的对话？',
+    message: '将删除 ' + n + ' 个对话及其关联的会话记录，该操作不可撤销。',
+    confirmText: '删除 ' + n + ' 个',
+    danger: true,
+    icon: '💬',
+  });
+  if (!ok) return;
+  sendToRust('batchDelete', { ids: ids });
   exitSelectMode();
 }
 
@@ -555,7 +563,7 @@ function renderFileChips() {
 function showDbSelector() {
   const body = document.getElementById('dbSelectorBody');
   if (!state.dbConfigs || state.dbConfigs.length === 0) {
-    body.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">还没有数据库配置<br><button class="btn btn-primary" style="margin-top:12px" onclick="document.getElementById(\'dbSelectorModal\').classList.remove(\'show\');sendToRust(\'toggleSettings\',{})">去设置添加</button></div>';
+    body.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">还没有数据库配置<br><button class="btn btn-primary" style="margin-top:12px" onclick="document.getElementById(\'dbSelectorModal\').classList.remove(\'show\');openSettings()">去设置添加</button></div>';
   } else {
     body.innerHTML = state.dbConfigs.map(db => {
       const typeCls = 'db-type-' + (db.dbType || 'mysql').toLowerCase().replace(/\s/g, '');
@@ -563,7 +571,7 @@ function showDbSelector() {
         '<div class="db-config-header"><div class="db-config-name">' + escHtml(db.name) + '</div><div class="db-config-type ' + typeCls + '">' + escHtml(db.dbType) + '</div></div>' +
         '<div class="db-config-detail">' + escHtml(db.host) + ':' + escHtml(db.port) + '/' + escHtml(db.database || '-') + '</div>' +
       '</div>';
-    }).join('') + '<button class="db-add-btn" onclick="document.getElementById(\'dbSelectorModal\').classList.remove(\'show\');sendToRust(\'toggleSettings\',{})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>添加新连接</button>';
+    }).join('') + '<button class="db-add-btn" onclick="document.getElementById(\'dbSelectorModal\').classList.remove(\'show\');openSettings()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>添加新连接</button>';
   }
   document.getElementById('dbSelectorModal').classList.add('show');
 }

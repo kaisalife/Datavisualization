@@ -239,6 +239,15 @@ impl MainModel {
         ));
     }
 
+    /// 技能保存/删除失败：恢复按钮并显示失败原因
+    pub(crate) fn js_skill_operation_failed(&mut self, action: &str, message: &str) {
+        self.js(&format!(
+            "window.app.onSkillOperationFailed('{}','{}')",
+            Self::js_escape(action),
+            Self::js_escape(message)
+        ));
+    }
+
     /// 把剪贴板图片加入前端文件列表
     pub(crate) fn js_add_clipboard_file(&mut self, path: &str) {
         self.js(&format!(

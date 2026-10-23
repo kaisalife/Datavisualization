@@ -4,6 +4,8 @@
 let editingDbId = null;
 let editingModelId = null;
 let settingsPane = 'models';
+let settingsBaseline = null;
+let settingsDirty = false;
 
 function _settingsNewId(prefix) {
   return prefix + '_' + Date.now() + '_' + Math.random().toString(16).slice(2, 8);
@@ -26,6 +28,75 @@ function _settingsSectionActions(manageId, manageFn, addFn, addLabel) {
     '<button type="button" class="settings-manage-btn" id="' + manageId + '" onclick="' + manageFn + '()" aria-pressed="false" data-tip="批量管理">批量</button>' +
     '<button type="button" class="settings-add-btn" onclick="' + addFn + '()"><span>+</span>' + addLabel + '</button>' +
     '</div>';
+}
+
+function _settingsSnapshot() {
+  return {
+    mcp: (document.getElementById('setMcp') || {}).value || '',
+    skill: (document.getElementById('setSkill') || {}).value || '',
+    backend: (document.getElementById('setBackend') || {}).value || '',
+    apiKey: (document.getElementById('setApiKey') || {}).value || '',
+  };
+}
+
+function _updateSettingsDirty() {
+  const badge = document.getElementById('settingsDirtyBadge');
+  const hint = document.getElementById('settingsFooterHint');
+  if (!settingsBaseline) {
+    settingsDirty = false;
+    if (badge) badge.style.display = 'none';
+    if (hint) hint.textContent = '模型与数据库配置即时保存；提示词与服务连接点「保存设置」';
+    return;
+  }
+  const now = _settingsSnapshot();
+  settingsDirty = Object.keys(settingsBaseline).some(key => now[key] !== settingsBaseline[key]);
+  const inlineEditing = editingModelId !== null || editingDbId !== null;
+  if (badge) badge.style.display = (settingsDirty || inlineEditing) ? 'inline-flex' : 'none';
+  if (hint) {
+    hint.textContent = inlineEditing
+      ? '正在编辑的配置尚未保存'
+      : (settingsDirty
+          ? '提示词或服务连接有未保存修改'
+          : '模型与数据库配置即时保存；提示词与服务连接点「保存设置」');
+  }
+}
+
+function _setSettingsBaseline() {
+  settingsBaseline = _settingsSnapshot();
+  settingsDirty = false;
+  _updateSettingsDirty();
+}
+
+// 打开设置面板：实际数据由 Rust 的 toggleSettings 响应回填
+function openSettings() {
+  if (_overlayVisible('settingsModal')) return;
+  sendToRust('toggleSettings', {});
+}
+
+function _settingsUnsavedReason() {
+  const parts = [];
+  if (settingsDirty) parts.push('提示词/服务连接');
+  if (editingModelId !== null) parts.push('正在编辑的模型配置');
+  if (editingDbId !== null) parts.push('正在编辑的数据库连接');
+  return parts.join('、');
+}
+
+// 关闭设置面板：提示词/服务连接或正在编辑的表单都没有落盘时先确认
+function closeSettings() {
+  const reason = _settingsUnsavedReason();
+  if (reason) {
+    showConfirm({
+      title: '放弃未保存的设置？',
+      message: reason + '还有未保存的修改，关闭后会丢失。\n已经保存的模型和数据库配置不受影响。',
+      confirmText: '放弃修改',
+      danger: true,
+      icon: '⚙️',
+    }).then(confirmed => {
+      if (confirmed) sendToRust('toggleSettings', {});
+    });
+    return;
+  }
+  sendToRust('toggleSettings', {});
 }
 
 function renderSettings(cfg) {
@@ -98,6 +169,7 @@ function renderSettings(cfg) {
   updateSettingsHero();
   renderModelList();
   renderDbList();
+  _setSettingsBaseline();
 }
 
 function updateSettingsHero() {
@@ -153,6 +225,7 @@ function clearPromptFields() {
   const skill = document.getElementById('setSkill');
   if (mcp) mcp.value = '';
   if (skill) skill.value = '';
+  _updateSettingsDirty();
   window.app.showToast('已清空提示词，记得点底部「保存设置」', 'info');
 }
 
@@ -256,7 +329,10 @@ function renderModelBatchBar() {
 }
 
 function toggleModelSelectMode() {
-  if (editingModelId !== null) cancelModelEdit();
+  if (editingModelId !== null) {
+    window.app.showToast('请先保存或取消当前模型编辑，再进入批量管理', 'info');
+    return;
+  }
   state.modelSelectMode = !state.modelSelectMode;
   state.selectedModelIds = [];
   renderModelList();
@@ -297,7 +373,10 @@ function _persistModelConfigs() {
 }
 
 function addModelConfigForm() {
-  if (editingModelId !== null) cancelModelEdit();
+  if (editingModelId !== null) {
+    window.app.showToast('请先保存或取消当前模型编辑', 'info');
+    return;
+  }
   state.modelSelectMode = false;
   state.selectedModelIds = [];
   settingsPane = 'models';
@@ -314,6 +393,7 @@ function addModelConfigForm() {
   });
   editingModelId = state.modelConfigs.length - 1;
   renderModelList();
+  _updateSettingsDirty();
   setTimeout(() => {
     const el = document.getElementById('emName');
     if (el) { el.focus(); el.select(); }
@@ -323,9 +403,13 @@ function addModelConfigForm() {
 function editModel(idx) {
   const target = state.modelConfigs[idx];
   if (!target) return;
-  if (editingModelId !== null && editingModelId !== idx) cancelModelEdit();
+  if (editingModelId !== null && editingModelId !== idx) {
+    window.app.showToast('请先保存或取消当前模型编辑', 'info');
+    return;
+  }
   editingModelId = state.modelConfigs.indexOf(target);
   renderModelList();
+  _updateSettingsDirty();
 }
 
 function cancelModelEdit() {
@@ -333,15 +417,16 @@ function cancelModelEdit() {
   if (current && current._draft) state.modelConfigs.splice(editingModelId, 1);
   editingModelId = null;
   renderModelList();
+  _updateSettingsDirty();
 }
 
-function saveModelEdit(idx) {
+function saveModelEdit(idx, silent) {
   const m = state.modelConfigs[idx];
-  if (!m) return;
+  if (!m) return false;
   const name = ((document.getElementById('emName') || {}).value || '').trim();
   if (!name) {
     window.app.showToast('请填写配置名称', 'error');
-    return;
+    return false;
   }
   m.name = name;
   m.modelType = ((document.getElementById('emType') || {}).value || '').trim();
@@ -354,31 +439,52 @@ function saveModelEdit(idx) {
   editingModelId = null;
   renderModelList();
   _persistModelConfigs();
-  window.app.showToast('模型配置已保存', 'success');
+  _updateSettingsDirty();
+  if (!silent) window.app.showToast('模型配置已保存', 'success');
+  return true;
 }
 
-function deleteModelConfig(idx) {
+async function deleteModelConfig(idx) {
   const m = state.modelConfigs[idx];
   if (!m) return;
-  if (!window.confirm('确定删除模型配置「' + (m.name || '未命名') + '」吗？')) return;
-  state.modelConfigs.splice(idx, 1);
-  if (editingModelId === idx) editingModelId = null;
-  else if (editingModelId !== null && editingModelId > idx) editingModelId -= 1;
+  const id = m.id;
+  const ok = await showConfirm({
+    title: '删除模型配置？',
+    message: '「' + (m.name || '未命名') + '」删除后不会影响已生成的历史图表。',
+    confirmText: '删除',
+    danger: true,
+    icon: '🤖',
+  });
+  if (!ok) return;
+  // 确认框是异步的，期间可能收到 Rust 的配置同步回调；用 id 重新定位而不是沿用旧下标。
+  const liveIdx = (state.modelConfigs || []).findIndex(item => item && item.id === id);
+  if (liveIdx < 0) return;
+  state.modelConfigs.splice(liveIdx, 1);
+  if (editingModelId === liveIdx) editingModelId = null;
+  else if (editingModelId !== null && editingModelId > liveIdx) editingModelId -= 1;
   if (state.modelConfigs.length && !state.modelConfigs.some(item => item && item.enabled)) {
     state.modelConfigs[0].enabled = true;
   }
   renderModelList();
+  _updateSettingsDirty();
   _persistModelConfigs();
   window.app.showToast('模型配置已删除', 'info');
 }
 
-function batchDeleteModels() {
+async function batchDeleteModels() {
   const ids = (state.selectedModelIds || []).slice();
   if (!ids.length) {
     window.app.showToast('未选择模型配置', 'info');
     return;
   }
-  if (!window.confirm('确定删除选中的 ' + ids.length + ' 个模型配置吗？该操作不可撤销。')) return;
+  const ok = await showConfirm({
+    title: '删除选中的模型配置？',
+    message: '将删除 ' + ids.length + ' 个模型配置；已生成的历史图表不受影响。',
+    confirmText: '删除 ' + ids.length + ' 个',
+    danger: true,
+    icon: '🤖',
+  });
+  if (!ok) return;
   state.modelConfigs = (state.modelConfigs || []).filter(m => !m || ids.indexOf(m.id) < 0);
   if (state.modelConfigs.length && !state.modelConfigs.some(item => item && item.enabled)) {
     state.modelConfigs[0].enabled = true;
@@ -495,7 +601,10 @@ function renderDbBatchBar() {
 }
 
 function toggleDbSelectMode() {
-  if (editingDbId !== null) cancelDbEdit();
+  if (editingDbId !== null) {
+    window.app.showToast('请先保存或取消当前数据库编辑，再进入批量管理', 'info');
+    return;
+  }
   state.dbSelectMode = !state.dbSelectMode;
   state.selectedDbIds = [];
   renderDbList();
@@ -536,7 +645,10 @@ function _persistDbConfigs() {
 }
 
 function addDbConfigForm() {
-  if (editingDbId !== null) cancelDbEdit();
+  if (editingDbId !== null) {
+    window.app.showToast('请先保存或取消当前数据库编辑', 'info');
+    return;
+  }
   state.dbSelectMode = false;
   state.selectedDbIds = [];
   settingsPane = 'database';
@@ -556,6 +668,7 @@ function addDbConfigForm() {
   });
   editingDbId = state.dbConfigs.length - 1;
   renderDbList();
+  _updateSettingsDirty();
   setTimeout(() => {
     const el = document.getElementById('edbName');
     if (el) { el.focus(); el.select(); }
@@ -565,9 +678,13 @@ function addDbConfigForm() {
 function editDb(idx) {
   const target = state.dbConfigs[idx];
   if (!target) return;
-  if (editingDbId !== null && editingDbId !== idx) cancelDbEdit();
+  if (editingDbId !== null && editingDbId !== idx) {
+    window.app.showToast('请先保存或取消当前数据库编辑', 'info');
+    return;
+  }
   editingDbId = state.dbConfigs.indexOf(target);
   renderDbList();
+  _updateSettingsDirty();
 }
 
 function cancelDbEdit() {
@@ -575,15 +692,16 @@ function cancelDbEdit() {
   if (current && current._draft) state.dbConfigs.splice(editingDbId, 1);
   editingDbId = null;
   renderDbList();
+  _updateSettingsDirty();
 }
 
-function saveDbEdit(idx) {
+function saveDbEdit(idx, silent) {
   const db = state.dbConfigs[idx];
-  if (!db) return;
+  if (!db) return false;
   const name = ((document.getElementById('edbName') || {}).value || '').trim();
   if (!name) {
     window.app.showToast('请填写连接名称', 'error');
-    return;
+    return false;
   }
   db.name = name;
   db.dbType = (document.getElementById('edbType') || {}).value || 'MySQL';
@@ -598,28 +716,48 @@ function saveDbEdit(idx) {
   editingDbId = null;
   renderDbList();
   _persistDbConfigs();
-  window.app.showToast('数据库配置已保存', 'success');
+  _updateSettingsDirty();
+  if (!silent) window.app.showToast('数据库配置已保存', 'success');
+  return true;
 }
 
-function deleteDbConfig(idx) {
+async function deleteDbConfig(idx) {
   const db = state.dbConfigs[idx];
   if (!db) return;
-  if (!window.confirm('确定删除数据库连接「' + (db.name || '未命名') + '」吗？')) return;
-  state.dbConfigs.splice(idx, 1);
-  if (editingDbId === idx) editingDbId = null;
-  else if (editingDbId !== null && editingDbId > idx) editingDbId -= 1;
+  const id = db.id;
+  const ok = await showConfirm({
+    title: '删除数据库连接？',
+    message: '「' + (db.name || '未命名') + '」删除后将无法再用于预览或图表任务。',
+    confirmText: '删除连接',
+    danger: true,
+    icon: '🗄️',
+  });
+  if (!ok) return;
+  const liveIdx = (state.dbConfigs || []).findIndex(item => item && item.id === id);
+  if (liveIdx < 0) return;
+  state.dbConfigs.splice(liveIdx, 1);
+  if (editingDbId === liveIdx) editingDbId = null;
+  else if (editingDbId !== null && editingDbId > liveIdx) editingDbId -= 1;
   renderDbList();
+  _updateSettingsDirty();
   _persistDbConfigs();
   window.app.showToast('数据库配置已删除', 'info');
 }
 
-function batchDeleteDbs() {
+async function batchDeleteDbs() {
   const ids = (state.selectedDbIds || []).slice();
   if (!ids.length) {
     window.app.showToast('未选择数据库连接', 'info');
     return;
   }
-  if (!window.confirm('确定删除选中的 ' + ids.length + ' 个数据库连接吗？该操作不可撤销。')) return;
+  const ok = await showConfirm({
+    title: '删除选中的数据库连接？',
+    message: '将删除 ' + ids.length + ' 个数据库连接；已生成的历史图表不受影响。',
+    confirmText: '删除 ' + ids.length + ' 个',
+    danger: true,
+    icon: '🗄️',
+  });
+  if (!ok) return;
   state.dbConfigs = (state.dbConfigs || []).filter(db => !db || ids.indexOf(db.id) < 0);
   state.dbSelectMode = false;
   state.selectedDbIds = [];
@@ -705,6 +843,9 @@ function syncDbTableChips() {
 }
 
 function saveSettings() {
+  // 底部「保存设置」同时收口正在内联编辑的模型/数据库表单，避免用户改了表单却直接关闭。
+  if (editingModelId !== null && !saveModelEdit(editingModelId, true)) return;
+  if (editingDbId !== null && !saveDbEdit(editingDbId, true)) return;
   const data = {
     modelConfigs: (state.modelConfigs || []).filter(m => m && !_isDraftConfig(m)),
     mcp: (document.getElementById('setMcp') || {}).value || '',
@@ -719,6 +860,14 @@ function saveSettings() {
 (function initSettingsRowEvents() {
   const body = document.getElementById('settingsBody');
   if (!body) return;
+  const markDirty = ev => {
+    const id = ev.target && ev.target.id;
+    if (id === 'setMcp' || id === 'setSkill' || id === 'setBackend' || id === 'setApiKey') {
+      _updateSettingsDirty();
+    }
+  };
+  body.addEventListener('input', markDirty);
+  body.addEventListener('change', markDirty);
   body.addEventListener('click', function (ev) {
     if (state.modelSelectMode) {
       const modelRow = ev.target.closest ? ev.target.closest('.model-card[data-model-id]') : null;

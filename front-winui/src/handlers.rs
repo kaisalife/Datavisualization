@@ -1528,16 +1528,14 @@ impl MainModel {
             self.clear_missing_selected_db();
         }
 
-        match self.settings.save() {
-            Ok(()) => {
-                self.js_show_toast("设置已保存", "success");
-                let configs = self.settings.db_configs.clone();
-                self.js_set_db_configs(&configs);
-            }
-            Err(e) => {
-                self.js_show_toast(&format!("设置保存失败: {}", e), "error");
-            }
+        if let Err(e) = self.settings.save() {
+            // 保存失败时不要关面板，否则提示词/服务连接的修改会直接丢失。
+            self.js_show_toast(&format!("设置保存失败: {}", e), "error");
+            return Ok(true);
         }
+        self.js_show_toast("设置已保存", "success");
+        let configs = self.settings.db_configs.clone();
+        self.js_set_db_configs(&configs);
         self.backend_url = self.settings.backend_display();
         self.client = api::ApiClient::new(&self.settings.backend_url, &self.settings.api_key);
         self.show_settings = false;
@@ -2103,9 +2101,9 @@ impl MainModel {
                         }
                         sender.post(MainMessage::SkillSaved(result))
                     }
-                    Err(e) => sender.post(MainMessage::ShowToast {
+                    Err(e) => sender.post(MainMessage::SkillOperationFailed {
+                        action: "save".to_string(),
                         message: format!("保存失败: {}", e),
-                        toast_type: "error".to_string(),
                     }),
                 }
             });
@@ -2130,9 +2128,9 @@ impl MainModel {
             handle.block_on(async move {
                 match client.delete_skill(&name).await {
                     Ok(result) => sender.post(MainMessage::SkillDeleted(result)),
-                    Err(e) => sender.post(MainMessage::ShowToast {
+                    Err(e) => sender.post(MainMessage::SkillOperationFailed {
+                        action: "delete".to_string(),
                         message: format!("删除失败: {}", e),
-                        toast_type: "error".to_string(),
                     }),
                 }
             });
@@ -2299,6 +2297,15 @@ impl MainModel {
     ) -> std::result::Result<bool, Error> {
         self.js_skill_polish_failed(&message);
         self.js_show_toast(&message, "error");
+        Ok(true)
+    }
+
+    pub(crate) fn handle_skill_operation_failed(
+        &mut self,
+        action: String,
+        message: String,
+    ) -> std::result::Result<bool, Error> {
+        self.js_skill_operation_failed(&action, &message);
         Ok(true)
     }
 

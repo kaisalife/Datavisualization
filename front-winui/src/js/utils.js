@@ -143,18 +143,104 @@ window.addEventListener('unhandledrejection', e => {
   reportFrontendError('异步错误', (reason && (reason.message || reason)) || 'unknown');
 });
 
-// ---- Esc 关闭最上层浮层 ----
+// ---- 统一确认弹窗 / 弹窗焦点管理 ----
+// 所有破坏性操作走同一个 Promise 确认框，避免原生 confirm 的样式割裂，
+// 同时记录打开前的焦点，关闭后能回到触发按钮。
+let _confirmResolve = null;
+let _overlayFocusStack = [];
+
+function rememberOverlayFocus() {
+  const active = document.activeElement;
+  _overlayFocusStack.push(active && active !== document.body ? active : null);
+}
+
+function restoreOverlayFocus() {
+  const target = _overlayFocusStack.pop();
+  if (target && target.isConnected && typeof target.focus === 'function') {
+    setTimeout(() => target.focus(), 0);
+  }
+}
+
+function showConfirm(options) {
+  const modal = document.getElementById('confirmModal');
+  const opts = Object.assign({
+    title: '确认操作',
+    message: '',
+    confirmText: '确定',
+    cancelText: '取消',
+    danger: true,
+    icon: '⚠️',
+  }, options || {});
+  if (!modal) return Promise.resolve(window.confirm((opts.title ? opts.title + '\n' : '') + opts.message));
+
+  // 极端情况下连续触发：先把上一个确认框按取消结束，避免 Promise 悬挂。
+  if (_confirmResolve) settleConfirm(false);
+
+  const title = document.getElementById('confirmTitle');
+  const body = document.getElementById('confirmBody');
+  const icon = document.getElementById('confirmIcon');
+  const ok = document.getElementById('confirmOkBtn');
+  const cancel = document.getElementById('confirmCancelBtn');
+  if (title) title.textContent = opts.title;
+  if (body) body.textContent = opts.message;
+  if (icon) icon.textContent = opts.icon || '';
+  if (ok) {
+    ok.textContent = opts.confirmText || '确定';
+    ok.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
+  }
+  if (cancel) cancel.textContent = opts.cancelText || '取消';
+
+  rememberOverlayFocus();
+  modal.classList.add('show');
+  setTimeout(() => { if (cancel) cancel.focus(); }, 20);
+  return new Promise(resolve => { _confirmResolve = resolve; });
+}
+
+function settleConfirm(value) {
+  const modal = document.getElementById('confirmModal');
+  const wasOpen = !!(modal && modal.classList.contains('show')) || !!_confirmResolve;
+  if (modal) modal.classList.remove('show');
+  const resolve = _confirmResolve;
+  _confirmResolve = null;
+  if (!wasOpen) return;
+  restoreOverlayFocus();
+  if (resolve) resolve(!!value);
+}
+
+function acceptConfirm() { settleConfirm(true); }
+function cancelConfirm() { settleConfirm(false); }
+
+function _topmostOverlayEl() {
+  const ids = ['confirmModal', 'skillManagerModal', 'chartViewer', 'dataPreviewModal', 'settingsModal', 'dbSelectorModal', 'apiConfigModal'];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (el.classList.contains('show') || (id === 'chartViewer' && el.style.display === 'flex')) return el;
+  }
+  return null;
+}
+
+function _focusableIn(root) {
+  if (!root) return [];
+  const selector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return Array.from(root.querySelectorAll(selector)).filter(el => {
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  });
+}
+
+// ---- Esc 关闭最上层浮层；Tab 在当前弹窗内循环 ----
 function _overlayVisible(id) {
   const el = document.getElementById(id);
   return !!(el && el.classList.contains('show'));
 }
 
 function closeTopmostOverlay() {
-  // 全屏查看器在最上层；其余浮层按打开顺序的常见情况排列
+  if (_overlayVisible('confirmModal')) return cancelConfirm(), true;
   if (_overlayVisible('skillManagerModal') && typeof closeSkillManager === 'function') return closeSkillManager(), true;
   if (_overlayVisible('chartViewer') && typeof closeChartViewer === 'function') return closeChartViewer(), true;
   if (_overlayVisible('dataPreviewModal') && typeof closeDataPreview === 'function') return closeDataPreview(), true;
-  if (_overlayVisible('settingsModal')) return sendToRust('toggleSettings', {}), true;
+  if (_overlayVisible('settingsModal') && typeof closeSettings === 'function') return closeSettings(), true;
   if (_overlayVisible('dbSelectorModal')) return document.getElementById('dbSelectorModal').classList.remove('show'), true;
   if (_overlayVisible('apiConfigModal')) return document.getElementById('apiConfigModal').classList.remove('show'), true;
   if (typeof closeCleanupModal === 'function') {
@@ -165,7 +251,40 @@ function closeTopmostOverlay() {
 }
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && closeTopmostOverlay()) e.preventDefault();
+  if (e.key === 'Escape' && closeTopmostOverlay()) {
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'Tab') {
+    const overlay = _topmostOverlayEl();
+    if (!overlay) return;
+    const items = _focusableIn(overlay);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (!overlay.contains(active)) {
+      e.preventDefault();
+      first.focus();
+    } else if (e.shiftKey && active === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+    return;
+  }
+  // 弹窗内 Ctrl/Cmd+S：保存当前设置或技能（确认框打开时不穿透到下层）
+  if ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 's') {
+    e.preventDefault();
+    if (_overlayVisible('confirmModal')) return;
+    if (_overlayVisible('skillManagerModal') && typeof saveCurrentSkill === 'function') {
+      saveCurrentSkill();
+    } else if (_overlayVisible('settingsModal') && typeof saveSettings === 'function') {
+      saveSettings();
+    }
+  }
 });
 
 // ===== 轻量工具提示：给图标按钮和需要解释的控件补上悬浮说明 =====
