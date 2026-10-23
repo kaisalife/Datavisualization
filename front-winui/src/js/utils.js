@@ -211,7 +211,7 @@ function acceptConfirm() { settleConfirm(true); }
 function cancelConfirm() { settleConfirm(false); }
 
 function _topmostOverlayEl() {
-  const ids = ['confirmModal', 'skillManagerModal', 'chartViewer', 'dataPreviewModal', 'settingsModal', 'dbSelectorModal', 'apiConfigModal'];
+  const ids = ['confirmModal', 'skillPickerModal', 'skillManagerModal', 'chartViewer', 'dataPreviewModal', 'settingsModal', 'dbSelectorModal', 'apiConfigModal'];
   for (const id of ids) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -237,6 +237,7 @@ function _overlayVisible(id) {
 
 function closeTopmostOverlay() {
   if (_overlayVisible('confirmModal')) return cancelConfirm(), true;
+  if (_overlayVisible('skillPickerModal') && typeof closeSkillPicker === 'function') return closeSkillPicker(), true;
   if (_overlayVisible('skillManagerModal') && typeof closeSkillManager === 'function') return closeSkillManager(), true;
   if (_overlayVisible('chartViewer') && typeof closeChartViewer === 'function') return closeChartViewer(), true;
   if (_overlayVisible('dataPreviewModal') && typeof closeDataPreview === 'function') return closeDataPreview(), true;

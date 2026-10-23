@@ -84,6 +84,9 @@ window.app = {
     state.activeTaskEl = null;
     state.activeLogs = [];
     _pendingLogs = [];
+    state.activeSkill = null;
+    if (typeof renderSkillChip === 'function') renderSkillChip();
+    if (typeof hideChatCommandMenu === 'function') hideChatCommandMenu();
     if (typeof resetAssets === 'function') resetAssets();
     // 关闭旧任务的 trace / 阶段计时，避免新会话里混入上一个任务的事件
     _traceQueue = [];
@@ -397,6 +400,9 @@ window.app = {
     state.activeTaskEl = null;
     state.activeLogs = [];
     _pendingLogs = [];
+    state.activeSkill = null;
+    if (typeof renderSkillChip === 'function') renderSkillChip();
+    if (typeof hideChatCommandMenu === 'function') hideChatCommandMenu();
     state.conversationId = d.conversation_id || null;
     state.assets = [];
     state.assetsLoading = false;
@@ -419,7 +425,7 @@ window.app = {
       content.innerHTML = '<div class="msg-name">你</div>';
       const bubble = document.createElement('div');
       bubble.className = 'msg-bubble';
-      bubble.textContent = d.user_prompt;
+      bubble.textContent = typeof displayUserPrompt === 'function' ? displayUserPrompt(d.user_prompt) : d.user_prompt;
       content.appendChild(bubble);
       // 文件标签
       if (d.file_paths && d.file_paths.length > 0) {

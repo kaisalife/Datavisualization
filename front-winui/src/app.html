@@ -90,14 +90,20 @@
       <div class="chat-input-area">
         <div class="chat-input-inner">
           <div class="chat-input-box" id="chatInputBox">
+            <div class="chat-command-menu" id="chatCommandMenu" role="listbox" aria-label="聊天命令"></div>
             <div class="file-chips" id="fileChips"></div>
+            <div class="skill-chip" id="skillChip" style="display:none">
+              <span class="skill-chip-ic">🧩</span>
+              <span class="skill-chip-label" id="skillChipLabel"></span>
+              <button type="button" class="skill-chip-x" onclick="clearActiveSkill()" data-tip="取消本次技能" aria-label="取消本次技能">×</button>
+            </div>
             <div class="optimize-chip" id="optimizeChip" style="display:none">
               <span class="optimize-chip-ic">🛠️</span>
               <span class="optimize-chip-label" id="optimizeChipLabel"></span>
               <button type="button" class="optimize-chip-x" onclick="clearOptimizeTarget()" data-tip="取消本次优化" aria-label="取消本次优化">×</button>
             </div>
             <div class="chat-input-row">
-              <textarea class="chat-input" id="prompt-input" placeholder="描述你想要的图表，按 Enter 发送..." rows="1" oninput="autoResize(this)" onkeydown="handleInputKey(event)"></textarea>
+              <textarea class="chat-input" id="prompt-input" placeholder="描述你想要的图表，按 Enter 发送..." rows="1" oninput="handleChatInput(this)" onkeydown="handleInputKey(event)"></textarea>
               <div class="input-actions">
                 <button class="input-action-btn" onclick="requestDataPreview()" data-tip="预览数据" aria-label="预览数据"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
                 <button class="input-action-btn" onclick="sendToRust('attachFile',{})" data-tip="上传文件" aria-label="上传文件"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
@@ -115,7 +121,7 @@
               <button class="mode-chip" data-mode="scientific" aria-pressed="false" onclick="selectMode(this,'scientific')" data-tip="Scientific：科研风格分析，侧重分布与统计">Scientific</button>
               <button class="mode-chip" id="multi-table-chip" aria-pressed="false" onclick="toggleMultiTable()" data-tip="图片 / PDF / Office 内嵌图片含多张表时，全部抽取后分别出图" aria-label="多表抽取">多表抽取</button>
             </div>
-            <span>Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴截图</span>
+            <span>Enter 发送 · Shift+Enter 换行 · / 命令 · Ctrl+V 截图</span>
           </div>
         </div>
       </div>
@@ -254,6 +260,39 @@
           <button class="btn btn-ghost" id="skillDeleteBtn" onclick="deleteCurrentSkill()" style="display:none">删除技能</button>
           <button class="btn btn-primary" id="skillSaveBtn" onclick="saveCurrentSkill()" disabled>保存技能</button>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="settings-modal" id="skillPickerModal" onclick="if(event.target===this)closeSkillPicker()">
+  <div class="settings-modal-inner skill-picker-inner" onclick="event.stopPropagation()">
+    <div class="settings-header">
+      <div class="settings-heading">
+        <div class="settings-title">加载技能</div>
+        <div class="settings-subtitle">选择场景技能，本次对话会优先按它的分析口径和图表规范执行</div>
+      </div>
+      <div class="skill-header-actions">
+        <span class="skill-header-count" id="skillPickerCount">0 个技能</span>
+        <button type="button" class="modal-close" onclick="closeSkillPicker()" data-tip="关闭技能选择（Esc）" aria-label="关闭技能选择">✕</button>
+      </div>
+    </div>
+    <div class="skill-picker-body">
+      <div class="skill-picker-toolbar">
+        <div class="skill-search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="skillPickerSearch" type="text" placeholder="搜索技能名称、用途或图表类型…" oninput="filterSkillPickerList(this.value)">
+        </div>
+        <div class="skill-filter-row" id="skillPickerFilterRow" role="group" aria-label="按来源过滤技能">
+          <button type="button" class="skill-filter active" data-source="all" aria-pressed="true" onclick="setSkillPickerFilter('all',this)">全部</button>
+          <button type="button" class="skill-filter" data-source="user" aria-pressed="false" onclick="setSkillPickerFilter('user',this)">用户</button>
+          <button type="button" class="skill-filter" data-source="builtin" aria-pressed="false" onclick="setSkillPickerFilter('builtin',this)">内置</button>
+        </div>
+      </div>
+      <div class="skill-picker-list" id="skillPickerList"></div>
+      <div class="skill-picker-footer">
+        <span class="skill-picker-hint" id="skillPickerHint">选择一个技能后，输入区会显示技能标签；发送时自动带入本次对话。</span>
+        <button type="button" class="btn btn-ghost skill-picker-manage" onclick="openSkillManagerFromPicker()">管理技能</button>
       </div>
     </div>
   </div>

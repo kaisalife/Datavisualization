@@ -19,6 +19,16 @@ function clearChatInner() {
   });
 }
 
+// 带技能指令的 prompt 会原样存进对话记录；展示时折叠成一行技能标签，
+// 避免历史对话里出现一大段给模型看的说明。
+function displayUserPrompt(text) {
+  const raw = String(text || '');
+  const match = raw.match(/^请优先使用技能「([^」]+)」（name:\s*([^）]+)）[^\n]*\n/);
+  if (!match) return raw;
+  const rest = raw.slice(match[0].length);
+  return '🧩 使用技能：' + match[1] + (rest ? '\n' + rest : '');
+}
+
 function appendMessage(role, content, kind) {
   const area = document.getElementById('chatInner');
   const msg = document.createElement('div');

@@ -22,10 +22,15 @@ let skillSaving = false;
 let skillDeleting = false;
 let skillEditorEpoch = 0;
 let _pendingPolishEpoch = -1;
+let skillPickerSearchQuery = '';
+let skillPickerFilterSource = 'all';
+let skillPickerLoading = false;
+let _skillPickerLoadTimer = null;
 
 function openSkillManager() {
   const modal = document.getElementById('skillManagerModal');
   if (!modal) return;
+  if (typeof hideChatCommandMenu === 'function') hideChatCommandMenu();
   if (modal.classList.contains('show')) {
     const el = document.getElementById('skillPrompt');
     if (el) el.focus();
@@ -64,6 +69,155 @@ async function closeSkillManager() {
   modal.classList.remove('show');
   restoreOverlayFocus();
 }
+
+// ===== 聊天命令用的技能选择器 =====
+function openSkillPicker(searchText) {
+  const modal = document.getElementById('skillPickerModal');
+  if (!modal) return;
+  if (typeof hideChatCommandMenu === 'function') hideChatCommandMenu();
+  if (!modal.classList.contains('show')) rememberOverlayFocus();
+  skillPickerSearchQuery = String(searchText || '').trim();
+  skillPickerFilterSource = 'all';
+  const search = document.getElementById('skillPickerSearch');
+  if (search) search.value = skillPickerSearchQuery;
+  document.querySelectorAll('#skillPickerFilterRow .skill-filter').forEach(btn => {
+    const on = btn.getAttribute('data-source') === 'all';
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  skillPickerLoading = true;
+  modal.classList.add('show');
+  _renderSkillPickerList();
+  sendToRust('listSkills', {});
+  clearTimeout(_skillPickerLoadTimer);
+  _skillPickerLoadTimer = setTimeout(() => {
+    if (!skillPickerLoading) return;
+    skillPickerLoading = false;
+    _renderSkillPickerList();
+  }, 10000);
+  setTimeout(() => {
+    const el = document.getElementById('skillPickerSearch');
+    if (el) el.focus();
+  }, 50);
+}
+
+function closeSkillPicker() {
+  const modal = document.getElementById('skillPickerModal');
+  if (!modal || !modal.classList.contains('show')) return;
+  modal.classList.remove('show');
+  clearTimeout(_skillPickerLoadTimer);
+  _skillPickerLoadTimer = null;
+  skillPickerLoading = false;
+  restoreOverlayFocus();
+}
+
+function openSkillManagerFromPicker() {
+  closeSkillPicker();
+  // 等聚焦恢复回输入区后再打开管理面板，关闭管理面板时焦点才能回到输入框。
+  setTimeout(openSkillManager, 0);
+}
+
+function filterSkillPickerList(value) {
+  skillPickerSearchQuery = String(value || '').trim().toLowerCase();
+  _renderSkillPickerList();
+}
+
+function setSkillPickerFilter(source, el) {
+  skillPickerFilterSource = source || 'all';
+  document.querySelectorAll('#skillPickerFilterRow .skill-filter').forEach(btn => {
+    const on = btn.getAttribute('data-source') === skillPickerFilterSource;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  _renderSkillPickerList();
+}
+
+function _skillPickerMatches(skill) {
+  if (skillPickerFilterSource === 'user' && skill.source !== 'user') return false;
+  if (skillPickerFilterSource === 'builtin' && skill.source !== 'builtin') return false;
+  if (!skillPickerSearchQuery) return true;
+  const charts = Array.isArray(skill.chart_types) ? skill.chart_types.join(' ') : '';
+  const tasks = Array.isArray(skill.analysis_tasks) ? skill.analysis_tasks.join(' ') : '';
+  const keywords = Array.isArray(skill.user_keywords) ? skill.user_keywords.join(' ') : '';
+  const haystack = [skill.name, skill.title, skill.description, charts, tasks, keywords].join(' ').toLowerCase();
+  return haystack.indexOf(skillPickerSearchQuery) >= 0;
+}
+
+function _renderSkillPickerList() {
+  const list = document.getElementById('skillPickerList');
+  if (!list) return;
+  const count = document.getElementById('skillPickerCount');
+  const hint = document.getElementById('skillPickerHint');
+  const filtered = (skillAll || []).filter(_skillPickerMatches);
+  if (count) {
+    count.textContent = filtered.length === (skillAll || []).length
+      ? (skillAll || []).length + ' 个技能'
+      : filtered.length + ' / ' + (skillAll || []).length + ' 个技能';
+  }
+  if (hint) {
+    hint.textContent = skillPickerLoading
+      ? '正在加载技能…'
+      : (skillPickerSearchQuery
+          ? '找到 ' + filtered.length + ' 个技能；点击任意一项加载到本次对话。'
+          : '选择一个技能后，输入区会显示技能标签；发送时自动带入本次对话。');
+  }
+  if (skillPickerLoading) {
+    list.innerHTML = '<div class="skill-empty"><div class="skill-empty-icon">⏳</div><div>正在加载技能…</div></div>';
+    return;
+  }
+  if (!filtered.length) {
+    list.innerHTML = '<div class="skill-empty"><div class="skill-empty-icon">🧩</div><div>' +
+      ((skillAll || []).length ? '没有匹配的技能，换个关键词或来源筛选试试。' : '还没有技能，可以先去技能管理创建一个。') +
+      '</div></div>';
+    return;
+  }
+  list.innerHTML = filtered.map(skill => {
+    const invalid = !!skill.invalid;
+    const isUser = skill.source === 'user';
+    const tags = [];
+    tags.push('<span class="skill-tag ' + (isUser ? 'user' : '') + '">' + (isUser ? '用户' : '内置') + '</span>');
+    if (skill.overrides_builtin) tags.push('<span class="skill-tag warn">覆盖内置</span>');
+    if (invalid) tags.push('<span class="skill-tag warn">解析失败</span>');
+    (Array.isArray(skill.chart_types) ? skill.chart_types : []).slice(0, 3).forEach(type =>
+      tags.push('<span class="skill-tag chart">' + escHtml(type) + '</span>')
+    );
+    const tagHtml = tags.join('');
+    return '<button type="button" class="skill-picker-item" data-skill-picker="' + escAttr(skill.name) + '"' +
+      (invalid ? ' disabled aria-disabled="true"' : '') + ' aria-label="使用技能 ' + escAttr(skill.title || skill.name) + '">' +
+      '<span class="skill-picker-icon" aria-hidden="true">🧩</span>' +
+      '<span class="skill-picker-main">' +
+        '<span class="skill-picker-title-row"><span class="skill-picker-title">' + escHtml(skill.title || skill.name) + '</span>' +
+          '<span class="skill-picker-slug">' + escHtml(skill.name) + '</span></span>' +
+        '<span class="skill-picker-desc">' + escHtml(invalid ? 'SKILL.md 解析失败，请先到技能管理修复或删除。' : (skill.description || '暂无描述')) + '</span>' +
+        '<span class="skill-picker-tags">' + tagHtml + '</span>' +
+      '</span>' +
+      '<span class="skill-picker-use">' + (invalid ? '不可用' : '使用') + '</span>' +
+      '</button>';
+  }).join('');
+}
+
+function useSkillFromPicker(name) {
+  const skill = (skillAll || []).filter(item => item && item.name === name)[0];
+  if (!skill) return;
+  if (skill.invalid) {
+    window.app.showToast('这个技能解析失败，请先到技能管理修复', 'error');
+    return;
+  }
+  setActiveSkill(skill);
+  closeSkillPicker();
+  const input = document.getElementById('prompt-input');
+  if (input) input.focus();
+  window.app.showToast('已加载技能：' + (skill.title || skill.name), 'success');
+}
+
+(function initSkillPickerEvents() {
+  const list = document.getElementById('skillPickerList');
+  if (!list) return;
+  list.addEventListener('click', ev => {
+    const item = ev.target.closest ? ev.target.closest('[data-skill-picker]') : null;
+    if (item && !item.disabled) useSkillFromPicker(item.getAttribute('data-skill-picker'));
+  });
+})();
 
 function setSkillMeta(text) {
   const el = document.getElementById('skillMeta');
@@ -410,7 +564,11 @@ window.app.renderSkillList = function (jsonStr) {
     }
   });
   skillAll = skills;
+  clearTimeout(_skillPickerLoadTimer);
+  _skillPickerLoadTimer = null;
+  skillPickerLoading = false;
   _renderSkillListItems();
+  _renderSkillPickerList();
 };
 
 function filterSkillList(value) {

@@ -36,6 +36,7 @@ const state = {
   conversationId: null,   // 当前对话 ID（资产面板按它加载）
   assets: [],             // 当前对话图表资产 [{chart_id,title,version,...}]
   assetsLoading: false,
+  activeSkill: null,      // 本次对话已加载的技能 {name,title,description,...}
   optimizeTarget: null,   // 二次优化目标 {chartId, title}
   followTail: true,       // 聊天区是否跟随最新内容（用户上滑阅读时为 false）
   unread: 0,              // 未读新内容条数（上滑时累积，用于“回到最新”角标）

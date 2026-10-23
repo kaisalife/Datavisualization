@@ -76,6 +76,7 @@ function convItemHtml(c) {
   const stCls = ['success','failed','running','pending'].includes(st) ? st : 'pending';
   const icon = '📈';
   const date = (c.createdAt || '').substring(0, 16);
+  const displayPrompt = typeof displayUserPrompt === 'function' ? displayUserPrompt(c.prompt) : (c.prompt || '');
   const sel = state.selectMode;
   const checked = sel && state.selectedIds && state.selectedIds.indexOf(c.id) >= 0;
   const checkbox = sel ? '<input type="checkbox" class="conv-checkbox" data-action="toggle" tabindex="-1" ' + (checked ? 'checked' : '') + '>' : '';
@@ -89,7 +90,7 @@ function convItemHtml(c) {
     checkbox +
     '<div class="conv-icon">' + icon + '</div>' +
     '<div class="conv-content">' +
-      '<div class="conv-title">' + escHtml(c.prompt || '(无提示词)') + '</div>' +
+      '<div class="conv-title">' + escHtml(displayPrompt || '(无提示词)') + '</div>' +
       '<div class="conv-meta"><span>' + date + '</span><span class="conv-status ' + stCls + '">' + st + '</span></div>' +
       actions +
     '</div></div>';
