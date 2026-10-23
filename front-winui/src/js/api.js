@@ -17,7 +17,10 @@ function _flushLogs() {
   if (autoOpen) {
     body.classList.add('show');
     const toggle = state.activeTaskEl.querySelector('.agent-log-toggle');
-    if (toggle) toggle.classList.add('expanded');
+    if (toggle) {
+      toggle.classList.add('expanded');
+      toggle.setAttribute('aria-expanded', 'true');
+    }
   }
 
   const frag = document.createDocumentFragment();
@@ -148,7 +151,10 @@ window.app = {
       // 想看执行细节仍可点“查看 Agent 执行日志”。失败时保持展开便于排查。
       const logBody = state.activeTaskEl.querySelector('.agent-log-body');
       const logToggle = state.activeTaskEl.querySelector('.agent-log-toggle');
-      if (logToggle) logToggle.classList.remove('expanded');
+      if (logToggle) {
+        logToggle.classList.remove('expanded');
+        logToggle.setAttribute('aria-expanded', 'false');
+      }
       if (logBody) logBody.classList.remove('show');
       state.autoOpenLogs = false;
     }
@@ -255,6 +261,7 @@ window.app = {
     while (c.children.length >= TOAST_MAX) c.removeChild(c.firstChild);
     const d = document.createElement('div');
     d.className = 'toast ' + (type || 'info');
+    d.setAttribute('role', type === 'error' ? 'alert' : 'status');
     d.textContent = message;
     c.appendChild(d);
     setTimeout(() => { d.style.opacity = '0'; d.style.transition = 'opacity 0.3s'; setTimeout(() => d.remove(), 300); }, 3000);

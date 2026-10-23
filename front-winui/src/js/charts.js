@@ -128,9 +128,11 @@ function renderChartGrid(container, items) {
     // 二次优化入口：点击后输入区进入优化模式（只改图形实现，不重跑数据）
     if (status === 'success' && item.chartId) {
       const ob = document.createElement('button');
+      ob.type = 'button';
       ob.className = 'optimize-btn';
       ob.textContent = '🛠 优化';
-      ob.title = '基于这张图提出修改（标题/配色/TopN…），只跑优化 agent';
+      ob.setAttribute('data-tip', '基于这张图提出修改（标题/配色/TopN…），只跑优化 agent');
+      ob.setAttribute('aria-label', '优化这张图表');
       ob.onclick = function(ev) {
         ev.stopPropagation();
         setOptimizeTarget(item.chartId, item.title || item.chartId);
@@ -154,7 +156,18 @@ function renderChartGrid(container, items) {
     card.appendChild(thumb);
     card.appendChild(info);
     if (status === 'success') {
+      const cardLabel = '查看图表：' + (item.title || item.chartType || '图表');
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', cardLabel);
       card.onclick = function() { openChartViewer(item); };
+      card.addEventListener('keydown', function(ev) {
+        if (ev.target !== card) return;
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          openChartViewer(item);
+        }
+      });
     }
     grid.appendChild(card);
   });
@@ -241,9 +254,10 @@ function renderContextCards(container, cards, options) {
       card.meta.clarification.length > 0
     ) {
       const action = document.createElement('button');
+      action.type = 'button';
       action.className = 'context-action';
       action.textContent = '补充说明';
-      action.title = '恢复本次数据源，并在输入框中继续调整';
+      action.setAttribute('data-tip', '恢复本次数据源，并在输入框中继续调整');
       action.addEventListener('click', () => {
         const input = document.getElementById('prompt-input');
         if (!input) return;
@@ -307,8 +321,12 @@ function closeChartViewer() {
 }
 
 function cvTab(tab, el) {
-  document.querySelectorAll('.cv-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.cv-tab').forEach(t => {
+    t.classList.remove('active');
+    t.setAttribute('aria-selected', 'false');
+  });
   el.classList.add('active');
+  el.setAttribute('aria-selected', 'true');
   document.querySelectorAll('.cv-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('cvPanel-' + tab).classList.add('active');
 }

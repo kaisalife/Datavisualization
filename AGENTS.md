@@ -165,7 +165,11 @@ $env:BACKEND_URL="http://localhost:5000"
   `cargo test --target x86_64-pc-windows-gnu bridge::tests::silent_connection_does_not_block_bridge`）。
   JS 侧 `sendToRust` 10s 超时、失败限流提示，**不自动重试**（避免重复提交任务）。
 - **渲染上限**：数据预览表最多 200 行（`DP_MAX_PREVIEW_ROWS`），图表查看器日志最多 500 条，Toast 最多 4 个。
+- **图标按钮的悬浮说明统一用 `data-tip`**：`utils.js` 的自定义 tooltip 在悬浮 320ms / 键盘聚焦时显示，
+  自动上下翻转并夹在视口内；旧的 `title` 会在首次悬浮时迁移成 `data-tip`，避免和原生提示重复。
+  新增图标按钮要同时写 `aria-label` + `data-tip`；关闭按钮用 `<button>`，不要把可点击的 ✕ 留在 div/span 上。
 - 交互可访问性：`:focus-visible` 焦点环、`prefers-reduced-motion` 减少动画、图标按钮带 `aria-label`。
+  图表卡片、建议卡片支持 Enter/Space；日志/轨迹折叠按钮用 `aria-expanded` 同步状态。
   没有前端热重载，改完 JS/CSS/HTML 必须重新 `cargo build --target x86_64-pc-windows-gnu`。
 
 ## 依赖约束（不要随手升级）

@@ -259,10 +259,11 @@ function renderFileTree(filter) {
   let html = '';
   files.forEach(f => {
     const canAdd = isData(f.name);
-    html += '<div class="file-node"' + (canAdd ? ' data-add-path="' + escAttr(f.path) + '" tabindex="0" role="button"' : '') + '>' +
+    const addLabel = '添加 ' + f.name + ' 到对话';
+    html += '<div class="file-node"' + (canAdd ? ' data-add-path="' + escAttr(f.path) + '" tabindex="0" role="button" aria-label="' + escAttr(addLabel) + '"' : '') + '>' +
       '<span style="width:12px"></span><span class="file-icon">' + iconFor(f.name) + '</span>' +
       '<span class="file-name">' + escHtml(f.name) + '</span>' +
-      (canAdd ? '<span class="add-btn" title="添加到对话"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>' : '') +
+      (canAdd ? '<span class="add-btn" data-tip="添加到对话" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>' : '') +
     '</div>';
   });
   container.innerHTML = html;
@@ -325,9 +326,12 @@ function renderFileChips() {
     nameEl.className = 'chip-name';
     nameEl.textContent = name;
     nameEl.title = isObj ? name : item;
-    const remove = document.createElement('span');
+    const remove = document.createElement('button');
+    remove.type = 'button';
     remove.className = 'remove';
     remove.textContent = '✕';
+    remove.setAttribute('data-tip', '从对话移除');
+    remove.setAttribute('aria-label', '移除文件 ' + name);
     remove.onclick = function() { state.files.splice(idx, 1); renderFileChips(); };
     chip.appendChild(icon);
     chip.appendChild(nameEl);
@@ -343,9 +347,12 @@ function renderFileChips() {
     nameEl.className = 'chip-name';
     nameEl.textContent = state.apiConfig.url.substring(0, 30);
     nameEl.title = state.apiConfig.url;
-    const remove = document.createElement('span');
+    const remove = document.createElement('button');
+    remove.type = 'button';
     remove.className = 'remove';
     remove.textContent = '✕';
+    remove.setAttribute('data-tip', '移除 API 数据源');
+    remove.setAttribute('aria-label', '移除 API 数据源');
     remove.onclick = function() { state.apiConfig = null; renderFileChips(); };
     chip.appendChild(icon);
     chip.appendChild(nameEl);

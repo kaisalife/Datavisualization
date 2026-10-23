@@ -70,7 +70,7 @@ function appendAiChartsMessage(parsed) {
     '<div class="msg-bubble">已为你生成以下图表，点击卡片可全屏预览。</div>' +
     '<div class="task-context"></div>' +
     '<div class="task-charts"></div>' +
-    '<div class="msg-actions"><button class="msg-action-btn" onclick="copyLastCharts()">复制</button></div>';
+    '<div class="msg-actions"><button type="button" class="msg-action-btn" data-tip="复制本次图表的访问链接" aria-label="复制本次图表链接" onclick="copyLastCharts()">复制链接</button></div>';
   msg.innerHTML = '<div class="msg-avatar ai">📊</div>';
   msg.appendChild(content);
   area.appendChild(msg);
@@ -97,9 +97,9 @@ function buildAiTaskMessage(text) {
     '<div class="task-context"></div>' +
     '<div class="task-charts"></div>' +
     '<div class="task-summary" style="font-size:13px;color:var(--text-secondary);margin-top:6px"></div>' +
-    '<div class="agent-log-toggle" onclick="toggleLog(this)"><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>查看 Agent 执行日志</div>' +
+    '<button type="button" class="agent-log-toggle" aria-expanded="false" onclick="toggleLog(this)"><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>查看 Agent 执行日志</button>' +
     '<div class="agent-log-body"></div>' +
-    '<div class="trace-toggle" onclick="toggleTrace(this)"><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>执行轨迹</div>' +
+    '<button type="button" class="trace-toggle" aria-expanded="false" onclick="toggleTrace(this)"><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>执行轨迹</button>' +
     '<div class="trace-timeline"></div>' +
     '<div class="token-counter">0 tokens</div>' +
     '<div class="error-panel" style="display:none"></div>' +
@@ -116,12 +116,14 @@ function buildAiTaskMessage(text) {
 
 function toggleLog(el) {
   el.classList.toggle('expanded');
+  el.setAttribute('aria-expanded', el.classList.contains('expanded') ? 'true' : 'false');
   const body = el.nextElementSibling;
   if (body) body.classList.toggle('show');
 }
 
 function toggleTrace(el) {
   el.classList.toggle('expanded');
+  el.setAttribute('aria-expanded', el.classList.contains('expanded') ? 'true' : 'false');
   var next = el.nextElementSibling;
   if (next) {
     if (next.classList.contains('trace-timeline')) {
@@ -138,9 +140,22 @@ function copyActiveLogs() {
 }
 
 function copyLastCharts() {
-  copyText('图表链接已复制')
-    .then(() => window.app.showToast('已复制', 'success'))
-    .catch(() => window.app.showToast('复制失败', 'error'));
+  const items = (state.lastChartData && state.lastChartData.items) || [];
+  const base = String(state.backendUrl || '').replace(/\/+$/, '');
+  const links = items
+    .filter(item => item && item.path)
+    .map(item => {
+      const path = String(item.path);
+      const url = /^https?:\/\//i.test(path) ? path : base + (path.charAt(0) === '/' ? path : '/' + path);
+      return (item.title || item.chartType || '图表') + '：' + url;
+    });
+  if (links.length === 0) {
+    window.app.showToast('没有可复制的图表链接', 'info');
+    return;
+  }
+  copyText(links.join('\n'))
+    .then(() => window.app.showToast('图表链接已复制', 'success'))
+    .catch(() => window.app.showToast('复制失败，请稍后重试', 'error'));
 }
 
 function regenerate() {

@@ -199,7 +199,7 @@ function renderDbTablesResult(jsonStr) {
     ' · ' + tables.length + ' 张表</div>';
   if (tables.length) {
     html += '<div class="db-table-chips">' + tables.map(t =>
-      '<button type="button" class="db-table-chip" data-table="' + escAttr(t) + '" title="点击加入表名" onclick="toggleDbTable(this)">' + escHtml(t) + '</button>'
+      '<button type="button" class="db-table-chip" data-table="' + escAttr(t) + '" data-tip="点击加入表名" aria-label="加入表名 ' + escAttr(t) + '" onclick="toggleDbTable(this)">' + escHtml(t) + '</button>'
     ).join('') + '</div>' +
       '<div class="db-test-hint">点击表名加入「表名」输入框，再点一次移除</div>';
   } else {

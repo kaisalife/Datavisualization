@@ -8,15 +8,22 @@ function useSuggestion(type) {
 }
 
 function selectMode(el, mode) {
-  document.querySelectorAll('.mode-chip[data-mode]').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.mode-chip[data-mode]').forEach(c => {
+    c.classList.remove('active');
+    c.setAttribute('aria-pressed', 'false');
+  });
   el.classList.add('active');
+  el.setAttribute('aria-pressed', 'true');
   state.vizMode = mode;
 }
 
 function toggleMultiTable() {
   state.multiTable = !state.multiTable;
   const chip = document.getElementById('multi-table-chip');
-  if (chip) chip.classList.toggle('active', state.multiTable);
+  if (chip) {
+    chip.classList.toggle('active', state.multiTable);
+    chip.setAttribute('aria-pressed', state.multiTable ? 'true' : 'false');
+  }
 }
 
 // ===== 二次优化：选中某张已生成的图，输入区进入优化模式 =====
