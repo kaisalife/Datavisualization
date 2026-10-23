@@ -29,6 +29,7 @@ api/
 | `GET`  | `/api/chart/<chart_id>` | `chart_api.py` | ❌ | 获取生成的图表 HTML |
 | `POST` | `/api/optimize-chart` | `chart_api.py` | ✅ | 单图二次优化（异步，只跑优化 agent） |
 | `GET`  | `/api/task-assets/<task_id>` | `chart_api.py` | ✅ | 任务图表资产清单（前端资产卡） |
+| `GET`  | `/api/conversation-assets/<id>` | `chart_api.py` | ✅ | 当前对话资产（含优化版本链） |
 | `POST` | `/api/complete-viz-code` | `code_api.py` | ✅ | 现有 Python 文件追加可视化代码 |
 | `POST` | `/api/data-profile` | `data_api.py` | ✅ | 数据预览 / 图片·PDF 抽表 |
 | `GET`  | `/api/data-profile/export` | `data_api.py` | ✅ | 导出预览数据（CSV / ZIP） |
@@ -213,6 +214,7 @@ X-API-Key: <your_key>
     "plan_id": "p1",
     "version": 0,                   # 优化版本：原图 0，第一次优化 1…
     "origin_chart_id": "",          # 优化产物指向被优化的原图
+    "root_chart_id": "chart_p1_...",# 版本链根图（前端按它分组）
     "optimize_prompt": "",          # 优化指令摘要（原图为空）
     "created_at": "2026-10-22T15:30:00"
 }]}
@@ -220,6 +222,36 @@ X-API-Key: <your_key>
 
 数据从该任务登记的 `assets.json` 记录过滤（产物文件仍存在才返回）；登记机制
 之前的历史任务从任务 `raw.successful_charts` 现场合成兜底。任务不存在返回 `404`。
+
+---
+
+### GET /api/conversation-assets/{conversation_id}
+
+当前对话的图表资产清单，供前端「资产」页签做可视化管理。除本对话/本任务的
+资产外，还会沿 `origin_chart_id` 把同一张图的后续优化版本一并返回；因此优化任务
+即使新建了对话，原对话仍能看到 v0/v1/v2 的完整版本链。
+
+```
+200 OK
+{
+  "conversation_id": "...",
+  "task_id": "...",
+  "assets": [{
+    "chart_id": "chart_p1_20261022_153000.html",
+    "title": "月度销售额趋势",
+    "chart_type": "Line",
+    "plan_id": "p1",
+    "version": 0,
+    "origin_chart_id": "",
+    "root_chart_id": "chart_p1_20261022_153000.html",
+    "optimize_prompt": "",
+    "created_at": "2026-10-22T15:30:00"
+  }]
+}
+```
+
+对话不存在返回 `404`；登记机制之前的历史对话从 `html_file_paths` / `charts`
+现场合成兜底。资产登记从生成/优化任务的 `TraceContext` 读取 `conversation_id`。
 
 ---
 

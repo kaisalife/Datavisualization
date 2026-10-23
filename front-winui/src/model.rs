@@ -14,6 +14,8 @@ pub struct MainModel {
     pub(crate) backend_url: String,
     pub(crate) client: api::ApiClient,
     pub(crate) task_id: Option<String>,
+    /// 当前对话 ID（生成/优化提交后由后端返回，历史详情也有）
+    pub(crate) conversation_id: Option<String>,
     pub(crate) conversations: Vec<api::types::ConversationSummary>,
     pub(crate) selected_db: Option<api::types::DbConfig>,
     pub(crate) settings: AppSettings,

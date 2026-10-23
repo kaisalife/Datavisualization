@@ -19,6 +19,7 @@ impl MainModel {
         match msg.action.as_str() {
             "sendPrompt" => self.handle_send_prompt(msg.data, sender),
             "optimizeChart" => self.handle_optimize_chart(msg.data, sender),
+            "listConversationAssets" => self.handle_list_conversation_assets(msg.data, sender),
             "cancelTask" => self.handle_cancel_task(sender),
             "newChat" => self.handle_new_chat(),
             "loadHistory" => self.handle_load_history(sender),
@@ -155,7 +156,13 @@ impl MainModel {
                         sender.post(MainMessage::AppendLog(format!("任务已提交: {}", task_id)));
                         sender.post(MainMessage::SetStatus("生成中...".to_string()));
                         sender.post(MainMessage::TaskStarted(task_id.clone()));
-                        Self::watch_task_flow(&client, &sender, &task_id).await;
+                        Self::watch_task_flow(
+                            &client,
+                            &sender,
+                            &task_id,
+                            resp.conversation_id.clone(),
+                        )
+                        .await;
                     }
                     Err(e) => {
                         sender.post(MainMessage::TaskFailed(format!("提交失败: {}", e)));
@@ -173,7 +180,13 @@ impl MainModel {
         client: &api::client::ApiClient,
         sender: &ComponentSender<MainModel>,
         task_id: &str,
+        conversation_id: Option<String>,
     ) {
+        if let Some(cid) = conversation_id {
+            if !cid.is_empty() {
+                sender.post(MainMessage::ConversationAssigned(cid));
+            }
+        }
         let ws_url = client.ws_task_url(task_id);
         let api_key = client.api_key().to_string();
         let ws_task = tokio::task::spawn_blocking(move || {
@@ -264,6 +277,56 @@ impl MainModel {
         }
     }
 
+    /// 当前对话的图表资产（含优化版本链）
+    fn handle_list_conversation_assets(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let conversation_id = data
+            .get("conversationId")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.conversation_id.clone());
+
+        let Some(conversation_id) = conversation_id else {
+            return self.handle_conversation_assets_loaded(
+                api::types::ConversationAssetsResponse {
+                    conversation_id: String::new(),
+                    task_id: None,
+                    assets: Vec::new(),
+                },
+            );
+        };
+
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                match client.get_conversation_assets(&conversation_id).await {
+                    Ok(resp) => sender.post(MainMessage::ConversationAssetsLoaded(resp)),
+                    Err(e) => {
+                        // 失败也要结束 loading 状态，避免资产面板一直转圈
+                        sender.post(MainMessage::ConversationAssetsLoaded(
+                            api::types::ConversationAssetsResponse {
+                                conversation_id: conversation_id.clone(),
+                                task_id: None,
+                                assets: Vec::new(),
+                            },
+                        ));
+                        sender.post(MainMessage::ShowToast {
+                            message: format!("加载图表资产失败: {}", e),
+                            toast_type: "error".to_string(),
+                        });
+                    }
+                }
+            });
+        });
+        Ok(true)
+    }
+
     /// 单图二次优化：对选中图表按优化指令重渲染（不重跑数据接入与规划）
     fn handle_optimize_chart(
         &mut self,
@@ -329,7 +392,13 @@ impl MainModel {
                         let task_id = resp.task_id.clone();
                         sender.post(MainMessage::AppendLog(format!("优化任务已提交: {}", task_id)));
                         sender.post(MainMessage::TaskStarted(task_id.clone()));
-                        Self::watch_task_flow(&client, &sender, &task_id).await;
+                        Self::watch_task_flow(
+                            &client,
+                            &sender,
+                            &task_id,
+                            resp.conversation_id.clone(),
+                        )
+                        .await;
                     }
                     Err(e) => {
                         sender.post(MainMessage::TaskFailed(format!("提交失败: {}", e)));
@@ -740,6 +809,7 @@ impl MainModel {
 
     /// 清空聊天并开始新对话
     fn handle_new_chat(&mut self) -> std::result::Result<bool, Error> {
+        self.conversation_id = None;
         self.js_clear_messages();
         Ok(true)
     }
@@ -793,6 +863,7 @@ impl MainModel {
             Some(id) => id.to_string(),
             None => return Ok(false),
         };
+        self.conversation_id = Some(conv_id.clone());
         self.js_set_status(&format!("正在获取对话详情: {}", conv_id));
         let client = self.client.clone();
         let sender = sender.clone();
@@ -972,7 +1043,9 @@ impl MainModel {
                 })
             })
             .collect();
+        self.conversation_id = Some(detail.conversation_id.clone());
         let json = serde_json::json!({
+            "conversation_id": detail.conversation_id,
             "user_prompt": detail.user_prompt,
             "file_paths": detail.file_paths,
             "viz_mode": detail.viz_mode,
@@ -1000,6 +1073,31 @@ impl MainModel {
         Ok(false)
     }
 
+    /// 记录本次任务所属对话，资产面板据此加载
+    pub(crate) fn handle_conversation_assigned(
+        &mut self,
+        conversation_id: String,
+    ) -> std::result::Result<bool, Error> {
+        self.conversation_id = Some(conversation_id.clone());
+        self.js_set_current_conversation(&conversation_id);
+        Ok(false)
+    }
+
+    /// 资产清单加载完成，交给前端渲染
+    pub(crate) fn handle_conversation_assets_loaded(
+        &mut self,
+        assets: api::types::ConversationAssetsResponse,
+    ) -> std::result::Result<bool, Error> {
+        let json = serde_json::to_string(&serde_json::json!({
+            "conversationId": assets.conversation_id,
+            "taskId": assets.task_id,
+            "assets": assets.assets,
+        }))
+        .unwrap_or_else(|_| "{\"assets\":[]}".to_string());
+        self.js_set_conversation_assets(&json);
+        Ok(false)
+    }
+
     /// 任务完成，在聊天中展示图表卡片
     pub(crate) fn handle_task_completed(
         &mut self,
@@ -1023,6 +1121,7 @@ impl MainModel {
                     "type": "charts",
                     "items": [],
                     "contextCards": context_cards,
+                    "conversationId": self.conversation_id.clone().unwrap_or_default(),
                 })
                 .to_string(),
             );
@@ -1048,6 +1147,7 @@ impl MainModel {
                 "type": "charts",
                 "items": items,
                 "contextCards": context_cards,
+                "conversationId": self.conversation_id.clone().unwrap_or_default(),
             })
             .to_string();
             self.js_complete_task(&chart_json);

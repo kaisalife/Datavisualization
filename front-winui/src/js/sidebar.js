@@ -10,7 +10,10 @@ function switchSidebarTab(tab, el) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + tab).classList.add('active');
   if (tab === 'conversations') renderConversations();
-  else renderFileTree();
+  else if (tab === 'assets') {
+    renderAssets();
+    loadConversationAssets();
+  } else renderFileTree();
 }
 
 // ===== 对话列表 =====

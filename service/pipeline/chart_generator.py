@@ -250,12 +250,16 @@ async def generate_single_chart(
                 )
                 # 资产登记（弱依赖）：前端资产管理与二次优化入口都靠它反查
                 try:
-                    from service.monitoring.tracer import _task_id as _ctx_task_id
+                    from service.monitoring.tracer import (
+                        _conversation_id as _ctx_conversation_id,
+                        _task_id as _ctx_task_id,
+                    )
                     from service.runtime.chart_assets import record_chart
 
                     record_chart(
                         output_folder,
                         task_id=_ctx_task_id.get() or "",
+                        conversation_id=_ctx_conversation_id.get() or "",
                         plan=plan if isinstance(plan, dict) else None,
                         chart_path=result.chart_path,
                         code_path=code_path,

@@ -14,6 +14,7 @@ import pytest
 from service.runtime.chart_assets import (
     ASSETS_FILENAME,
     find_asset_by_chart_id,
+    find_conversation_assets,
     load_assets,
     next_optimize_version,
     record_chart,
@@ -132,13 +133,50 @@ class TestChartAssets:
             chart_path=str(c2), origin_chart_id="chart_p1_a.html", version=1,
         )
 
-        assert next_optimize_version(load_assets(output_folder), "chart_p1_a.html") == 2
-        assert next_optimize_version(load_assets(output_folder), "不存在.html") == 1
+        assets = load_assets(output_folder)
+        assert next_optimize_version(assets, "chart_p1_a.html") == 2
+        # 继续优化 v1 时也要拿到 v2，不能重复 v1
+        assert next_optimize_version(assets, "chart_p1_opt1_x.html") == 2
+        assert next_optimize_version(assets, "不存在.html") == 1
 
     def test_corrupted_assets_file_returns_empty(self, output_folder):
         (output_folder / ASSETS_FILENAME).write_text("not json", encoding="utf-8")
 
         assert load_assets(output_folder) == []
+
+    def test_conversation_assets_include_optimize_lineage(self, output_folder, tmp_path):
+        """按对话聚合时，v0 的对话也要能看到后续优化版本（v1/v2）。"""
+        c0 = _make_chart(output_folder, "chart_p1_v0.html")
+        c1 = _make_chart(output_folder, "chart_p1_v1.html")
+        c2 = _make_chart(output_folder, "chart_p1_v2.html")
+        record_chart(
+            output_folder, task_id="t1", conversation_id="conv1",
+            plan=PLAN, chart_path=str(c0),
+        )
+        record_chart(
+            output_folder, task_id="t2", conversation_id="conv2",
+            plan={**PLAN, "plan_id": "p1_opt1"}, chart_path=str(c1),
+            origin_chart_id=c0.name, version=1,
+        )
+        record_chart(
+            output_folder, task_id="t3", conversation_id="conv3",
+            plan={**PLAN, "plan_id": "p1_opt2"}, chart_path=str(c2),
+            origin_chart_id=c1.name, version=2,
+        )
+
+        cards = find_conversation_assets("conv1", task_id="t1", charts_root=tmp_path)
+
+        assert [card["chart_id"] for card in cards] == [c0.name, c1.name, c2.name]
+        assert {card["root_chart_id"] for card in cards} == {c0.name}
+
+    def test_conversation_assets_handle_legacy_task_only_records(self, output_folder, tmp_path):
+        """登记 conversation_id 之前的旧资产，仅靠 task_id 仍能查到。"""
+        chart = _make_chart(output_folder, "chart_old.html")
+        record_chart(output_folder, task_id="old-task", plan=PLAN, chart_path=str(chart))
+
+        cards = find_conversation_assets("", task_id="old-task", charts_root=tmp_path)
+
+        assert [card["chart_id"] for card in cards] == [chart.name]
 
 
 class TestOptimizerUnits:
@@ -430,6 +468,54 @@ class TestTaskAssetsApi:
         assert cards[0]["chart_id"] == "chart_p1_a.html"
         assert cards[0]["chart_type"] == "Line"
         assert "output_folder" not in cards[0]  # 不暴露路径细节
+
+    def test_conversation_assets_api(self, client, monkeypatch, output_folder):
+        chart = _make_chart(output_folder, "chart_conv.html")
+        record_chart(
+            output_folder, task_id="task1", conversation_id="conv1",
+            plan=PLAN, chart_path=str(chart),
+        )
+
+        import service.runtime.constants as constants
+        import service.runtime.conversation_store as store
+
+        monkeypatch.setattr(constants, "get_charts_dir", lambda: output_folder.parent)
+        monkeypatch.setattr(store, "get_conversation", lambda cid: {
+            "conversation_id": cid, "task_id": "task1",
+            "html_file_paths": [], "charts": [],
+        })
+
+        resp = client.get("/api/conversation-assets/conv1")
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["conversation_id"] == "conv1"
+        assert body["task_id"] == "task1"
+        assert [card["chart_id"] for card in body["assets"]] == [chart.name]
+
+    def test_conversation_assets_unknown_404(self, client, monkeypatch):
+        import service.runtime.conversation_store as store
+
+        monkeypatch.setattr(store, "get_conversation", lambda cid: None)
+        resp = client.get("/api/conversation-assets/missing")
+
+        assert resp.status_code == 404
+
+    def test_conversation_assets_fallback_from_conversation_result(self, client, monkeypatch):
+        import service.runtime.conversation_store as store
+
+        monkeypatch.setattr(store, "get_conversation", lambda cid: {
+            "conversation_id": cid,
+            "task_id": "old-task",
+            "html_file_paths": ["C:\\x\\chart_old_1.html"],
+            "charts": ["Bar"],
+        })
+        resp = client.get("/api/conversation-assets/old-conv")
+
+        assert resp.status_code == 200
+        cards = resp.get_json()["assets"]
+        assert cards[0]["chart_id"] == "chart_old_1.html"
+        assert cards[0]["chart_type"] == "Bar"
 
     def test_fallback_from_raw_success(self, client, monkeypatch):
         old = {

@@ -644,6 +644,35 @@ impl ApiClient {
         }
     }
 
+    /// 获取当前对话的图表资产（含优化版本链）
+    pub async fn get_conversation_assets(
+        &self,
+        conversation_id: &str,
+    ) -> Result<ConversationAssetsResponse> {
+        let url = format!(
+            "{}/api/conversation-assets/{}",
+            self.base_url, conversation_id
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("X-API-Key", &self.api_key)
+            .send()
+            .await
+            .context("网络请求失败")?;
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        if status.is_success() {
+            serde_json::from_str::<ConversationAssetsResponse>(&body)
+                .context(format!("解析响应失败: {}", body))
+        } else {
+            anyhow::bail!(format_http_error(status, &body))
+        }
+    }
+
     /// 删除对话
     pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
         let url = format!("{}/api/conversations/{}", self.base_url, conversation_id);

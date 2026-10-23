@@ -152,26 +152,138 @@ def find_asset_by_chart_id(chart_id: str, charts_root: str | Path | None = None)
 
 
 def next_optimize_version(assets: list[dict[str, Any]], origin_chart_id: str) -> int:
-    """某张图已有优化版本数 + 1（用于新版本命名与登记）。"""
-    return 1 + sum(
-        1 for item in assets
-        if str(item.get("origin_chart_id") or "") == str(origin_chart_id)
-    )
+    """版本链上的下一个版本号（优化 v1 得到 v2，而不是重复 v1）。
+
+    以版本链根图为分组：无论当前优化的是原图还是某个中间版本，都取同一条链
+    已有版本的最大值 + 1。
+    """
+    by_id = {
+        str(item.get("chart_id") or ""): item
+        for item in assets
+        if item.get("chart_id")
+    }
+    root = _root_chart_id(str(origin_chart_id or ""), by_id)
+    versions = [
+        int(item.get("version") or 0)
+        for item in assets
+        if str(item.get("chart_id") or "")
+        and _root_chart_id(str(item.get("chart_id") or ""), by_id) == root
+    ]
+    return (max(versions) if versions else 0) + 1
 
 
 def asset_card(item: dict[str, Any]) -> dict[str, Any]:
     """资产记录 -> 前端卡片字段（只暴露展示/交互所需，不含路径细节）。"""
     title = str(item.get("chart_title") or item.get("plan_name") or "")
+    chart_id = str(item.get("chart_id") or "")
     return {
-        "chart_id": str(item.get("chart_id") or ""),
+        "chart_id": chart_id,
         "title": title,
         "chart_type": str(item.get("chart_type") or ""),
         "plan_id": str(item.get("plan_id") or ""),
         "version": int(item.get("version") or 0),
         "origin_chart_id": str(item.get("origin_chart_id") or ""),
+        # 对话内资产按“原图”分组；没有优化关系时就是自己
+        "root_chart_id": str(
+            item.get("root_chart_id") or item.get("origin_chart_id") or chart_id
+        ),
         "optimize_prompt": str(item.get("optimize_prompt") or ""),
         "created_at": str(item.get("created_at") or ""),
     }
+
+
+def _load_all_assets(charts_root: str | Path | None = None) -> list[dict[str, Any]]:
+    """读取 charts 根目录下全部 assets.json 记录（按目录排序，结果稳定）。"""
+    if charts_root is None:
+        from service.runtime.constants import get_charts_dir
+
+        charts_root = get_charts_dir()
+    root = Path(charts_root)
+    if not root.is_dir():
+        return []
+    records: list[dict[str, Any]] = []
+    for assets_file in sorted(root.rglob(ASSETS_FILENAME)):
+        records.extend(load_assets(assets_file.parent))
+    return records
+
+
+def _root_chart_id(chart_id: str, by_id: dict[str, dict[str, Any]]) -> str:
+    """沿 origin_chart_id 找到版本链的根图（防环、防缺失记录）。"""
+    current = chart_id
+    seen: set[str] = set()
+    while current and current not in seen:
+        seen.add(current)
+        record = by_id.get(current)
+        parent = str(record.get("origin_chart_id") or "") if record else ""
+        if not parent or parent not in by_id:
+            break
+        current = parent
+    return current
+
+
+def find_conversation_assets(
+    conversation_id: str,
+    task_id: str = "",
+    charts_root: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """按对话/任务聚合资产，并把同一张图的优化版本一并带上。
+
+    优化任务会单独建对话，但新资产的 ``origin_chart_id`` 仍指向原图。
+    因此除本对话/本任务的记录外，还要把它们的版本链（根图相同的记录）
+    全部返回，前端资产面板才能看到 v0/v1/v2 的完整脉络。
+
+    Args:
+        conversation_id: 对话 ID（资产登记中的 conversation_id）。
+        task_id: 该对话对应的任务 ID（兼容登记了 conversation_id 之前的旧数据）。
+        charts_root: 图表根目录；缺省用 ``get_charts_dir()``。
+    """
+    conversation_id = str(conversation_id or "")
+    task_id = str(task_id or "")
+    if not conversation_id and not task_id:
+        return []
+
+    records = _load_all_assets(charts_root)
+    by_id = {
+        str(item.get("chart_id") or ""): item
+        for item in records
+        if item.get("chart_id")
+    }
+    selected = [
+        item for item in records
+        if (conversation_id and str(item.get("conversation_id") or "") == conversation_id)
+        or (task_id and str(item.get("task_id") or "") == task_id)
+    ]
+    if not selected:
+        return []
+
+    roots = {
+        _root_chart_id(str(item.get("chart_id") or ""), by_id)
+        for item in selected
+        if item.get("chart_id")
+    }
+    cards: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in records:
+        chart_id = str(item.get("chart_id") or "")
+        if not chart_id or chart_id in seen:
+            continue
+        root = _root_chart_id(chart_id, by_id)
+        if root not in roots:
+            continue
+        # 手工清理掉的产物不返回（与 find_task_assets 一致）
+        if not Path(item.get("chart_path", "")).is_file():
+            continue
+        card = asset_card(item)
+        card["root_chart_id"] = root
+        cards.append(card)
+        seen.add(chart_id)
+
+    cards.sort(key=lambda c: (
+        str(c.get("root_chart_id") or ""),
+        int(c.get("version") or 0),
+        str(c.get("created_at") or ""),
+    ))
+    return cards
 
 
 def find_task_assets(task_id: str, charts_root: str | Path | None = None) -> list[dict[str, Any]]:

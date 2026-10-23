@@ -341,6 +341,22 @@ impl MainModel {
         ));
     }
 
+    /// 同步当前对话 ID 到前端（资产面板据此加载）
+    pub(crate) fn js_set_current_conversation(&mut self, conversation_id: &str) {
+        self.js(&format!(
+            "window.app.setCurrentConversation('{}')",
+            Self::js_escape(conversation_id)
+        ));
+    }
+
+    /// 下发当前对话的图表资产清单
+    pub(crate) fn js_set_conversation_assets(&mut self, assets_json: &str) {
+        self.js(&format!(
+            "window.app.setConversationAssets('{}')",
+            Self::js_escape(assets_json)
+        ));
+    }
+
     /// 代码补全完成，在活动任务消息中展示代码
     pub(crate) fn js_complete_code_task(&mut self, code_json: &str) {
         self.js(&format!(

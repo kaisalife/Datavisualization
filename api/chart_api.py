@@ -239,6 +239,54 @@ def task_assets(task_id):
     return jsonify({"task_id": task_id, "assets": cards})
 
 
+@chart_bp.route("/conversation-assets/<conversation_id>", methods=["GET"])
+@monitor_response("chart_api:conversation_assets")
+def conversation_assets(conversation_id):
+    """当前对话的图表资产清单（含同一张图的优化版本链）。
+
+    前端“资产”面板按对话加载：本对话/本任务的图表，以及它们经
+    ``origin_chart_id`` 关联到的所有优化版本。优化任务虽然会新建对话，
+    旧对话仍能看到后续版本。
+    """
+    auth_error = check_api_key()
+    if auth_error:
+        return auth_error
+
+    conversation_id = str(conversation_id or "").strip()
+    if not conversation_id or "/" in conversation_id or "\\" in conversation_id or ".." in conversation_id:
+        return jsonify(ErrorResponse(detail="Invalid conversation ID").model_dump()), 400
+
+    from service.runtime.chart_assets import asset_card, find_conversation_assets
+    from service.runtime.conversation_store import get_conversation
+
+    conv = get_conversation(conversation_id)
+    if conv is None:
+        return jsonify(ErrorResponse(detail="对话不存在").model_dump()), 404
+
+    task_id = str(conv.get("task_id") or "")
+    cards = find_conversation_assets(conversation_id, task_id=task_id)
+    if not cards:
+        # 兜底：资产登记机制之前的历史对话，从会话结果合成
+        html_paths = conv.get("html_file_paths") or []
+        chart_types = conv.get("charts") or []
+        for i, html_path in enumerate(html_paths):
+            chart_name = Path(str(html_path)).name
+            if not chart_name:
+                continue
+            cards.append(asset_card({
+                "chart_id": chart_name,
+                "chart_title": chart_name,
+                "chart_type": chart_types[i] if i < len(chart_types) else "",
+                "version": 0,
+            }))
+
+    return jsonify({
+        "conversation_id": conversation_id,
+        "task_id": task_id,
+        "assets": cards,
+    })
+
+
 @chart_bp.route("/chart/<chart_id>", methods=["GET"])
 @monitor_response("chart_api:get_chart")
 def get_chart(chart_id):

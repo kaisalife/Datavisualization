@@ -870,14 +870,24 @@ MCP 的 `run_code` 工具都走它）：
 
 - **资产登记**：生成成功路径自动写 `runtime/charts/<数据集>/assets.json`
   （`service/runtime/chart_assets.py`，弱依赖、含路径穿越校验）；登记字段有
-  plan/series 数据路径/代码路径，二次优化全靠它反查。优化产物登记为
+  plan/series 数据路径/代码路径/`task_id`/`conversation_id`，二次优化全靠它反查。
+  `conversation_id` 从 `TraceContext` 的 `_conversation_id` 读取，生成与优化两条
+  路径都要带，否则前端「资产」页签无法按当前对话聚合。优化产物登记为
   `<原 plan_id>_opt<N>`（`origin_chart_id` 指向原图，`version` 递增），原图/原代码
   **永不覆盖**。同一任务的图表并发生成（信号量 3），`record_chart` 的读-改-写由
   `_ASSETS_LOCK` 串行化；否则两张图同时完成会互相覆盖，前端就找不到可优化的图。
 - **优化 API**：`POST /api/optimize-chart`（chart_id + user_prompt，202 建任务）；
   资产早失败校验（缺 plan/series/代码直接 4xx）；`GET /api/task-assets/<task_id>`
-  返回前端资产卡（title/chart_type/version/origin，旧任务从 raw 结果兜底合成）。
+  返回任务资产卡（title/chart_type/version/origin/root，旧任务从 raw 结果兜底合成）。
+  `GET /api/conversation-assets/<conversation_id>` 按对话聚合，并沿
+  `origin_chart_id` 带上同一张图的全部优化版本（优化任务另建对话也不影响版本链）。
   两者共用生成任务的状态机 / WS / 对话日志管线（`api/common.py:_run_optimize_in_executor`）。
+- **前端资产页签**：侧栏第三个页签（`js/assets.js`）展示当前对话的图表与 v0/v1/v2
+  版本链；查看走现有图表查看器，优化按钮复用 `setOptimizeTarget`（只跑优化 agent）。
+  任务完成/失败、加载历史、切换页签都会刷新；`GenerateChartResponse.conversation_id`
+  经 `MainMessage::ConversationAssigned` 写入 Rust，任务完成 JSON 也带
+  `conversationId` 给 JS。改 `assets.js` 后必须重新 `cargo build`（资源是
+  `include_str!` 编译进二进制）。
 - **优化内核**：`service/pipeline/chart_optimizer.py` 复用 debug 循环
   （`SeriesRunCodeTool` 注入读取代码 + `read_series_sample`），消息里强调
   「只改优化指令涉及的部分」；RAG 用同一进程内检索器。进 prompt 前要剥离原 success

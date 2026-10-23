@@ -166,10 +166,13 @@ async def optimize_chart_main(model_, config_path=None, task_id=None):
             "agent_logs": agent_logs,
         }
 
+    from service.monitoring.tracer import _conversation_id as _ctx_conversation_id
+
     version = next_optimize_version(load_assets(output_folder), asset["chart_id"])
     record_chart(
         output_folder,
         task_id=task_id or "",
+        conversation_id=_ctx_conversation_id.get() or "",
         plan={**plan, "plan_id": plan_id},
         chart_path=chart_path,
         code_path=str(output_folder / "code" / f"code_{plan_id}_success.py"),

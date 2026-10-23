@@ -89,6 +89,9 @@ impl VizMode {
 pub struct GenerateChartResponse {
     pub task_id: String,
     pub status: String,
+    /// 后端同时返回所属对话 ID（用于资产面板按对话聚合）
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 // ============================================================
@@ -221,6 +224,38 @@ pub struct ConversationSummary {
 pub struct ConversationListResponse {
     pub conversations: Vec<ConversationSummary>,
     pub total: usize,
+}
+
+/// 单个图表资产卡片（对应 GET /api/conversation-assets/<id>）
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChartAssetCard {
+    pub chart_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub chart_type: String,
+    #[serde(default)]
+    pub plan_id: String,
+    #[serde(default)]
+    pub version: i64,
+    #[serde(default)]
+    pub origin_chart_id: String,
+    #[serde(default)]
+    pub root_chart_id: String,
+    #[serde(default)]
+    pub optimize_prompt: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+/// 当前对话的资产清单（含版本链）
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConversationAssetsResponse {
+    pub conversation_id: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub assets: Vec<ChartAssetCard>,
 }
 
 /// 对话详情

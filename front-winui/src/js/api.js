@@ -84,6 +84,7 @@ window.app = {
     state.activeTaskEl = null;
     state.activeLogs = [];
     _pendingLogs = [];
+    if (typeof resetAssets === 'function') resetAssets();
     // 关闭旧任务的 trace / 阶段计时，避免新会话里混入上一个任务的事件
     _traceQueue = [];
     _pendingToken = null;
@@ -132,6 +133,7 @@ window.app = {
   completeTask(chartsJsonStr) {
     let parsed;
     try { parsed = JSON.parse(chartsJsonStr); } catch(e) { parsed = { items: [] }; }
+    if (parsed.conversationId) state.conversationId = parsed.conversationId;
     window.app.stopStageTimer();
     if (window.app.stopTrace) window.app.stopTrace();
     state.lastChartData = parsed;
@@ -158,6 +160,9 @@ window.app = {
       if (logBody) logBody.classList.remove('show');
       state.autoOpenLogs = false;
     }
+    if (state.conversationId && typeof loadConversationAssets === 'function') {
+      loadConversationAssets();
+    }
     scrollToBottom();
   },
 
@@ -177,6 +182,9 @@ window.app = {
       }
     } else {
       appendMessage('assistant', err, 'text');
+    }
+    if (state.conversationId && typeof loadConversationAssets === 'function') {
+      loadConversationAssets();
     }
     scrollToBottom();
   },
@@ -283,6 +291,18 @@ window.app = {
     state.backendUrl = url || '';
   },
 
+  setCurrentConversation(conversationId) {
+    if (typeof setCurrentConversation === 'function') {
+      setCurrentConversation(conversationId);
+    } else {
+      state.conversationId = conversationId || null;
+    }
+  },
+
+  setConversationAssets(jsonStr) {
+    if (typeof setConversationAssets === 'function') setConversationAssets(jsonStr);
+  },
+
   setModelConfigs(jsonStr) {
     try { state.modelConfigs = JSON.parse(jsonStr); } catch(e) { state.modelConfigs = []; }
     if (typeof renderModelList === 'function') renderModelList();
@@ -345,6 +365,10 @@ window.app = {
     state.activeTaskEl = null;
     state.activeLogs = [];
     _pendingLogs = [];
+    state.conversationId = d.conversation_id || null;
+    state.assets = [];
+    state.assetsLoading = false;
+    if (typeof renderAssets === 'function') renderAssets();
     state.followTail = true;
     state.unread = 0;
     state.autoOpenLogs = true;
@@ -404,6 +428,7 @@ window.app = {
         type: 'charts',
         items: items,
         contextCards: d.context_cards || [],
+        conversationId: d.conversation_id || '',
       }));
     } else if (status === 'failed') {
       window.app.failTask(d.error || '任务失败');
@@ -417,6 +442,14 @@ window.app = {
       if (progress) progress.style.display = 'none';
     }
 
+    // 成功路径由 completeTask 统一刷新；失败/进行中的历史对话在这里补一次
+    if (status !== 'success') {
+      if (state.conversationId && typeof loadConversationAssets === 'function') {
+        loadConversationAssets();
+      } else if (typeof resetAssets === 'function') {
+        resetAssets();
+      }
+    }
     scrollToBottom({ force: true });
   },
 };

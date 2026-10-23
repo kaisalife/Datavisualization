@@ -8,6 +8,10 @@ pub enum MainMessage {
     WindowResized,
     BridgeAction(BridgeMessage),
     TaskStarted(String),
+    /// 后端提交响应返回的对话 ID（生成 / 优化都会返回）
+    ConversationAssigned(String),
+    /// 当前对话资产清单加载完成
+    ConversationAssetsLoaded(api::types::ConversationAssetsResponse),
     TaskCompleted {
         charts: Vec<String>,
         html_files: Vec<String>,

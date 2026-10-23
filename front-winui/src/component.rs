@@ -36,6 +36,7 @@ impl Component for MainModel {
             include_str!("js/utils.js"),
             include_str!("js/messages.js"),
             include_str!("js/charts.js"),
+            include_str!("js/assets.js"),
             include_str!("js/sidebar.js"),
             include_str!("js/settings.js"),
             include_str!("js/input.js"),
@@ -66,6 +67,7 @@ impl Component for MainModel {
             backend_url: backend_display,
             client,
             task_id: None,
+            conversation_id: None,
             conversations: Vec::new(),
             selected_db: None,
             settings,
@@ -117,6 +119,12 @@ impl Component for MainModel {
             MainMessage::WindowResized => Ok(true),
             MainMessage::BridgeAction(msg) => self.handle_bridge_action(msg, sender).await,
             MainMessage::TaskStarted(task_id) => self.handle_task_started(task_id),
+            MainMessage::ConversationAssigned(conversation_id) => {
+                self.handle_conversation_assigned(conversation_id)
+            }
+            MainMessage::ConversationAssetsLoaded(assets) => {
+                self.handle_conversation_assets_loaded(assets)
+            }
             MainMessage::TaskCompleted { charts, html_files, codes, context_cards } => {
                 self.handle_task_completed(charts, html_files, codes, context_cards)
             }
