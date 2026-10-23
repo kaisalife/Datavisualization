@@ -95,7 +95,7 @@ function sendPrompt() {
   } else {
     sendToRust('sendPrompt', { prompt: prompt, files: filesToSend, vizMode: state.vizMode, multiTable: state.multiTable, dbConfig: state.selectedDb, apiConfig: state.apiConfig || null, config: state.config || null });
   }
-  scrollToBottom();
+  scrollToBottom({ force: true });
 }
 
 function cancelTask() { sendToRust('cancelTask', {}); }
@@ -112,10 +112,26 @@ function newChat() {
 }
 
 function handleInputKey(e) {
+  // 中文输入法组词中按 Enter 是“上屏”，不能当成发送
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
 }
 
+// 自动撑高输入框：逐字触发时合并到一帧内完成，避免每按一键都强制同步布局
+const _resizeTargets = new Set();
+let _resizeScheduled = false;
+
 function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  if (!el) return;
+  _resizeTargets.add(el);
+  if (_resizeScheduled) return;
+  _resizeScheduled = true;
+  requestAnimationFrame(() => {
+    _resizeScheduled = false;
+    _resizeTargets.forEach(target => {
+      target.style.height = 'auto';
+      target.style.height = Math.min(target.scrollHeight, 120) + 'px';
+    });
+    _resizeTargets.clear();
+  });
 }

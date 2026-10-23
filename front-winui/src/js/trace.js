@@ -1,19 +1,69 @@
 // ===== Trace WebSocket 全链路监控（从 api.js 拆分）=====
 // 扩展 window.app：订阅 /ws/trace，实时显示 trace/token/error 事件。
+// 断线时按指数退避重连（任务仍在执行时），任务结束后由 stopTrace 停止。
 
 window.app._traceWs = null;
+window.app._traceTaskId = null;
+window.app._traceRetries = 0;
 window.app._traceTokenTotal = 0;
 window.app._traceTokenCalls = 0;
 
+const TRACE_RECONNECT_MAX = 5;
+
+// Trace 事件可能非常密集，合并到一次 rAF 内批量插入时间线节点。
+let _traceQueue = [];
+let _traceFlushScheduled = false;
+let _pendingToken = null;
+let _tokenScheduled = false;
+
+function _flushTraceNodes() {
+  _traceFlushScheduled = false;
+  if (_traceQueue.length === 0 || !state.activeTaskEl) { _traceQueue = []; return; }
+  const timeline = state.activeTaskEl.querySelector('.trace-timeline');
+  if (!timeline) { _traceQueue = []; return; }
+  const queue = _traceQueue;
+  _traceQueue = [];
+  const frag = document.createDocumentFragment();
+  queue.forEach(event => {
+    const node = document.createElement('div');
+    node.className = 'trace-node trace-' + (event.status || '');
+    const parts = [
+      ['trace-time', (event.timestamp || '').slice(11, 19)],
+      ['trace-file', event.file_name || ''],
+      ['trace-func', event.func_name || ''],
+      ['trace-dur', (event.duration_ms || 0) + 'ms'],
+      ['trace-stat', event.status || ''],
+    ];
+    parts.forEach(([cls, text]) => {
+      const span = document.createElement('span');
+      span.className = cls;
+      span.textContent = text;
+      node.appendChild(span);
+    });
+    if (event.error) node.title = event.error;
+    frag.appendChild(node);
+  });
+  timeline.appendChild(frag);
+  while (timeline.childElementCount > TRACE_DOM_MAX) {
+    timeline.removeChild(timeline.firstElementChild);
+  }
+  timeline.scrollTop = timeline.scrollHeight;
+}
+
 window.app.subscribeTrace = function(taskId) {
-  // 关闭旧连接
+  if (!taskId) return;
+  window.app._traceTaskId = taskId;
+  window.app._traceRetries = 0;
+  window.app._traceTokenTotal = 0;
+  window.app._traceTokenCalls = 0;
+  window.app._openTraceSocket(taskId);
+};
+
+window.app._openTraceSocket = function(taskId) {
   if (window.app._traceWs) {
     try { window.app._traceWs.close(); } catch(e) {}
     window.app._traceWs = null;
   }
-  window.app._traceTokenTotal = 0;
-  window.app._traceTokenCalls = 0;
-
   try {
     const base = (state.backendUrl || 'http://127.0.0.1:5000').replace(/\/$/, '');
     const wsUrl = base.replace(/^http/, 'ws') + '/ws/trace/' + taskId;
@@ -22,63 +72,71 @@ window.app.subscribeTrace = function(taskId) {
     window.app.stopStageTimer();
 
     ws.onmessage = function(event) {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'trace') {
-          window.app.onTraceEvent(data);
-        } else if (data.type === 'token') {
-          window.app.onTokenEvent(data);
-        } else if (data.type === 'error') {
-          window.app.onErrorEvent(data);
-        } else if (data.type === 'error_summary') {
-          window.app.onErrorSummary(data);
-        } else if (data.type === 'stage') {
-          window.app.onStageEvent(data);
-        }
-      } catch(e) { /* ignore parse errors */ }
+      let data;
+      try { data = JSON.parse(event.data); } catch(e) { return; }
+      if (data.type === 'trace') window.app.onTraceEvent(data);
+      else if (data.type === 'token') window.app.onTokenEvent(data);
+      else if (data.type === 'error') window.app.onErrorEvent(data);
+      else if (data.type === 'error_summary') window.app.onErrorSummary(data);
+      else if (data.type === 'stage') window.app.onStageEvent(data);
     };
 
     ws.onerror = function() {
       console.warn('[Trace WS] error');
     };
 
+    // 任务仍在执行时断线自动重连（400ms→8s 退避，最多 5 次）
     ws.onclose = function() {
       window.app._traceWs = null;
+      if (window.app._traceTaskId !== taskId) return; // 已切换/结束
+      const retries = window.app._traceRetries || 0;
+      if (retries >= TRACE_RECONNECT_MAX) return;
+      window.app._traceRetries = retries + 1;
+      const delay = Math.min(1000 * Math.pow(2, retries), 8000);
+      setTimeout(function() {
+        if (window.app._traceTaskId === taskId) window.app._openTraceSocket(taskId);
+      }, delay);
     };
   } catch(e) {
     console.warn('[Trace WS] connect failed:', e);
   }
 };
 
+window.app.stopTrace = function() {
+  window.app._traceTaskId = null;
+  window.app._traceRetries = 0;
+  if (window.app._traceWs) {
+    try { window.app._traceWs.close(); } catch(e) {}
+    window.app._traceWs = null;
+  }
+};
+
 window.app.onTraceEvent = function(event) {
   if (!state.activeTaskEl) return;
-  const timeline = state.activeTaskEl.querySelector('.trace-timeline');
-  if (!timeline) return;
-
-  const node = document.createElement('div');
-  node.className = 'trace-node trace-' + event.status;
-  const ts = (event.timestamp || '').slice(11, 19);
-  node.innerHTML =
-    '<span class="trace-time">' + ts + '</span>' +
-    '<span class="trace-file">' + (event.file_name || '') + '</span>' +
-    '<span class="trace-func">' + (event.func_name || '') + '</span>' +
-    '<span class="trace-dur">' + (event.duration_ms || 0) + 'ms</span>' +
-    '<span class="trace-stat">' + (event.status || '') + '</span>';
-  if (event.error) {
-    node.title = event.error;
-  }
-  timeline.appendChild(node);
-  timeline.scrollTop = timeline.scrollHeight;
+  _traceQueue.push(event);
+  if (_traceFlushScheduled) return;
+  _traceFlushScheduled = true;
+  requestAnimationFrame(_flushTraceNodes);
 };
 
 window.app.onTokenEvent = function(event) {
   if (!state.activeTaskEl) return;
-  window.app._traceTokenTotal = event.cumulative_total || 0;
-  window.app._traceTokenCalls = (event.call_index || 0) + 1;
-  const counter = state.activeTaskEl.querySelector('.token-counter');
-  if (counter) {
-    counter.textContent = '\u{1F511} ' + window.app._traceTokenTotal + ' tokens (' + window.app._traceTokenCalls + ' calls) ¥' + (event.cost_rmb || 0).toFixed(4);
-  }
+  // 网关按 token 推送，可能每秒几十次；合并到一帧更新一次文本
+  _pendingToken = event;
+  if (_tokenScheduled) return;
+  _tokenScheduled = true;
+  requestAnimationFrame(function() {
+    _tokenScheduled = false;
+    const ev = _pendingToken;
+    _pendingToken = null;
+    if (!ev || !state.activeTaskEl) return;
+    window.app._traceTokenTotal = ev.cumulative_total || 0;
+    window.app._traceTokenCalls = (ev.call_index || 0) + 1;
+    const counter = state.activeTaskEl.querySelector('.token-counter');
+    if (counter) {
+      counter.textContent = '\u{1F511} ' + window.app._traceTokenTotal + ' tokens (' + window.app._traceTokenCalls + ' calls) ¥' + (ev.cost_rmb || 0).toFixed(4);
+    }
+  });
 };
 
 window.app.onErrorEvent = function(event) {
@@ -87,29 +145,29 @@ window.app.onErrorEvent = function(event) {
   if (!panel) return;
   panel.style.display = 'block';
 
-  var chainHtml = (event.call_chain || []).map(function(f) {
-    return '<span class="chain-func">' + f + '</span>';
+  const chainHtml = (event.call_chain || []).map(function(f) {
+    return '<span class="chain-func">' + escHtml(f) + '</span>';
   }).join(' <span class="chain-arrow">→</span> ');
 
-  var framesHtml = (event.traceback_frames || []).map(function(f) {
+  const framesHtml = (event.traceback_frames || []).map(function(f) {
     return '<div class="stack-frame">' +
-      '<span class="stack-file">' + f.file + ':' + f.line + '</span>' +
-      '<span class="stack-func">' + f.func + '()</span>' +
-      (f.code ? '<code class="stack-code">' + f.code.replace(/</g, '&lt;') + '</code>' : '') +
+      '<span class="stack-file">' + escHtml(f.file) + ':' + escHtml(f.line) + '</span>' +
+      '<span class="stack-func">' + escHtml(f.func) + '()</span>' +
+      (f.code ? '<code class="stack-code">' + escHtml(f.code) + '</code>' : '') +
       '</div>';
   }).join('');
 
-  var varsHtml = Object.keys(event.local_vars || {}).map(function(k) {
-    return '<div class="var-row"><span class="var-key">' + k + '</span> = <span class="var-val">' + event.local_vars[k] + '</span></div>';
+  const varsHtml = Object.keys(event.local_vars || {}).map(function(k) {
+    return '<div class="var-row"><span class="var-key">' + escHtml(k) + '</span> = <span class="var-val">' + escHtml(event.local_vars[k]) + '</span></div>';
   }).join('');
 
   panel.innerHTML =
     '<div class="error-header">' +
-      '<span class="error-type">' + (event.error_type || 'Unknown') + '</span>' +
-      '<span class="error-cat tag-' + (event.error_category || 'unknown') + '">' + (event.error_category || 'unknown') + '</span>' +
+      '<span class="error-type">' + escHtml(event.error_type || 'Unknown') + '</span>' +
+      '<span class="error-cat tag-' + escAttr(event.error_category || 'unknown') + '">' + escHtml(event.error_category || 'unknown') + '</span>' +
     '</div>' +
-    '<div class="error-loc">' + (event.file_name || '') + ' :: ' + (event.func_name || '') + '</div>' +
-    '<div class="error-msg">' + (event.error_message || '') + '</div>' +
+    '<div class="error-loc">' + escHtml(event.file_name || '') + ' :: ' + escHtml(event.func_name || '') + '</div>' +
+    '<div class="error-msg">' + escHtml(event.error_message || '') + '</div>' +
     (chainHtml ? '<div class="error-section"><div class="section-title">调用链</div><div class="call-chain">' + chainHtml + '</div></div>' : '') +
     (framesHtml ? '<div class="error-section"><div class="section-title">堆栈</div><div class="stack-trace">' + framesHtml + '</div></div>' : '') +
     (varsHtml ? '<div class="error-section"><div class="section-title">局部变量</div><div class="local-vars">' + varsHtml + '</div></div>' : '');

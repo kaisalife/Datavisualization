@@ -21,7 +21,10 @@ function renderConversations(filter) {
     container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px;font-size:12px">暂无历史记录</div>';
     return;
   }
-  if (filter) list = list.filter(c => (c.prompt || '').includes(filter));
+  if (filter) {
+    const q = String(filter).toLowerCase();
+    list = list.filter(c => (c.prompt || '').toLowerCase().includes(q));
+  }
   let html = '';
   // 多选模式操作栏
   if (state.selectMode) {
@@ -46,16 +49,15 @@ function convItemHtml(c) {
   const icon = '📈';
   const date = (c.createdAt || '').substring(0, 16);
   const sel = state.selectMode;
-  const checked = sel && state.selectedIds && state.selectedIds.indexOf(c.id) >= 0 ? 'checked' : '';
-  const checkbox = sel ? '<input type="checkbox" class="conv-checkbox" ' + checked + ' onclick="event.stopPropagation();toggleSelect(\'' + escAttr(c.id) + '\')">' : '';
-  const click = sel ? 'toggleSelect(\'' + escAttr(c.id) + '\')' : 'loadConv(\'' + escAttr(c.id) + '\')';
+  const checked = sel && state.selectedIds && state.selectedIds.indexOf(c.id) >= 0;
+  const checkbox = sel ? '<input type="checkbox" class="conv-checkbox" data-action="toggle" tabindex="-1" ' + (checked ? 'checked' : '') + '>' : '';
   const actions = sel ? '' :
       '<div class="conv-actions">' +
-        '<button class="conv-action-btn" onclick="event.stopPropagation();loadConv(\'' + escAttr(c.id) + '\')">查看</button>' +
-        '<button class="conv-action-btn" onclick="event.stopPropagation();editConvPrompt(\'' + escAttr(c.id) + '\',\'' + escAttr(c.prompt || '') + '\')">改提示词</button>' +
-        '<button class="conv-action-btn del" onclick="event.stopPropagation();deleteConv(\'' + escAttr(c.id) + '\')">删除</button>' +
+        '<button class="conv-action-btn" data-action="view">查看</button>' +
+        '<button class="conv-action-btn" data-action="edit">改提示词</button>' +
+        '<button class="conv-action-btn del" data-action="delete">删除</button>' +
       '</div>';
-  return '<div class="conversation-item' + (checked ? ' selected' : '') + '" onclick="' + click + '">' +
+  return '<div class="conversation-item' + (checked ? ' selected' : '') + '" data-id="' + escAttr(c.id) + '" data-prompt="' + escAttr(c.prompt || '') + '" data-action="open" tabindex="0" role="button">' +
     checkbox +
     '<div class="conv-icon">' + icon + '</div>' +
     '<div class="conv-content">' +
@@ -65,7 +67,47 @@ function convItemHtml(c) {
     '</div></div>';
 }
 
-function filterConversations(v) { renderConversations(v); }
+// 事件委托：列表项不再内联 onclick，既少一次 HTML 解析，也避免 id/提示词拼进 JS 字符串
+// （历史上靠 escAttr 防注入，这里彻底移除了这条注入面）。
+function _onConvListClick(e) {
+  const item = e.target.closest ? e.target.closest('.conversation-item') : null;
+  if (!item) return;
+  const actionEl = e.target.closest ? e.target.closest('[data-action]') : null;
+  const action = actionEl ? actionEl.getAttribute('data-action') : 'open';
+  const id = item.getAttribute('data-id');
+  if (!id) return;
+  if (state.selectMode) {
+    if (action === 'open' || action === 'toggle') toggleSelect(id);
+    return;
+  }
+  if (action === 'view') loadConv(id);
+  else if (action === 'edit') editConvPrompt(id, item.getAttribute('data-prompt') || '');
+  else if (action === 'delete') deleteConv(id);
+  else loadConv(id);
+}
+
+(function initConvListEvents() {
+  const container = document.getElementById('convList');
+  if (!container) return;
+  container.addEventListener('click', _onConvListClick);
+  // 键盘可达：行本身聚焦时 Enter/Space 等同于点击（嵌套按钮由其自身处理）
+  container.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const item = e.target.closest ? e.target.closest('.conversation-item') : null;
+    if (item && e.target === item) {
+      e.preventDefault();
+      item.click();
+    }
+  });
+})();
+
+function _updateSelectBarCount() {
+  const label = document.querySelector('#convList .select-bar span');
+  if (label) label.textContent = '已选 ' + ((state.selectedIds || []).length) + ' 个';
+}
+
+// 搜索框防抖：历史对话较多时逐字重建整列表会卡输入
+const filterConversations = debounce(function (v) { renderConversations(v); }, 120);
 function loadConv(id) { sendToRust('viewDetail', { conversationId: id }); }
 function deleteConv(id) { sendToRust('deleteConversation', { conversationId: id }); }
 function editConvPrompt(id, oldPrompt) {
@@ -158,9 +200,25 @@ function exitSelectMode() {
 function toggleSelect(id) {
   if (!state.selectedIds) state.selectedIds = [];
   const i = state.selectedIds.indexOf(id);
-  if (i >= 0) state.selectedIds.splice(i, 1);
-  else state.selectedIds.push(id);
-  renderConversations();
+  const on = i < 0;
+  if (on) state.selectedIds.push(id);
+  else state.selectedIds.splice(i, 1);
+  // 只更新这一行，避免整列表重建（几十上百条时每点一次都重排）
+  const row = _findConvRow(id);
+  if (row) {
+    row.classList.toggle('selected', on);
+    const cb = row.querySelector('.conv-checkbox');
+    if (cb) cb.checked = on;
+  }
+  _updateSelectBarCount();
+}
+
+function _findConvRow(id) {
+  const rows = document.querySelectorAll('#convList .conversation-item');
+  for (const row of rows) {
+    if (row.getAttribute('data-id') === id) return row;
+  }
+  return null;
 }
 
 function selectAllConvs() {
@@ -185,7 +243,10 @@ function renderFileTree(filter) {
     return;
   }
   let files = state.fileList;
-  if (filter) files = files.filter(f => (f.name || '').toLowerCase().includes(filter.toLowerCase()));
+  if (filter) {
+    const q = String(filter).toLowerCase();
+    files = files.filter(f => (f.name || '').toLowerCase().includes(q));
+  }
   const dataExts = ['.csv','.xlsx','.xls','.json','.pdf','.parquet','.txt','.xml','.py'];
   function iconFor(name) {
     const ext = name.substring(name.lastIndexOf('.')).toLowerCase();
@@ -198,7 +259,7 @@ function renderFileTree(filter) {
   let html = '';
   files.forEach(f => {
     const canAdd = isData(f.name);
-    html += '<div class="file-node" onclick="' + (canAdd ? 'event.stopPropagation();addFileFromExplorer(\'' + escAttr(f.path) + '\')' : '') + '">' +
+    html += '<div class="file-node"' + (canAdd ? ' data-add-path="' + escAttr(f.path) + '" tabindex="0" role="button"' : '') + '>' +
       '<span style="width:12px"></span><span class="file-icon">' + iconFor(f.name) + '</span>' +
       '<span class="file-name">' + escHtml(f.name) + '</span>' +
       (canAdd ? '<span class="add-btn" title="添加到对话"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>' : '') +
@@ -207,7 +268,28 @@ function renderFileTree(filter) {
   container.innerHTML = html;
 }
 
-function filterFiles(v) { renderFileTree(v); }
+// 文件树同样走事件委托，路径不再拼进内联 onclick
+function _onFileTreeClick(e) {
+  const node = e.target.closest ? e.target.closest('.file-node[data-add-path]') : null;
+  if (!node) return;
+  addFileFromExplorer(node.getAttribute('data-add-path'));
+}
+
+(function initFileTreeEvents() {
+  const container = document.getElementById('fileTree');
+  if (!container) return;
+  container.addEventListener('click', _onFileTreeClick);
+  container.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const node = e.target.closest ? e.target.closest('.file-node[data-add-path]') : null;
+    if (node && e.target === node) {
+      e.preventDefault();
+      node.click();
+    }
+  });
+})();
+
+const filterFiles = debounce(function (v) { renderFileTree(v); }, 120);
 
 function closeProject() {
   state.projectName = null;

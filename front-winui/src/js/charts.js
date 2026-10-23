@@ -1,5 +1,98 @@
 // ===== 图表卡片网格 =====
+
+// 缩略图按需挂载：每张图表 HTML 内联了 echarts（约 1.1MB），一次性给几十张
+// 历史图表建 iframe 会明显拖慢首屏并吃内存。只有进入视口（外扩 300px）的卡片
+// 才真正创建 iframe，滚出视口即卸载；全屏查看用的是独立的 #cvIframe，不受影响。
+const _scrollRoot = document.getElementById('chatMessages');
+const _observedThumbs = new Set();
+const _thumbMountObserver = (typeof IntersectionObserver !== 'undefined')
+  ? new IntersectionObserver(function(entries) {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) mountChartThumb(entry.target);
+        else unmountChartThumb(entry.target);
+      });
+    }, { root: _scrollRoot || null, rootMargin: '300px 0px' })
+  : null;
+
+function mountChartThumb(wrap) {
+  if (!wrap || wrap.dataset.mounted === '1') return;
+  const src = wrap.dataset.src;
+  if (!src) return;
+  const ifr = document.createElement('iframe');
+  ifr.src = src;
+  ifr.sandbox = 'allow-scripts allow-same-origin';
+  ifr.setAttribute('tabindex', '-1');
+  ifr.setAttribute('aria-hidden', 'true');
+  wrap.appendChild(ifr);
+  wrap.dataset.mounted = '1';
+  ifr.addEventListener('load', function() { fitChartThumb(wrap); });
+  fitChartThumb(wrap);
+}
+
+// 图表页默认 900×500；缩略图容器较矮，直接按 1:1 放会只露出左上角。
+// 按比例整体缩放并居中，用户能看到完整图形（点击卡片仍可全屏看细节）。
+const THUMB_SRC_W = 900;
+const THUMB_SRC_H = 500;
+function fitChartThumb(wrap) {
+  const ifr = wrap.querySelector('iframe');
+  if (!ifr) return;
+  const w = wrap.clientWidth;
+  const h = wrap.clientHeight;
+  if (!w || !h) return;
+  const scale = Math.min(w / THUMB_SRC_W, h / THUMB_SRC_H);
+  ifr.style.width = THUMB_SRC_W + 'px';
+  ifr.style.height = THUMB_SRC_H + 'px';
+  ifr.style.transform = 'scale(' + scale + ')';
+  ifr.style.left = Math.max(0, (w - THUMB_SRC_W * scale) / 2) + 'px';
+  ifr.style.top = Math.max(0, (h - THUMB_SRC_H * scale) / 2) + 'px';
+}
+
+// 窗口宽度变化时重新适配已挂载的缩略图（合并到一帧，避免每张图各算一次）
+let _thumbFitScheduled = false;
+window.addEventListener('resize', function() {
+  if (_thumbFitScheduled) return;
+  _thumbFitScheduled = true;
+  requestAnimationFrame(function() {
+    _thumbFitScheduled = false;
+    _observedThumbs.forEach(function(w) {
+      if (w.dataset.mounted === '1') fitChartThumb(w);
+    });
+  });
+});
+
+function unmountChartThumb(wrap) {
+  if (!wrap || wrap.dataset.mounted !== '1') return;
+  const ifr = wrap.querySelector('iframe');
+  if (ifr) ifr.remove();
+  wrap.dataset.mounted = '';
+}
+
+function _observeThumb(wrap) {
+  if (_thumbMountObserver) {
+    _observedThumbs.add(wrap);
+    _thumbMountObserver.observe(wrap);
+  } else {
+    mountChartThumb(wrap);
+  }
+}
+
+function _unobserveThumbs(root) {
+  if (!root) return;
+  root.querySelectorAll('.chart-card-iframe[data-src]').forEach(w => {
+    if (_thumbMountObserver) _thumbMountObserver.unobserve(w);
+    _observedThumbs.delete(w);
+  });
+}
+
+// 聊天区被整体清空时调用，避免观察器持有已脱离 DOM 的卡片
+function clearAllChartThumbs() {
+  _observedThumbs.forEach(w => { if (_thumbMountObserver) _thumbMountObserver.unobserve(w); });
+  _observedThumbs.clear();
+}
+
 function renderChartGrid(container, items) {
+  if (!container) return;
+  _unobserveThumbs(container);
   if (!items || items.length === 0) { container.innerHTML = ''; return; }
   const grid = document.createElement('div');
   grid.className = 'chart-grid';
@@ -19,11 +112,8 @@ function renderChartGrid(container, items) {
     if (status === 'success' && item.path) {
       const wrap = document.createElement('div');
       wrap.className = 'chart-card-iframe';
-      const ifr = document.createElement('iframe');
-      ifr.src = item.path;
-      ifr.loading = 'lazy';
-      ifr.sandbox = 'allow-scripts allow-same-origin';
-      wrap.appendChild(ifr);
+      wrap.dataset.src = item.path;
+      _observeThumb(wrap);
       thumb.appendChild(wrap);
     } else {
       const fail = document.createElement('div');
@@ -177,7 +267,10 @@ function renderContextCards(container, cards, options) {
 // ===== Chart Viewer 全屏查看器 =====
 function openChartViewer(item) {
   document.getElementById('cvTitle').textContent = item.title || item.chartType || '图表预览';
-  document.getElementById('cvIframe').src = item.path || '';
+  const cvIframe = document.getElementById('cvIframe');
+  const nextSrc = item.path || '';
+  // 同一张图重复打开时不重新加载 1MB+ 的图表页面
+  if (cvIframe.getAttribute('src') !== nextSrc) cvIframe.src = nextSrc;
   document.getElementById('cvType').textContent = item.chartType || '-';
   document.getElementById('cvStatus').innerHTML = item.status === 'success' ? '<span style="color:var(--success)">● 生成成功</span>' : '<span style="color:var(--error)">● 失败</span>';
   document.getElementById('cvFile').textContent = item.title || item.path || '-';
@@ -185,7 +278,15 @@ function openChartViewer(item) {
   const logsEl = document.getElementById('cvLogs');
   if (state.activeLogs.length > 0) {
     logsEl.innerHTML = '';
-    state.activeLogs.forEach(l => {
+    // 只渲染最近一批日志，避免一次塞入几千行拖慢查看器打开速度
+    const logs = state.activeLogs.slice(-LOG_DOM_MAX);
+    if (state.activeLogs.length > logs.length) {
+      const more = document.createElement('div');
+      more.className = 'log-entry';
+      more.textContent = '… 已省略前 ' + (state.activeLogs.length - logs.length) + ' 条日志';
+      logsEl.appendChild(more);
+    }
+    logs.forEach(l => {
       const div = document.createElement('div');
       div.className = 'log-entry';
       const t = document.createElement('span'); t.className = 'log-time'; t.textContent = '';

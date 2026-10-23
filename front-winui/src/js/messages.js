@@ -9,6 +9,16 @@ function hideWelcome() {
   if (w) w.style.display = 'none';
 }
 
+// 清空聊天区，但保留欢迎页节点（它就在 #chatInner 里；直接 innerHTML='' 会把它一起删掉，
+// “新对话”后就再也回不到欢迎页/建议卡片了）。
+function clearChatInner() {
+  const inner = document.getElementById('chatInner');
+  if (!inner) return;
+  Array.from(inner.children).forEach(el => {
+    if (el.id !== 'welcomeState') inner.removeChild(el);
+  });
+}
+
 function appendMessage(role, content, kind) {
   const area = document.getElementById('chatInner');
   const msg = document.createElement('div');
@@ -122,11 +132,15 @@ function toggleTrace(el) {
 
 function copyActiveLogs() {
   const text = state.activeLogs.join('\n');
-  navigator.clipboard.writeText(text).then(() => window.app.showToast('日志已复制', 'success'));
+  copyText(text)
+    .then(() => window.app.showToast('日志已复制', 'success'))
+    .catch(() => window.app.showToast('复制失败，请手动选择日志文本', 'error'));
 }
 
 function copyLastCharts() {
-  navigator.clipboard.writeText('图表链接已复制').then(() => window.app.showToast('已复制', 'success'));
+  copyText('图表链接已复制')
+    .then(() => window.app.showToast('已复制', 'success'))
+    .catch(() => window.app.showToast('复制失败', 'error'));
 }
 
 function regenerate() {

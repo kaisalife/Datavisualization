@@ -138,6 +138,36 @@ $env:BACKEND_URL="http://localhost:5000"
    Rust 解码（上限 8MB）后写到 `%TEMP%\datavisual_clipboard`，再回调 `window.app.addClipboardFile(path)`
    加入文件列表。剪贴板同时带文本（Excel/网页复制单元格）且在输入框内粘贴时，保留正常文本粘贴。
 
+### 前端性能与交互（改 JS 前先读）
+
+- **聊天滚动只在贴底时跟随**：`utils.js:isNearBottom()`（阈值 80px）维护 `state.followTail`；用户上滑后
+  新内容只累加 `state.unread` 并显示「回到最新」按钮，不抢滚动。只有发送消息/点按钮才
+  `scrollToBottom({force:true})`。按钮的 `bottom` 由 `ResizeObserver` 跟随输入区高度，别写死像素。
+- **日志/时间线/计费按帧批量**：`appendLog` 只入队，`_flushLogs` 在一个 rAF 里拼 `DocumentFragment`；
+  每任务 DOM 上限 `LOG_DOM_MAX=500`、`TRACE_DOM_MAX=400`，完整日志缓冲 `LOG_BUFFER_MAX=3000`。
+  不要改回逐条 `appendChild`（300 条日志实测 222ms → 1ms）。完成时日志面板自动收起
+  （`state.autoOpenLogs`），让视图落在图表上；恢复历史默认不展开。trace 订阅只走 Rust 的
+  `TaskStarted` → `subscribeTrace`，**不要**从日志文本正则猜 task_id（恢复历史时会误连已结束任务）。
+- **图表缩略图按需挂载**：`charts.js` 用 root=`#chatMessages`、rootMargin 300px 的 `IntersectionObserver`，
+  进入视口才建 iframe、滚出即卸载（每个图表页内联 echarts ~1.1MB）。图表页按 900×500 用 transform
+  等比缩放居中，窗口 resize 时统一重算。**不要给 `.chart-card` 加 `content-visibility:auto`**——被跳过的
+  内容会让 IO 永远判定不可见，缩略图不再挂载。全屏查看用独立的 `#cvIframe`。
+- **列表用事件委托**：对话列表/文件树不再拼内联 `onclick`，改 `data-action` / `data-id` /
+  `data-add-path`，由容器统一处理；行加 `role="button" tabindex="0"`，Enter/Space 与点击等价。
+  搜索输入 120ms 防抖（`filterConversations` / `filterFiles`）；多选只更新单行，不重建整个列表。
+- **清空聊天要保留欢迎页**：`#welcomeState` 就在 `#chatInner` 里，`clearMessages` 必须走
+  `messages.js:clearChatInner()`（保留该节点），否则「新对话」后欢迎页/建议卡片永久消失。
+- **Esc / 输入法 / 焦点**：`utils.js` 全局 `keydown` 用 `closeTopmostOverlay()` 关最上层浮层（查看器/
+  预览/设置…），新增浮层要加进去；`handleInputKey` 忽略 `isComposing`（中文输入法回车上屏不能触发发送）；
+  启动与新对话后自动聚焦输入框。
+- **桥接（HTTP）高可用**：`bridge.rs` 每个连接独立 `tokio::spawn` + 30s 读超时，header/body 上限 16MB；
+  **不要把读 body 放回 accept 循环**（一个半开连接会卡死整个 JS→Rust 通道，回归
+  `cargo test --target x86_64-pc-windows-gnu bridge::tests::silent_connection_does_not_block_bridge`）。
+  JS 侧 `sendToRust` 10s 超时、失败限流提示，**不自动重试**（避免重复提交任务）。
+- **渲染上限**：数据预览表最多 200 行（`DP_MAX_PREVIEW_ROWS`），图表查看器日志最多 500 条，Toast 最多 4 个。
+- 交互可访问性：`:focus-visible` 焦点环、`prefers-reduced-motion` 减少动画、图标按钮带 `aria-label`。
+  没有前端热重载，改完 JS/CSS/HTML 必须重新 `cargo build --target x86_64-pc-windows-gnu`。
+
 ## 依赖约束（不要随手升级）
 
 - `langchain-mcp-adapters 0.3.x` 要求 `mcp<2`；`mcp 2.x` 删除了 `mcp.shared.context.RequestContext`，

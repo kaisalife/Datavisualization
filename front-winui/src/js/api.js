@@ -1,5 +1,58 @@
 // ===== window.app 命名空间：Rust -> JS 回调 API =====
 // Trace WebSocket 监控已拆分到 trace.js
+
+// 日志渲染批处理：后端可能连续推几十条日志，逐条插入会反复触发重排，
+// 这里合并到一次 requestAnimationFrame 内批量插入片段。
+let _pendingLogs = [];
+let _logFlushScheduled = false;
+
+function _flushLogs() {
+  _logFlushScheduled = false;
+  if (_pendingLogs.length === 0) return;
+  const pending = _pendingLogs;
+  _pendingLogs = [];
+  const body = state.activeTaskEl ? state.activeTaskEl.querySelector('.agent-log-body') : null;
+  if (!body) return;
+  const autoOpen = state.autoOpenLogs !== false;
+  if (autoOpen) {
+    body.classList.add('show');
+    const toggle = state.activeTaskEl.querySelector('.agent-log-toggle');
+    if (toggle) toggle.classList.add('expanded');
+  }
+
+  const frag = document.createDocumentFragment();
+  const ts = nowStr();
+  pending.forEach(text => {
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    const time = document.createElement('span');
+    time.className = 'log-time';
+    time.textContent = ts;
+    const msg = document.createElement('span');
+    msg.className = 'log-msg';
+    msg.textContent = text;
+    div.appendChild(time);
+    div.appendChild(msg);
+    frag.appendChild(div);
+  });
+  body.appendChild(frag);
+  // 只保留最近 LOG_DOM_MAX 行，避免长任务把日志面板撑成上万个节点
+  while (body.childElementCount > LOG_DOM_MAX) {
+    body.removeChild(body.firstElementChild);
+  }
+  body.scrollTop = body.scrollHeight;
+  // 日志是在第一个 rAF 里才真正插入 DOM 的；如果滚动 rAF 先于本帧执行，
+  // 它算出的 scrollHeight 还不含这些日志。补一次跟随滚动，避免停在半截。
+  if (state.followTail) scrollToBottom();
+}
+
+function _enqueueLogRender(text) {
+  _pendingLogs.push(text);
+  if (_logFlushScheduled) return;
+  _logFlushScheduled = true;
+  requestAnimationFrame(_flushLogs);
+}
+
 window.app = {
   addMessage(role, content) {
     hideWelcome();
@@ -21,40 +74,45 @@ window.app = {
   },
 
   clearMessages() {
-    document.getElementById('chatInner').innerHTML = '';
+    if (typeof clearChatInner === 'function') clearChatInner();
+    else document.getElementById('chatInner').innerHTML = '';
+    if (typeof clearAllChartThumbs === 'function') clearAllChartThumbs();
     showWelcome();
     state.activeTaskEl = null;
     state.activeLogs = [];
+    _pendingLogs = [];
+    // 关闭旧任务的 trace / 阶段计时，避免新会话里混入上一个任务的事件
+    _traceQueue = [];
+    _pendingToken = null;
+    if (window.app.stopTrace) window.app.stopTrace();
+    if (window.app.stopStageTimer) window.app.stopStageTimer();
+    state.followTail = true;
+    state.unread = 0;
+    state.autoOpenLogs = true;
+    updateScrollButton();
+    if (typeof focusPrompt === 'function') focusPrompt();
   },
 
-  startTaskMessage(text) {
+  startTaskMessage(text, autoOpenLogs) {
     hideWelcome();
     const el = buildAiTaskMessage(text);
     document.getElementById('chatInner').appendChild(el);
     state.activeTaskEl = el;
     state.activeLogs = [];
+    state.autoOpenLogs = autoOpenLogs !== false;
+    _traceQueue = [];
+    _pendingToken = null;
     scrollToBottom();
   },
 
   appendLog(text) {
     state.activeLogs.push(text);
-    // 自动检测 task_id 并订阅 trace WebSocket
-    const match = String(text).match(/任务已提交[:\s]*([a-f0-9]+)/i);
-    if (match && match[1]) {
-      window.app.subscribeTrace(match[1]);
+    if (state.activeLogs.length > LOG_BUFFER_MAX) {
+      state.activeLogs.splice(0, state.activeLogs.length - LOG_BUFFER_MAX);
     }
-    const body = state.activeTaskEl ? state.activeTaskEl.querySelector('.agent-log-body') : null;
-    if (body) {
-      body.classList.add('show');
-      const toggle = state.activeTaskEl.querySelector('.agent-log-toggle');
-      if (toggle) toggle.classList.add('expanded');
-      const div = document.createElement('div');
-      div.className = 'log-entry';
-      div.innerHTML = '<span class="log-time">' + nowStr() + '</span><span class="log-msg"></span>';
-      div.querySelector('.log-msg').textContent = text;
-      body.appendChild(div);
-      body.scrollTop = body.scrollHeight;
-    }
+    // trace 订阅由 Rust 在 TaskStarted 时结构化下发（subscribeTrace）；
+    // 不要再从日志文本猜测 task_id——恢复历史时老日志会误连到已结束的任务。
+    _enqueueLogRender(text);
     scrollToBottom();
   },
 
@@ -72,6 +130,7 @@ window.app = {
     let parsed;
     try { parsed = JSON.parse(chartsJsonStr); } catch(e) { parsed = { items: [] }; }
     window.app.stopStageTimer();
+    if (window.app.stopTrace) window.app.stopTrace();
     state.lastChartData = parsed;
     if (state.activeTaskEl) {
       const context = state.activeTaskEl.querySelector('.task-context');
@@ -85,12 +144,23 @@ window.app = {
       }
       const typing = state.activeTaskEl.querySelector('.typing');
       if (typing) typing.style.display = 'none';
+      // 生成过程中日志面板是自动展开的；成功后收起，让“滚到底部”落在图表卡片上，
+      // 想看执行细节仍可点“查看 Agent 执行日志”。失败时保持展开便于排查。
+      const logBody = state.activeTaskEl.querySelector('.agent-log-body');
+      const logToggle = state.activeTaskEl.querySelector('.agent-log-toggle');
+      if (logToggle) logToggle.classList.remove('expanded');
+      if (logBody) logBody.classList.remove('show');
+      state.autoOpenLogs = false;
     }
     scrollToBottom();
   },
 
   failTask(err) {
     window.app.stopStageTimer();
+    if (window.app.stopTrace) window.app.stopTrace();
+    // 失败原因同时用 toast 提示：此时视图通常停在日志底部，任务摘要可能已被滚出屏幕
+    const brief = String(err || '任务失败');
+    window.app.showToast(brief.length > 140 ? brief.slice(0, 140) + '…' : brief, 'error');
     if (state.activeTaskEl) {
       const typing = state.activeTaskEl.querySelector('.typing');
       if (typing) typing.style.display = 'none';
@@ -180,6 +250,9 @@ window.app = {
 
   showToast(message, type) {
     const c = document.getElementById('toastContainer');
+    if (!c) return;
+    // 同屏最多 TOAST_MAX 条，超出先移除最老的，避免刷屏遮挡界面
+    while (c.children.length >= TOAST_MAX) c.removeChild(c.firstChild);
     const d = document.createElement('div');
     d.className = 'toast ' + (type || 'info');
     d.textContent = message;
@@ -238,6 +311,7 @@ window.app = {
   },
 
   cancelTask() {
+    if (window.app.stopTrace) window.app.stopTrace();
     if (state.activeTaskEl) {
       const typing = state.activeTaskEl.querySelector('.typing');
       if (typing) typing.style.display = 'none';
@@ -257,10 +331,17 @@ window.app = {
     let d;
     try { d = JSON.parse(detailJsonStr); } catch(e) { return; }
 
-    // 1. 清空消息
-    document.getElementById('chatInner').innerHTML = '';
+    // 1. 清空消息（保留欢迎页节点，方便之后“新对话”恢复）
+    if (typeof clearChatInner === 'function') clearChatInner();
+    else document.getElementById('chatInner').innerHTML = '';
+    if (typeof clearAllChartThumbs === 'function') clearAllChartThumbs();
     state.activeTaskEl = null;
     state.activeLogs = [];
+    _pendingLogs = [];
+    state.followTail = true;
+    state.unread = 0;
+    state.autoOpenLogs = true;
+    updateScrollButton();
     hideWelcome();
 
     // 2. 渲染用户消息（含文件标签）
@@ -302,7 +383,7 @@ window.app = {
     if (status === 'failed') taskText = '任务执行失败。';
     else if (status === 'running') taskText = '任务执行中...';
     else if (status === 'pending') taskText = '任务等待中...';
-    window.app.startTaskMessage(taskText);
+    window.app.startTaskMessage(taskText, false);
 
     // 4. 还原 Agent 日志
     if (d.agent_logs && d.agent_logs.length > 0) {
@@ -329,6 +410,6 @@ window.app = {
       if (progress) progress.style.display = 'none';
     }
 
-    scrollToBottom();
+    scrollToBottom({ force: true });
   },
 };

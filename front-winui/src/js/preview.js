@@ -43,6 +43,8 @@ function _dpSafeFilename(name, ext) {
   return base + (ext || '');
 }
 
+const DP_MAX_PREVIEW_ROWS = 200;
+
 function _dpPreviewTable(profile) {
   const schema = Array.isArray(profile.schema) ? profile.schema : [];
   const rows = Array.isArray(profile.preview) ? profile.preview : [];
@@ -50,14 +52,19 @@ function _dpPreviewTable(profile) {
   if (!columns.length && rows.length) columns = Object.keys(rows[0]);
   if (!columns.length) return '<div class="dp-muted">暂无预览数据</div>';
 
+  // 预览表可能很大，限制渲染行数，避免一次插入上万行 DOM 卡住界面
+  const shown = rows.slice(0, DP_MAX_PREVIEW_ROWS);
   const head = '<tr>' + columns.map(c => '<th>' + escHtml(c) + '</th>').join('') + '</tr>';
-  const body = rows.map(row => {
+  const body = shown.map(row => {
     return '<tr>' + columns.map(c => {
       const value = row && Object.prototype.hasOwnProperty.call(row, c) ? row[c] : '';
       return '<td>' + escHtml(value == null ? '' : value) + '</td>';
     }).join('') + '</tr>';
   }).join('');
-  return '<div class="dp-table-wrap"><table class="dp-table"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+  const more = rows.length > shown.length
+    ? '<div class="dp-muted">仅显示前 ' + shown.length + ' 行，共 ' + rows.length + ' 行</div>'
+    : '';
+  return '<div class="dp-table-wrap"><table class="dp-table"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>' + more;
 }
 
 function _dpSeriesList(profile, sessionId) {
