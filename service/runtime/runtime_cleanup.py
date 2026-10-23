@@ -149,3 +149,58 @@ def cleanup_runtime(max_age_days: int = 7) -> dict:
         logger.info("runtime_cleaned", max_age_days=max_age_days, **total)
 
     return {**total, "details": details}
+
+
+def prune_uploads(max_age_hours: float | None = None) -> dict:
+    """删除过期的上传文件副本（服务启动 / 手动清理时调用）。
+
+    上传文件只在任务的数据接入阶段使用；任务完成后图表靠 series parquet，
+    不依赖 ``runtime/uploads`` 下的副本。因此按保留期删除是安全的：
+    - 默认保留 ``UPLOAD_RETENTION_HOURS``（72 小时）；
+    - <=0 表示关闭（不删除任何文件，返回全 0）；
+    - 只删单文件，不动目录结构；按 mtime 判断，正在写入的新文件不会被误删。
+
+    Returns:
+        {"removed_files": int, "bytes_freed": int}
+    """
+    if max_age_hours is None:
+        try:
+            max_age_hours = float(os.getenv("UPLOAD_RETENTION_HOURS", "72"))
+        except (TypeError, ValueError):
+            max_age_hours = 72.0
+
+    stats = {"removed_files": 0, "bytes_freed": 0}
+    if max_age_hours <= 0:
+        return stats
+
+    root = get_uploads_dir()
+    if not root.exists():
+        return stats
+
+    cutoff = time.time() - max_age_hours * 3600
+    for entry in root.iterdir():
+        try:
+            if not entry.is_file():
+                continue
+            if entry.stat().st_mtime >= cutoff:
+                continue
+            size = entry.stat().st_size
+            entry.unlink()
+            stats["removed_files"] += 1
+            stats["bytes_freed"] += size
+        except OSError as e:
+            logger.warning(
+                "upload_prune_failed",
+                path=str(entry),
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+
+    if stats["removed_files"]:
+        logger.info(
+            "uploads_pruned",
+            removed_files=stats["removed_files"],
+            bytes_freed=stats["bytes_freed"],
+            retention_hours=max_age_hours,
+        )
+    return stats

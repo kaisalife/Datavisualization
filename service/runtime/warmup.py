@@ -10,6 +10,7 @@ retriever、不连 MCP），服务可立即接受请求，用户真正提交任�
 """
 from __future__ import annotations
 
+import os
 import threading
 
 from service.observability import get_logger
@@ -18,6 +19,16 @@ logger = get_logger(__name__)
 
 _lock = threading.Lock()
 _warmup_thread: threading.Thread | None = None
+
+
+def _rag_warmup_enabled() -> bool:
+    """是否预加载 RAG 检索器（SERVICE_WARMUP_RAG，默认关闭）。"""
+    return os.getenv("SERVICE_WARMUP_RAG", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def warm_up() -> None:
@@ -34,6 +45,29 @@ def warm_up() -> None:
     except Exception as e:
         # 预热失败不能影响服务启动；真实任务仍会按需导入并暴露原始错误
         logger.warning("core_warmup_failed", error=str(e), error_type=type(e).__name__)
+        return
+
+    # RAG 模型约 2.4GB / 首次加载几秒。默认不预热（避免启动即占内存）；
+    # 明确以图表生成为主的部署可设 SERVICE_WARMUP_RAG=1，省掉首个任务的加载等待。
+    if _rag_warmup_enabled():
+        try:
+            import time
+
+            started = time.perf_counter()
+            from RAG.RAG_main import get_default_retriever
+
+            retriever = get_default_retriever()
+            logger.info(
+                "rag_warmup_done",
+                elapsed_s=round(time.perf_counter() - started, 2),
+                ready=retriever is not None,
+            )
+        except Exception as e:
+            logger.warning(
+                "rag_warmup_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
 
 def start_warmup() -> threading.Thread:

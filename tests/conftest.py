@@ -46,6 +46,7 @@ CORE_TEST_FILES = {
     "test_chart_polish.py",
     "test_chart_rag.py",
     "test_sandbox.py",
+    "test_task_metrics.py",
 }
 
 

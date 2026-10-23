@@ -47,6 +47,7 @@ api/
 | `POST` | `/api/skills/polish` | `skills_api.py` | ✅ | AI 润色：一句话需求 → SKILL.md 草稿（不保存） |
 | `PUT`  | `/api/skills/<name>` | `skills_api.py` | ✅ | 更新用户技能正文 |
 | `DELETE` | `/api/skills/<name>` | `skills_api.py` | ✅ | 删除用户技能（同名覆盖内置时删除即恢复内置） |
+| `GET`  | `/api/metrics/tasks` | `metrics_api.py` | ✅ | 任务指标汇总（成功率/耗时分位/慢任务/阶段瓶颈） |
 | `GET`  | `/api/health` | `health_api.py` | ❌ | 存活探针（liveness） |
 | `GET`  | `/api/ready` | `health_api.py` | ❌ | 就绪探针（readiness） |
 | `WS`   | `/ws/task/<task_id>` | `app.py` | ✅ | 任务进度推送 |
@@ -421,6 +422,31 @@ Word / PPT / Excel 先走文字层解析，只有解析失败或退化成单列�
   "details": []
 }
 ```
+
+---
+
+### GET /api/metrics/tasks?days=7&limit=10
+
+最近 N 天（1–90）的任务指标汇总，数据来自任务完成时追加的
+`runtime/logs/task_metrics.jsonl`（`TASK_METRICS_PATH` 可覆盖）。
+
+```json
+{
+  "days": 7.0,
+  "tasks": 12,
+  "status": {"success": 10, "failed": 2, "cancelled": 0, "pending": 0, "running": 0, "unknown": 0},
+  "success_rate": 0.8333,
+  "duration_s": {"p50": 62.1, "p90": 118.4, "p95": 140.2, "max": 150.0},
+  "charts": {"total": 31, "avg": 2.58},
+  "failed_plans": 3,
+  "slowest": [{"task_id": "...", "status": "success", "model": "deepseek-v4.1-flash",
+               "duration_s": 150.0, "charts": 4, "failed_plans": 0, "finished_at": "..."}],
+  "stages": [{"name": "plan", "label": "图表规划(agent)", "count": 12,
+              "avg_s": 18.3, "p95_s": 33.5, "max_s": 41.2}]
+}
+```
+
+`stages` 按平均耗时降序，可直接看出瓶颈阶段（规划 / 图表生成 / 接入）。
 
 ---
 

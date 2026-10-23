@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
+import os
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -200,3 +202,60 @@ def test_init_app_injects_dependencies():
     )
 
     assert app.config["_TASKS"] is tasks
+
+class TestUploadPrune:
+    """上传副本的保留期清理（只删过期单文件，不动新文件/目录）。"""
+
+    def _make_upload(self, root: Path, name: str, size: int, age_hours: float) -> Path:
+        path = root / name
+        path.write_text("x" * size, encoding="utf-8")
+        stamp = time.time() - age_hours * 3600
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_removes_only_expired_files(self, tmp_path, monkeypatch):
+        from service.runtime.runtime_cleanup import prune_uploads
+
+        uploads = tmp_path / "uploads"
+        uploads.mkdir()
+        old = self._make_upload(uploads, "old.csv", 100, age_hours=48)
+        fresh = self._make_upload(uploads, "fresh.csv", 50, age_hours=1)
+        subdir = uploads / "keep_dir"
+        subdir.mkdir()
+        monkeypatch.setenv("TEMP_UPLOAD_DIR", str(uploads))
+
+        stats = prune_uploads(max_age_hours=24)
+
+        assert stats == {"removed_files": 1, "bytes_freed": 100}
+        assert not old.exists()
+        assert fresh.exists()
+        assert subdir.is_dir()
+
+    def test_zero_disables_pruning(self, tmp_path, monkeypatch):
+        from service.runtime.runtime_cleanup import prune_uploads
+
+        uploads = tmp_path / "uploads"
+        uploads.mkdir()
+        old = self._make_upload(uploads, "old.csv", 10, age_hours=1000)
+        monkeypatch.setenv("TEMP_UPLOAD_DIR", str(uploads))
+
+        assert prune_uploads(max_age_hours=0) == {"removed_files": 0, "bytes_freed": 0}
+        assert old.exists()
+
+    def test_missing_dir_is_noop(self, tmp_path, monkeypatch):
+        from service.runtime.runtime_cleanup import prune_uploads
+
+        monkeypatch.setenv("TEMP_UPLOAD_DIR", str(tmp_path / "missing"))
+        assert prune_uploads(max_age_hours=1) == {"removed_files": 0, "bytes_freed": 0}
+
+class TestWarmupFlags:
+    def test_rag_warmup_flag_parsing(self, monkeypatch):
+        from service.runtime.warmup import _rag_warmup_enabled
+
+        for value in ("1", "true", "YES", "on"):
+            monkeypatch.setenv("SERVICE_WARMUP_RAG", value)
+            assert _rag_warmup_enabled() is True
+
+        for value in ("0", "false", "no", "off", ""):
+            monkeypatch.setenv("SERVICE_WARMUP_RAG", value)
+            assert _rag_warmup_enabled() is False

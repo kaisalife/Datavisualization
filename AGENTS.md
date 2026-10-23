@@ -667,6 +667,14 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   先取消未完成任务、`shutdown_asyncgens()`，再把线程当前循环置空。ThreadPoolExecutor
   会复用线程，残留的 pending 任务/httpx 连接会在下一次任务里报
   `Event loop is closed` 或 `Task was destroyed but it is pending`。
+- **任务指标**：任务结束（含失败/取消）追加 `runtime/logs/task_metrics.jsonl`
+  （`service/runtime/task_metrics.py`，写入加锁）；`GET /api/metrics/tasks?days=7&limit=10`
+  返回状态分布/成功率/耗时 p50–p95/最慢任务/阶段耗时（按平均降序，直接指出瓶颈）。
+  `TASK_METRICS_PATH` 可改路径；指标是旁路能力，写入失败不影响任务结果。
+- **上传副本清理**：启动时 `prune_uploads()` 删除 `runtime/uploads` 下超过
+  `UPLOAD_RETENTION_HOURS`（默认 72h）的单文件。上传副本只在数据接入阶段使用，
+  任务完成后图表依赖 series parquet，删除是安全的；`UPLOAD_CLEANUP_ON_START=0`
+  可关闭，`max_age_hours<=0` 也不删。
 - `/api/health`（liveness）只看进程；`/api/ready`（readiness）检查上传/图表目录可写 + 对话库可访问，
   未就绪返回 503。两个探针都不鉴权。
 
@@ -737,7 +745,9 @@ MCP 的 `run_code` 工具都走它）：
   130s → 76s。新增重依赖不要在包 `__init__` 里 import；门面属性走 `_LAZY_ATTRS`。
 - **启动后台预热**：`service/runtime/warmup.py` 在守护线程里 import
   pipeline/agent（不建 retriever、不连 MCP），避免首个任务再为惰性导入等 ~25 秒；
-  `SERVICE_WARMUP=0` 可关闭。不要把 embedding 模型放进预热（2.4GB，启动变重）。
+  `SERVICE_WARMUP=0` 可关闭。不要把 embedding 模型放进默认预热（2.4GB，启动变重）；
+  以图表为主的部署可显式 `SERVICE_WARMUP_RAG=1` 预加载检索器，省掉首个任务约 5 秒的
+  RAG 初始化（会提前占用约 2.4GB 内存）。
 - **环境净化**：子进程环境剔除 `*KEY*` / `*TOKEN*` / `*SECRET*` / `*PASSWORD*` /
   `*CREDENTIAL*` / `*AUTH*` 和 `LLM_EXTRA_HEADERS`。生成代码不需要凭证，
   否则一次 `print(os.environ)` 或异常栈就会把 API Key 带进日志/前端；

@@ -10,5 +10,6 @@ from api.code_api import code_bp
 from api.data_api import data_bp
 from api.health_api import health_bp
 from api.skills_api import skills_bp
+from api.metrics_api import metrics_bp
 
-__all__ = ["chart_bp", "task_bp", "code_bp", "data_bp", "health_bp", "skills_bp"]
+__all__ = ["chart_bp", "task_bp", "code_bp", "data_bp", "health_bp", "skills_bp", "metrics_bp"]

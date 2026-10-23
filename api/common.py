@@ -246,6 +246,36 @@ def ensure_queue_capacity():
     )
 
 
+def record_task_metrics_safely(
+    *,
+    task_id: str,
+    started_at: float,
+    model: str,
+    charts: int,
+    failed_plans: int,
+    tasks: dict,
+    lock,
+    stage_summary: dict | None = None,
+) -> None:
+    """把任务耗时/状态/阶段写入指标文件（旁路能力，任何异常都不外抛）。"""
+    try:
+        from service.runtime.task_metrics import record_task_metrics
+
+        with lock:
+            status = str((tasks.get(task_id) or {}).get("status") or "unknown")
+        record_task_metrics(
+            task_id=task_id,
+            status=status,
+            duration_s=time.time() - started_at,
+            model=model,
+            charts=charts,
+            failed_plans=failed_plans,
+            stages=(stage_summary or {}).get("stages") or [],
+        )
+    except Exception:
+        pass
+
+
 def _env_int(name: str, default: int) -> int:
     """读取非负整数环境变量，非法值回退默认。"""
     try:
@@ -339,6 +369,9 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
             tasks = get_tasks()
             lock = get_tasks_lock()
             logger = get_logger()
+            started_at = time.time()
+            charts: list[str] = []
+            failed_count = 0
 
             with lock:
                 if task_id not in tasks:
@@ -362,6 +395,7 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                 charts = [item["chart_path"] for item in result.get("successful_charts", [])]
                 chart_types = [item["plan"].get("chart_type", "unknown") for item in result.get("successful_charts", [])]
                 codes = [item.get("code", "") for item in result.get("successful_charts", [])]
+                failed_count = len(result.get("failed_plans", []))
                 agent_logs = result.get("agent_logs", [])
                 response = GenerateChartWithPromptResponse(
                     Charts=chart_types,
@@ -443,6 +477,7 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                 except Exception:
                     pass
                 # 阶段耗时汇总推送 + 落盘清理
+                stage_summary: dict = {}
                 try:
                     from service.monitoring import stage_timer
                     stage_summary = stage_timer.flush(task_id)
@@ -453,6 +488,17 @@ def _run_service_main_in_executor(app, task_id, request_model, conversation_id=N
                         })
                 except Exception:
                     pass
+                # 任务级指标（成功率/耗时分位/慢任务/阶段瓶颈）
+                record_task_metrics_safely(
+                    task_id=task_id,
+                    started_at=started_at,
+                    model=request_model.model_type,
+                    charts=len(charts),
+                    failed_plans=failed_count,
+                    tasks=tasks,
+                    lock=lock,
+                    stage_summary=stage_summary,
+                )
 
 
 def _run_optimize_in_executor(app, task_id, request_model, conversation_id=None):
@@ -469,6 +515,9 @@ def _run_optimize_in_executor(app, task_id, request_model, conversation_id=None)
             tasks = get_tasks()
             lock = get_tasks_lock()
             logger = get_logger()
+            started_at = time.time()
+            charts: list[str] = []
+            failed_count = 0
 
             with lock:
                 if task_id not in tasks:
@@ -588,6 +637,7 @@ def _run_optimize_in_executor(app, task_id, request_model, conversation_id=None)
                 except Exception:
                     pass
                 # 阶段耗时汇总推送 + 落盘清理
+                stage_summary: dict = {}
                 try:
                     from service.monitoring import stage_timer
                     stage_summary = stage_timer.flush(task_id)
@@ -598,3 +648,14 @@ def _run_optimize_in_executor(app, task_id, request_model, conversation_id=None)
                         })
                 except Exception:
                     pass
+                # 任务级指标（成功率/耗时分位/慢任务/阶段瓶颈）
+                record_task_metrics_safely(
+                    task_id=task_id,
+                    started_at=started_at,
+                    model=request_model.model_type,
+                    charts=len(charts),
+                    failed_plans=failed_count,
+                    tasks=tasks,
+                    lock=lock,
+                    stage_summary=stage_summary,
+                )

@@ -115,7 +115,7 @@ init_api_deps(
 init_db()
 
 # ========== 注册蓝图 ==========
-from api import chart_bp, task_bp, code_bp, data_bp, health_bp, skills_bp
+from api import chart_bp, task_bp, code_bp, data_bp, health_bp, skills_bp, metrics_bp
 from api.conversation_api import bp as conversation_bp
 from api.cleanup_api import bp as cleanup_bp
 app.register_blueprint(chart_bp)
@@ -126,6 +126,7 @@ app.register_blueprint(conversation_bp)
 app.register_blueprint(cleanup_bp)
 app.register_blueprint(health_bp)
 app.register_blueprint(skills_bp)
+app.register_blueprint(metrics_bp)
 
 # ========== WebSocket 端点 ==========
 from api.common import register_ws_connection, unregister_ws_connection
@@ -158,6 +159,14 @@ if __name__ == "__main__":
     host = os.getenv("FLASK_HOST", "0.0.0.0")
     port = int(os.getenv("FLASK_PORT", "5000"))
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    # 启动时清理过期上传副本（只删 runtime/uploads 下超过保留期的文件）
+    if os.getenv("UPLOAD_CLEANUP_ON_START", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        try:
+            from service.runtime.runtime_cleanup import prune_uploads
+
+            prune_uploads()
+        except Exception:
+            pass
     # 后台预热 pipeline/agent 重模块（不阻塞启动）；SERVICE_WARMUP=0 可关闭
     if os.getenv("SERVICE_WARMUP", "1").strip().lower() not in {"0", "false", "no", "off"}:
         from service.runtime.warmup import start_warmup
