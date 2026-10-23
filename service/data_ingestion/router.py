@@ -531,23 +531,36 @@ async def ingest_files(
 
     try:
         all_raw: list[RawTable] = []
-        for i, path in enumerate(paths):
-            t_file_start = time.perf_counter()
-            name = names[i] if names else None
-            source = DataSource(
-                kind="file",
-                path=path,
-                name=name,
-                options=build_file_options(hint, vision_cfg, multi_table),
-            )
-            raws = await asyncio.to_thread(_route_file, source)
-            t_file_end = time.perf_counter()
+        # 多文件（尤其多张图片/PDF）逐个走视觉模型时串行会累加耗时；
+        # 受 INGEST_FILE_CONCURRENCY 限制并发读取，结果顺序仍按输入文件。
+        from service.runtime.utils import get_env_int
+
+        max_parallel = max(1, min(get_env_int("INGEST_FILE_CONCURRENCY", 3), len(paths)))
+        semaphore = asyncio.Semaphore(max_parallel)
+
+        async def _route_one(index: int, path: str):
+            async with semaphore:
+                name = names[index] if names else None
+                source = DataSource(
+                    kind="file",
+                    path=path,
+                    name=name,
+                    options=build_file_options(hint, vision_cfg, multi_table),
+                )
+                started = time.perf_counter()
+                raws = await asyncio.to_thread(_route_file, source)
+                return index, raws, time.perf_counter() - started
+
+        routed = await asyncio.gather(
+            *(_route_one(index, path) for index, path in enumerate(paths))
+        )
+        for index, raws, elapsed in routed:
             logger.info(
                 "ingest_files file",
-                index=f"{i + 1}/{len(paths)}",
-                name=Path(path).name,
+                index=f"{index + 1}/{len(paths)}",
+                name=Path(paths[index]).name,
                 n_raw=len(raws),
-                time_s=t_file_end - t_file_start,
+                time_s=elapsed,
             )
             all_raw.extend(raws)
 

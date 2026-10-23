@@ -253,3 +253,83 @@ class TestPlanConcurrency:
 
         assert cancelled is True
         assert results[0]["cancelled"] is True
+
+class TestCoreOptimizations:
+    """核心链路的确定性优化回归（不依赖 LLM）。"""
+
+    def test_series_preview_reads_only_head(self, tmp_path, monkeypatch):
+        import service.data_ingestion.series.runner as runner
+        from service.data_ingestion.series.models import SemanticSeries
+
+        path = tmp_path / "series.parquet"
+        pd.DataFrame({"x": list(range(1000))}).to_parquet(path, index=False)
+        series = SemanticSeries(
+            series_id="s.x",
+            name="x",
+            axis_kind="generic",
+            row_label_column="x",
+            column_label_columns=[],
+            data_path=str(path),
+            source_table="t",
+        )
+
+        def _no_full_read(*_args, **_kwargs):
+            raise AssertionError("limit 预览不应整表 read_parquet")
+
+        monkeypatch.setattr(runner.pd, "read_parquet", _no_full_read)
+        preview = runner.load_series_df(series, limit=5)
+
+        assert preview["x"].tolist() == [0, 1, 2, 3, 4]
+
+    @pytest.mark.asyncio
+    async def test_ingest_files_routes_concurrently(self, tmp_path, monkeypatch):
+        import threading
+        import time
+        from types import SimpleNamespace
+
+        import service.data_ingestion.router as router
+        from service.data_ingestion.models import RawTable
+
+        monkeypatch.setenv("INGEST_FILE_CONCURRENCY", "3")
+        monkeypatch.setattr(
+            router, "allocate_session_dir", lambda: ("ds_test", tmp_path / "sess")
+        )
+
+        active = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def fake_route(source):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.1)
+            with lock:
+                active -= 1
+            name = source.name or Path(source.path).stem
+            return [
+                RawTable(
+                    name=name,
+                    df=pd.DataFrame({"a": [1]}),
+                    source_kind="file",
+                    source_path=source.path,
+                )
+            ]
+
+        def fake_assemble(raws, session_dir, save_raw):
+            return SimpleNamespace(
+                related_tables=raws,
+                series_catalog=None,
+                table_name="t",
+                row_count=len(raws),
+            )
+
+        monkeypatch.setattr(router, "_route_file", fake_route)
+        monkeypatch.setattr(router, "_assemble_profile", fake_assemble)
+        paths = [str(tmp_path / f"f{i}.csv") for i in range(3)]
+
+        profile = await router.ingest_files(paths, names=["a", "b", "c"])
+
+        assert peak >= 2, f"多文件接入没有并发，peak={peak}"
+        assert [table.name for table in profile.related_tables] == ["a", "b", "c"]

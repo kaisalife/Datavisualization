@@ -619,6 +619,9 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
   经 `build_file_options(..., multi_table=True)` 变成 `vision_multi_table` option；未设置时回落到环境变量。
   真机 HTTP 验过：HEIC（两张不同表）+ `multi_table=1` → 返回 `..._t1` / `..._t2` 两张表，
   `related_tables` 与 `series_index` 都含第二张，值逐字一致。
+- **多文件接入并发**：`ingest_files` 对多个文件按 `INGEST_FILE_CONCURRENCY`（默认 3）并发
+  读取/抽表，结果顺序仍按输入文件；多张图片/PDF 逐个走视觉模型时不再串行累加。
+  单个文件仍走 `ingest`（无并发）。真机 2 张图片 2.6s 完成（顺序约为两者的和）。
 - **用户意图**：`ingest_data_source` 把 `user_prompt` 作为 `vision_hint` 透传，帮助模型在多张表中选主表；
   单文件用 `build_file_options()`，多文件用 `ingest_files(..., hint=..., vision_cfg=...)`。
 - **抽表结果缓存**：图片 / PDF / Office 内嵌图片的抽表结果按「文件内容 + `hint` + 多表开关 +
@@ -690,6 +693,10 @@ Office 内嵌图片在 `service/data_ingestion/readers/office_image_reader.py`�
 - **宽表预览只展示前 20 列**：`get_series` / `preview_series` 经
   `agent/tools/series_preview.py` 截断列并标注“共 N 列”，避免几千台设备把规划上下文打满；
   生成阶段由 many-series 技能按业务重要性选 Top-N。
+- **预览不要整表读 parquet**：`load_series_df(series, limit=5)` 用
+  `pyarrow.parquet.ParquetFile.iter_batches(batch_size=5)` 只取第一个 batch；
+  `pd.read_parquet(...).head(5)` 会把几十万行先读进内存，每张图预览都付一次成本。
+  仅当 pyarrow 异常时才回退整表读取。回归：`tests/test_refactor_smoke.py`。
 - 校验在 `service/pipeline/plan_validator.py`；不要绕过它直接把 LLM 输出喂给执行器
 
 ## 产物路径与命名

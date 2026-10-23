@@ -157,7 +157,7 @@ async def generate_single_chart(
     df_preview = ""
     if series is not None:
         try:
-            df_preview = load_series_df(series).head(5).to_string(max_colwidth=30)
+            df_preview = load_series_df(series, limit=5).to_string(max_colwidth=30)
         except Exception as e:
             logger.warning("series 预览失败", series_id=series_id, error=str(e))
     series_hint = _build_series_hint(series_id, df_preview)
