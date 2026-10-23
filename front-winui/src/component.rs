@@ -147,6 +147,7 @@ impl Component for MainModel {
             MainMessage::SkillSaved(result) => self.handle_skill_saved(result),
             MainMessage::SkillDeleted(result) => self.handle_skill_deleted(result),
             MainMessage::SkillPolished(result) => self.handle_skill_polished(result),
+            MainMessage::SkillPolishFailed(message) => self.handle_skill_polish_failed(message),
             MainMessage::ClipboardImageSaved(path) => self.handle_clipboard_image_saved(path),
         }
     }

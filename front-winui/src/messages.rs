@@ -37,5 +37,6 @@ pub enum MainMessage {
     SkillSaved(serde_json::Value),
     SkillDeleted(serde_json::Value),
     SkillPolished(serde_json::Value),
+    SkillPolishFailed(String),
     ClipboardImageSaved(String),
 }

@@ -230,6 +230,14 @@ impl MainModel {
         ));
     }
 
+    /// AI 润色失败：恢复按钮并提示，避免按钮一直停在“润色中”
+    pub(crate) fn js_skill_polish_failed(&mut self, message: &str) {
+        self.js(&format!(
+            "window.app.onSkillPolishFailed('{}')",
+            Self::js_escape(message)
+        ));
+    }
+
     /// 把剪贴板图片加入前端文件列表
     pub(crate) fn js_add_clipboard_file(&mut self, path: &str) {
         self.js(&format!(

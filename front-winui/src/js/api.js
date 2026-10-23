@@ -217,6 +217,12 @@ window.app = {
 
   setFileList(jsonStr) {
     try { state.fileList = JSON.parse(jsonStr); } catch(e) { state.fileList = []; }
+    // 新项目打开时清掉上一个项目的搜索/批量选择，避免把旧选择带进来
+    state.fileFilter = '';
+    state.fileSelectMode = false;
+    state.selectedFilePaths = [];
+    const search = document.querySelector('#fileSearchBox input');
+    if (search) search.value = '';
     if (state.projectName) {
       document.getElementById('projectInfo').style.display = 'flex';
       document.getElementById('projName').textContent = state.projectName;

@@ -45,6 +45,7 @@ impl MainModel {
             "openChartsDir" => self.handle_open_charts_dir(sender),
             "revealChart" => self.handle_reveal_chart(msg.data, sender),
             "exportChart" => self.handle_export_chart(msg.data, sender).await,
+            "exportCharts" => self.handle_export_charts(msg.data, sender).await,
             "previewData" => self.handle_preview_data(msg.data, sender),
             "downloadDataExport" => self.handle_download_data_export(msg.data, sender),
             "saveClipboardImage" => self.handle_save_clipboard_image(msg.data, sender),
@@ -2032,10 +2033,10 @@ impl MainModel {
                     .await
                 {
                     Ok(result) => sender.post(MainMessage::SkillPolished(result)),
-                    Err(e) => sender.post(MainMessage::ShowToast {
-                        message: format!("AI 润色失败: {}", e),
-                        toast_type: "error".to_string(),
-                    }),
+                    Err(e) => sender.post(MainMessage::SkillPolishFailed(format!(
+                        "AI 润色失败: {}",
+                        e
+                    ))),
                 }
             });
         });
@@ -2084,6 +2085,15 @@ impl MainModel {
     ) -> std::result::Result<bool, Error> {
         let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
         self.js_skill_polished(&json);
+        Ok(true)
+    }
+
+    pub(crate) fn handle_skill_polish_failed(
+        &mut self,
+        message: String,
+    ) -> std::result::Result<bool, Error> {
+        self.js_skill_polish_failed(&message);
+        self.js_show_toast(&message, "error");
         Ok(true)
     }
 
@@ -2235,6 +2245,82 @@ impl MainModel {
                         message: format!("下载失败: {}", e),
                         toast_type: "error".to_string(),
                     }),
+                }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 批量导出当前对话中选中的图表版本：只选一次目录，逐个下载到本地
+    async fn handle_export_charts(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let chart_ids: Vec<String> = data
+            .get("chartIds")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .filter(|id| !id.is_empty())
+                    .take(200)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if chart_ids.is_empty() {
+            return Ok(false);
+        }
+        let dir = match FileBox::new()
+            .title("选择批量导出目录")
+            .open_folder(&self.window)?
+            .await?
+        {
+            Some(d) => d,
+            None => return Ok(false), // 用户取消
+        };
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                let mut exported = 0usize;
+                let mut failed = 0usize;
+                for chart_id in chart_ids {
+                    let file_name = std::path::Path::new(&chart_id)
+                        .file_name()
+                        .map(|name| name.to_os_string())
+                        .unwrap_or_else(|| std::ffi::OsString::from("chart.html"));
+                    match client.download_chart(&chart_id).await {
+                        Ok(bytes) => match std::fs::write(dir.join(&file_name), &bytes) {
+                            Ok(()) => exported += 1,
+                            Err(_) => failed += 1,
+                        },
+                        Err(_) => failed += 1,
+                    }
+                }
+                if failed == 0 {
+                    sender.post(MainMessage::ShowToast {
+                        message: format!("已导出 {} 个图表: {}", exported, dir.display()),
+                        toast_type: "success".to_string(),
+                    });
+                } else if exported == 0 {
+                    sender.post(MainMessage::ShowToast {
+                        message: format!("批量导出失败，{} 个图表都未写入", failed),
+                        toast_type: "error".to_string(),
+                    });
+                } else {
+                    sender.post(MainMessage::ShowToast {
+                        message: format!(
+                            "已导出 {} 个，失败 {} 个: {}",
+                            exported,
+                            failed,
+                            dir.display()
+                        ),
+                        toast_type: "warning".to_string(),
+                    });
                 }
             });
         });

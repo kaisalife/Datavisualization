@@ -18,32 +18,57 @@ function switchSidebarTab(tab, el) {
 
 // ===== 对话列表 =====
 function renderConversations(filter) {
+  if (filter !== undefined) state.convFilter = String(filter || '');
   let list = state.conversations || [];
   const container = document.getElementById('convList');
   if (list.length === 0) {
+    state.convVisibleIds = [];
     container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px;font-size:12px">暂无历史记录</div>';
+    updateConvManageButton();
     return;
   }
-  if (filter) {
-    const q = String(filter).toLowerCase();
+  if (state.convFilter) {
+    const q = state.convFilter.toLowerCase();
     list = list.filter(c => (c.prompt || '').toLowerCase().includes(q));
+  }
+  state.convVisibleIds = list.map(c => c.id);
+  if (state.selectMode) {
+    const visible = new Set(state.convVisibleIds);
+    state.selectedIds = (state.selectedIds || []).filter(id => visible.has(id));
   }
   let html = '';
   // 多选模式操作栏
   if (state.selectMode) {
     const n = (state.selectedIds || []).length;
-    html += '<div class="select-bar"><span>已选 ' + n + ' 个</span>' +
-      '<button class="btn-sm" onclick="selectAllConvs()">全选</button>' +
-      '<button class="btn-sm danger" onclick="batchDeleteSelected()">删除选中</button>' +
-      '<button class="btn-sm" onclick="exitSelectMode()">取消</button></div>';
+    const allSelected = list.length > 0 && n >= list.length;
+    html += '<div class="select-bar batch-bar"><span class="batch-count">已选 <strong>' + n + '</strong> / ' + list.length + '</span>' +
+      '<button class="btn-sm ' + (allSelected ? 'is-active' : '') + '" onclick="selectAllConvs()">全选</button>' +
+      '<button class="btn-sm" onclick="selectNoneConvs()" ' + (n === 0 ? 'disabled' : '') + '>全不选</button>' +
+      '<button class="btn-sm danger" onclick="batchDeleteSelected()" ' + (n === 0 ? 'disabled' : '') + '>删除</button>' +
+      '<button class="btn-sm ghost" onclick="exitSelectMode()">取消</button></div>';
   }
-  html += '<div class="conv-section-label">最近</div>';
-  html += list.slice(0, Math.min(2, list.length)).map(c => convItemHtml(c)).join('');
-  if (list.length > 2) {
-    html += '<div class="conv-section-label">更早</div>';
-    html += list.slice(2).map(c => convItemHtml(c)).join('');
+  if (list.length === 0) {
+    html += '<div style="text-align:center;color:var(--text-secondary);padding:20px;font-size:12px">没有匹配的对话</div>';
+  } else {
+    html += '<div class="conv-section-label">最近</div>';
+    html += list.slice(0, Math.min(2, list.length)).map(c => convItemHtml(c)).join('');
+    if (list.length > 2) {
+      html += '<div class="conv-section-label">更早</div>';
+      html += list.slice(2).map(c => convItemHtml(c)).join('');
+    }
   }
   container.innerHTML = html;
+  updateConvManageButton();
+}
+
+function updateConvManageButton() {
+  const btn = document.getElementById('convManageBtn');
+  if (!btn) return;
+  btn.classList.toggle('active', !!state.selectMode);
+  btn.disabled = !(state.conversations || []).length;
+  btn.setAttribute('aria-pressed', state.selectMode ? 'true' : 'false');
+  btn.setAttribute('data-tip', state.selectMode ? '退出批量管理' : '批量管理对话');
+  btn.setAttribute('aria-label', state.selectMode ? '退出批量管理' : '批量管理对话');
 }
 
 function convItemHtml(c) {
@@ -105,8 +130,21 @@ function _onConvListClick(e) {
 })();
 
 function _updateSelectBarCount() {
-  const label = document.querySelector('#convList .select-bar span');
-  if (label) label.textContent = '已选 ' + ((state.selectedIds || []).length) + ' 个';
+  const label = document.querySelector('#convList .select-bar .batch-count');
+  if (label) {
+    const total = (state.convVisibleIds || []).length;
+    const n = (state.selectedIds || []).length;
+    label.innerHTML = '已选 <strong>' + n + '</strong> / ' + total;
+  }
+  const bar = document.querySelector('#convList .select-bar');
+  if (bar) {
+    const n = (state.selectedIds || []).length;
+    bar.querySelectorAll('.btn-sm').forEach(btn => {
+      if (btn.classList.contains('ghost')) return;
+      if (btn.textContent === '全选') btn.classList.toggle('is-active', n > 0 && n >= (state.convVisibleIds || []).length);
+      else btn.disabled = n === 0;
+    });
+  }
 }
 
 // 搜索框防抖：历史对话较多时逐字重建整列表会卡输入
@@ -186,6 +224,11 @@ function deleteOldest(count) {
 }
 
 // ===== 多选模式 =====
+function toggleConvSelectMode() {
+  if (state.selectMode) exitSelectMode();
+  else enterSelectMode();
+}
+
 function enterSelectMode() {
   state.selectMode = true;
   state.selectedIds = [];
@@ -225,7 +268,13 @@ function _findConvRow(id) {
 }
 
 function selectAllConvs() {
-  state.selectedIds = (state.conversations || []).map(c => c.id);
+  const visible = state.convVisibleIds || [];
+  state.selectedIds = visible.slice();
+  renderConversations();
+}
+
+function selectNoneConvs() {
+  state.selectedIds = [];
   renderConversations();
 }
 
@@ -234,49 +283,183 @@ function batchDeleteSelected() {
     window.app.showToast('未选择对话', 'info');
     return;
   }
+  const n = state.selectedIds.length;
+  if (!window.confirm('确定删除选中的 ' + n + ' 个对话吗？该操作不可撤销。')) return;
   sendToRust('batchDelete', { ids: state.selectedIds });
   exitSelectMode();
 }
 
 // ===== 文件列表 =====
+// 与后端 ingest 路由支持的后缀保持一致；不支持的格式在文件树里只展示、不可加入对话。
+const FILE_DATA_EXTS = [
+  '.csv', '.tsv', '.json', '.jsonl', '.ndjson', '.parquet',
+  '.xlsx', '.xls', '.xlsm', '.pdf', '.docx', '.doc', '.pptx', '.ppt',
+  '.html', '.htm', '.md', '.txt', '.log',
+  '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff', '.avif', '.heic', '.heif',
+  '.zip', '.tar', '.gz', '.tgz',
+];
+
+function _fileExt(name) {
+  const target = String(name || '');
+  const dot = target.lastIndexOf('.');
+  return dot >= 0 ? target.slice(dot).toLowerCase() : '';
+}
+
+function _fileIcon(name) {
+  return {
+    '.csv': '📊', '.tsv': '📊', '.xlsx': '📗', '.xls': '📗', '.xlsm': '📗',
+    '.json': '📋', '.jsonl': '📋', '.ndjson': '📋', '.pdf': '📄',
+    '.parquet': '🗃️', '.html': '🌐', '.htm': '🌐', '.log': '📜',
+    '.txt': '📝', '.md': '📘', '.doc': '📘', '.docx': '📘', '.ppt': '📙', '.pptx': '📙',
+    '.png': '🖼️', '.jpg': '🖼️', '.jpeg': '🖼️', '.webp': '🖼️', '.bmp': '🖼️',
+    '.gif': '🖼️', '.tif': '🖼️', '.tiff': '🖼️', '.avif': '🖼️', '.heic': '🖼️', '.heif': '🖼️',
+    '.zip': '🗜️', '.tar': '🗜️', '.gz': '🗜️', '.tgz': '🗜️',
+  }[_fileExt(name)] || '📄';
+}
+
+function _fileCanAdd(name) {
+  return FILE_DATA_EXTS.indexOf(_fileExt(name)) >= 0;
+}
+
 function renderFileTree(filter) {
+  if (filter !== undefined) state.fileFilter = String(filter || '');
   const container = document.getElementById('fileTree');
   if (!state.fileList || state.fileList.length === 0) {
+    state.fileVisiblePaths = [];
+    state.fileSelectMode = false;
+    state.selectedFilePaths = [];
     container.innerHTML = '<div class="files-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><div>打开项目文件夹<br>浏览数据文件</div></div>';
+    renderFileBatchBar();
     return;
   }
   let files = state.fileList;
-  if (filter) {
-    const q = String(filter).toLowerCase();
+  if (state.fileFilter) {
+    const q = state.fileFilter.toLowerCase();
     files = files.filter(f => (f.name || '').toLowerCase().includes(q));
   }
-  const dataExts = ['.csv','.xlsx','.xls','.json','.pdf','.parquet','.txt','.xml','.py'];
-  function iconFor(name) {
-    const ext = name.substring(name.lastIndexOf('.')).toLowerCase();
-    return {'.csv':'📊','.xlsx':'📗','.xls':'📗','.json':'📋','.pdf':'📄','.parquet':'🗃️','.py':'🐍','.txt':'📝'}[ext] || '📄';
-  }
-  function isData(name) {
-    const ext = name.substring(name.lastIndexOf('.')).toLowerCase();
-    return dataExts.includes(ext);
+  state.fileVisiblePaths = files.filter(f => _fileCanAdd(f.name)).map(f => f.path);
+  if (state.fileSelectMode) {
+    const visible = new Set(state.fileVisiblePaths);
+    state.selectedFilePaths = (state.selectedFilePaths || []).filter(path => visible.has(path));
   }
   let html = '';
   files.forEach(f => {
-    const canAdd = isData(f.name);
+    const canAdd = _fileCanAdd(f.name);
+    const checked = state.fileSelectMode && (state.selectedFilePaths || []).indexOf(f.path) >= 0;
     const addLabel = '添加 ' + f.name + ' 到对话';
-    html += '<div class="file-node"' + (canAdd ? ' data-add-path="' + escAttr(f.path) + '" tabindex="0" role="button" aria-label="' + escAttr(addLabel) + '"' : '') + '>' +
-      '<span style="width:12px"></span><span class="file-icon">' + iconFor(f.name) + '</span>' +
+    const attrs = canAdd
+      ? ' data-add-path="' + escAttr(f.path) + '" tabindex="0" role="button" aria-label="' + escAttr(addLabel) + '"'
+      : ' aria-disabled="true"';
+    const checkbox = (state.fileSelectMode && canAdd)
+      ? '<input type="checkbox" class="row-checkbox" data-action="toggle" tabindex="-1" aria-label="选择 ' + escAttr(f.name) + '"' + (checked ? ' checked' : '') + '>'
+      : '';
+    html += '<div class="file-node' + (checked ? ' selected' : '') + (canAdd ? '' : ' muted') + '"' + attrs + '>' +
+      checkbox +
+      '<span style="width:12px"></span><span class="file-icon">' + _fileIcon(f.name) + '</span>' +
       '<span class="file-name">' + escHtml(f.name) + '</span>' +
-      (canAdd ? '<span class="add-btn" data-tip="添加到对话" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>' : '') +
+      (canAdd && !state.fileSelectMode ? '<span class="add-btn" data-tip="添加到对话" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>' : '') +
     '</div>';
   });
   container.innerHTML = html;
+  renderFileBatchBar();
+}
+
+function renderFileBatchBar() {
+  const bar = document.getElementById('fileBatchBar');
+  const manage = document.getElementById('fileManageBtn');
+  const hasFiles = (state.fileList || []).length > 0;
+  if (manage) {
+    manage.disabled = !hasFiles;
+    manage.classList.toggle('active', !!state.fileSelectMode);
+    manage.setAttribute('aria-pressed', state.fileSelectMode ? 'true' : 'false');
+    manage.setAttribute('data-tip', state.fileSelectMode ? '退出批量管理' : '批量添加文件到对话');
+    manage.setAttribute('aria-label', state.fileSelectMode ? '退出批量管理' : '批量添加文件到对话');
+  }
+  if (!bar) return;
+  if (!state.fileSelectMode) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  const n = (state.selectedFilePaths || []).length;
+  const total = (state.fileVisiblePaths || []).length;
+  bar.style.display = 'flex';
+  bar.innerHTML = '<span class="batch-count">已选 <strong>' + n + '</strong> / ' + total + '</span>' +
+    '<button class="btn-sm" onclick="selectAllFiles()">全选</button>' +
+    '<button class="btn-sm" onclick="selectNoneFiles()" ' + (n === 0 ? 'disabled' : '') + '>全不选</button>' +
+    '<button class="btn-sm primary" onclick="batchAddSelectedFiles()" ' + (n === 0 ? 'disabled' : '') + '>加入对话</button>' +
+    '<button class="btn-sm ghost" onclick="toggleFileSelectMode()">取消</button>';
+}
+
+function toggleFileSelectMode() {
+  state.fileSelectMode = !state.fileSelectMode;
+  state.selectedFilePaths = [];
+  renderFileTree();
+}
+
+function _toggleFileSelection(path) {
+  if (!path) return;
+  if (!state.selectedFilePaths) state.selectedFilePaths = [];
+  const i = state.selectedFilePaths.indexOf(path);
+  const on = i < 0;
+  if (on) state.selectedFilePaths.push(path);
+  else state.selectedFilePaths.splice(i, 1);
+  const rows = document.querySelectorAll('#fileTree .file-node[data-add-path]');
+  rows.forEach(row => {
+    if (row.getAttribute('data-add-path') !== path) return;
+    row.classList.toggle('selected', on);
+    const cb = row.querySelector('.row-checkbox');
+    if (cb) cb.checked = on;
+  });
+  renderFileBatchBar();
+}
+
+function selectAllFiles() {
+  state.selectedFilePaths = (state.fileVisiblePaths || []).slice();
+  renderFileTree();
+}
+
+function selectNoneFiles() {
+  state.selectedFilePaths = [];
+  renderFileTree();
+}
+
+function batchAddSelectedFiles() {
+  const paths = (state.selectedFilePaths || []).slice();
+  if (!paths.length) {
+    window.app.showToast('未选择文件', 'info');
+    return;
+  }
+  let added = 0;
+  let duplicated = 0;
+  paths.forEach(path => {
+    if (!path) return;
+    const exists = (state.files || []).some(item => typeof item === 'string' && item === path);
+    if (exists) {
+      duplicated += 1;
+      return;
+    }
+    state.files.push(path);
+    added += 1;
+  });
+  renderFileChips();
+  state.fileSelectMode = false;
+  state.selectedFilePaths = [];
+  renderFileTree();
+  if (added > 0) {
+    window.app.showToast('已加入 ' + added + ' 个文件' + (duplicated ? '，' + duplicated + ' 个已在对话中' : ''), 'success');
+  } else {
+    window.app.showToast('选中的文件都已在对话中', 'info');
+  }
 }
 
 // 文件树同样走事件委托，路径不再拼进内联 onclick
 function _onFileTreeClick(e) {
   const node = e.target.closest ? e.target.closest('.file-node[data-add-path]') : null;
   if (!node) return;
-  addFileFromExplorer(node.getAttribute('data-add-path'));
+  const path = node.getAttribute('data-add-path');
+  if (state.fileSelectMode) _toggleFileSelection(path);
+  else addFileFromExplorer(path);
 }
 
 (function initFileTreeEvents() {
@@ -298,6 +481,10 @@ const filterFiles = debounce(function (v) { renderFileTree(v); }, 120);
 function closeProject() {
   state.projectName = null;
   state.fileList = [];
+  state.fileFilter = '';
+  state.fileSelectMode = false;
+  state.selectedFilePaths = [];
+  state.fileVisiblePaths = [];
   document.getElementById('projectInfo').style.display = 'none';
   document.getElementById('fileSearchBox').style.display = 'none';
   renderFileTree();

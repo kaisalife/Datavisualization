@@ -31,25 +31,34 @@
       </div>
 
       <div class="tab-panel active" id="panel-conversations">
-        <div class="conv-panel-top"><button class="new-chat-btn" onclick="newChat()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建对话</button></div>
+        <div class="conv-panel-top panel-tool-row">
+          <button class="new-chat-btn" onclick="newChat()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建对话</button>
+          <button type="button" class="panel-manage-btn" id="convManageBtn" onclick="toggleConvSelectMode()" data-tip="批量管理对话" aria-label="批量管理对话" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+        </div>
         <div class="search-box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="搜索对话..." oninput="filterConversations(this.value)"></div>
         <div class="conversation-list" id="convList"></div>
       </div>
 
       <div class="tab-panel" id="panel-files">
         <div class="files-panel-top">
-          <button class="open-project-btn" onclick="sendToRust('openFolder',{})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>打开项目文件夹</button>
+          <div class="panel-tool-row">
+            <button class="open-project-btn" onclick="sendToRust('openFolder',{})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>打开项目文件夹</button>
+            <button type="button" class="panel-manage-btn" id="fileManageBtn" onclick="toggleFileSelectMode()" data-tip="批量添加文件到对话" aria-label="批量添加文件到对话" aria-pressed="false" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+          </div>
           <div id="projectInfo" style="display:none" class="project-info"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="proj-name" id="projName"></span><button type="button" class="close" onclick="closeProject()" data-tip="关闭项目" aria-label="关闭项目">✕</button></div>
           <div class="search-box" id="fileSearchBox" style="display:none;margin:6px 0 0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="搜索文件..." oninput="filterFiles(this.value)"></div>
         </div>
+        <div class="batch-bar file-batch-bar" id="fileBatchBar" style="display:none"></div>
         <div class="file-tree" id="fileTree"><div class="files-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><div>打开项目文件夹<br>浏览数据文件</div></div></div>
       </div>
 
       <div class="tab-panel" id="panel-assets">
         <div class="assets-panel-top">
           <div class="assets-panel-heading">当前对话资产 <span class="asset-count" id="assetCount">0</span></div>
+          <button type="button" class="icon-btn asset-manage-btn" id="assetManageBtn" onclick="toggleAssetSelectMode()" data-tip="批量管理当前对话资产" aria-label="批量管理当前对话资产" aria-pressed="false" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
           <button type="button" class="icon-btn assets-refresh-btn" onclick="refreshAssets()" data-tip="刷新当前对话资产" aria-label="刷新图表资产"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button>
         </div>
+        <div class="batch-bar asset-batch-bar" id="assetBatchBar" style="display:none"></div>
         <div class="asset-list" id="assetList"></div>
       </div>
 
@@ -147,40 +156,92 @@
 </div>
 
 <div class="settings-modal" id="settingsModal" onclick="if(event.target===this)sendToRust('toggleSettings',{})">
-  <div class="settings-modal-inner" onclick="event.stopPropagation()">
-    <div class="settings-header"><div class="settings-title">设置</div><button type="button" class="modal-close" onclick="sendToRust('toggleSettings',{})" data-tip="关闭设置（Esc）" aria-label="关闭设置">✕</button></div>
+  <div class="settings-modal-inner settings-wide" onclick="event.stopPropagation()">
+    <div class="settings-header">
+      <div class="settings-heading">
+        <div class="settings-title">设置</div>
+        <div class="settings-subtitle">模型、数据源与服务连接</div>
+      </div>
+      <button type="button" class="modal-close" onclick="sendToRust('toggleSettings',{})" data-tip="关闭设置（Esc）" aria-label="关闭设置">✕</button>
+    </div>
     <div class="settings-body" id="settingsBody"></div>
-    <div class="settings-footer"><button class="btn btn-ghost" onclick="sendToRust('toggleSettings',{})">取消</button><button class="btn btn-primary" onclick="saveSettings()">保存</button></div>
+    <div class="settings-footer"><span class="settings-footer-hint">模型与数据库配置保存在本机</span><span class="settings-footer-spacer"></span><button class="btn btn-ghost" onclick="sendToRust('toggleSettings',{})">取消</button><button class="btn btn-primary" onclick="saveSettings()">保存设置</button></div>
   </div>
 </div>
 
 <div class="settings-modal" id="skillManagerModal" onclick="if(event.target===this)closeSkillManager()">
   <div class="settings-modal-inner skill-manager-inner" onclick="event.stopPropagation()">
     <div class="settings-header">
-      <div class="settings-title">技能管理</div>
-      <button type="button" class="modal-close" onclick="closeSkillManager()" data-tip="关闭技能管理（Esc）" aria-label="关闭技能管理">✕</button>
+      <div class="settings-heading">
+        <div class="settings-title">技能管理</div>
+        <div class="settings-subtitle">用场景工作流告诉 Agent 该怎么分析、该画什么</div>
+      </div>
+      <div class="skill-header-actions">
+        <span class="skill-header-count" id="skillCount">0 个技能</span>
+        <button type="button" class="modal-close" onclick="closeSkillManager()" data-tip="关闭技能管理（Esc）" aria-label="关闭技能管理">✕</button>
+      </div>
     </div>
     <div class="skill-manager-body">
       <div class="skill-list-pane">
         <div class="skill-list-actions">
-          <button class="btn btn-ghost skill-new-btn" onclick="startNewSkill()">+ 新建技能</button>
+          <div class="skill-search">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="skillSearch" type="text" placeholder="搜索技能名称或用途…" oninput="filterSkillList(this.value)">
+          </div>
+          <button class="btn btn-primary skill-new-btn" onclick="startNewSkill()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建技能</button>
+          <div class="skill-filter-row" id="skillFilterRow" role="group" aria-label="按来源过滤技能">
+            <button type="button" class="skill-filter active" data-source="all" aria-pressed="true" onclick="setSkillFilter('all',this)">全部</button>
+            <button type="button" class="skill-filter" data-source="user" aria-pressed="false" onclick="setSkillFilter('user',this)">用户</button>
+            <button type="button" class="skill-filter" data-source="builtin" aria-pressed="false" onclick="setSkillFilter('builtin',this)">内置</button>
+          </div>
         </div>
         <div class="skill-list" id="skillList"></div>
       </div>
       <div class="skill-editor-pane">
+        <div class="skill-editor-head">
+          <div class="skill-editor-heading">
+            <div class="skill-editor-icon" aria-hidden="true">🧩</div>
+            <div>
+              <div class="skill-editor-name" id="skillEditorName">新建技能</div>
+              <div class="skill-editor-sub" id="skillEditorSub">描述一个场景，让 Agent 按你的口径出图</div>
+            </div>
+          </div>
+          <div class="skill-meta-tags" id="skillMetaTags"></div>
+        </div>
         <div class="skill-editor-row">
-          <input id="skillName" class="skill-input" placeholder="技能名：小写字母/数字/连字符，例如 wind-kpi" />
+          <label class="skill-field">
+            <span class="skill-field-label">技能名称 <em>小写字母 / 数字 / 连字符</em></span>
+            <input id="skillName" class="skill-input" placeholder="例如 wind-kpi" />
+          </label>
           <span class="skill-source-badge" id="skillSourceBadge"></span>
         </div>
-        <div class="skill-polish-row">
-          <textarea id="skillPrompt" class="skill-prompt" placeholder="用一句话描述你的需求（AI 会润色成规范技能），例如：风电场里按机组看发电量完成率，没达标要显眼"></textarea>
-          <button class="btn btn-primary skill-polish-btn" id="skillPolishBtn" onclick="aiPolishSkill()">AI 润色</button>
+        <div class="skill-prompt-card">
+          <div class="skill-field-head">
+            <span class="skill-field-label">让 AI 帮你起草</span>
+            <span class="skill-field-hint">只生成草稿，确认后才会保存</span>
+          </div>
+          <div class="skill-polish-row">
+            <textarea id="skillPrompt" class="skill-prompt" placeholder="用一句话描述你的需求，例如：风电场里按机组看发电量完成率，没达标要显眼"></textarea>
+            <button class="btn btn-primary skill-polish-btn" id="skillPolishBtn" onclick="aiPolishSkill()"><span class="skill-polish-spark">✨</span>AI 润色</button>
+          </div>
+          <div class="skill-preset-row">
+            <span class="skill-preset-label">试试：</span>
+            <button type="button" class="skill-preset" data-prompt="按月份看销售额趋势，并标出最高和最低的月份" onclick="useSkillPromptPreset(this)">时间趋势</button>
+            <button type="button" class="skill-preset" data-prompt="对比各区域销售额并排名，突出前 20% 的门店" onclick="useSkillPromptPreset(this)">排名对比</button>
+            <button type="button" class="skill-preset" data-prompt="看单项 KPI 的达标率，用仪表盘并高亮未达标状态" onclick="useSkillPromptPreset(this)">KPI 达标</button>
+          </div>
         </div>
-        <textarea id="skillContent" class="skill-content" spellcheck="false" placeholder="SKILL.md 全文（可用 AI 润色生成后手工修改）"></textarea>
+        <div class="skill-content-wrap">
+          <div class="skill-field-head">
+            <span class="skill-field-label">SKILL.md</span>
+            <span class="skill-field-hint" id="skillContentStats">frontmatter + 场景工作流</span>
+          </div>
+          <textarea id="skillContent" class="skill-content" spellcheck="false" placeholder="SKILL.md 全文（可用 AI 润色生成后手工修改）"></textarea>
+        </div>
         <div class="skill-editor-actions">
           <span class="skill-meta" id="skillMeta"></span>
           <span class="skill-spacer"></span>
-          <button class="btn btn-ghost" id="skillDeleteBtn" onclick="deleteCurrentSkill()" style="display:none">删除</button>
+          <button class="btn btn-ghost" id="skillDeleteBtn" onclick="deleteCurrentSkill()" style="display:none">删除技能</button>
           <button class="btn btn-primary" onclick="saveCurrentSkill()">保存技能</button>
         </div>
       </div>

@@ -117,13 +117,17 @@ $env:BACKEND_URL="http://localhost:5000"
    由 `src/handlers.rs` 分发；对后端的 HTTP 调用集中在 `src/api/client.rs`。新增交互要同时改 JS + handlers
    （必要时加 `api/types.rs`）。
 6. **技能管理界面**：侧栏「技能」按钮 → `#skillManagerModal`（`js/skills.js`）：
-   列表（内置/用户/「覆盖内置」标记）、正文编辑器、AI 润色按钮。桥接五个 action：
+   搜索 / 来源筛选（全部/用户/内置）、列表（内置/用户/「覆盖内置」标记）、frontmatter 标签、
+   正文编辑器、AI 润色与场景提示词模板。桥接五个 action：
    `listSkills` / `loadSkill` / `saveSkill` / `deleteSkill` / `polishSkill`
    （Rust 侧 `handle_*` → `MainMessage::Skills*` → `js_*` 回调），润色与图表生成共用
    `settings.active_model_config()` 的模型凭证。界面只做「润色草稿 → 人工确认 → 保存」，
-   草稿不落盘；改 `js/skills.js` 或 HTML/CSS 必须重新 `cargo build`。
+   草稿不落盘；润色失败走 `MainMessage::SkillPolishFailed` 恢复按钮（别只发 Toast，否则按钮
+   一直停在「润色中」）。改 `js/skills.js` 或 HTML/CSS 必须重新 `cargo build`。
 7. **配置优先级**：`AppSettings::load()` 先读 `front-winui/settings.json`（已 gitignore），不存在才用
    `BACKEND_URL` / `API_KEY` / `MODEL_*` 环境变量。改环境变量前先删或改 settings.json，否则不生效。
+   设置面板按「模型 / 提示词 / 数据库 / 服务连接」四个页签组织（`settingsPane`），页签切换只切
+   DOM 可见性，所有字段仍在同一张表单里，保存时统一读取。
 8. **数据预览面板**：输入框旁「预览」按钮把当前文件/数据库/API 配置经 `previewData` 交给 Rust，Rust 同步调
    `POST /api/data-profile`（图片/PDF 会走视觉模型，可能耗时几十秒；数据库/API 用 `db_config` /
    `api_config` JSON 表单字段），再把返回 JSON 交给 `js/preview.js` 的 `window.app.showDataPreview` 渲染。
@@ -155,6 +159,12 @@ $env:BACKEND_URL="http://localhost:5000"
 - **列表用事件委托**：对话列表/文件树不再拼内联 `onclick`，改 `data-action` / `data-id` /
   `data-add-path`，由容器统一处理；行加 `role="button" tabindex="0"`，Enter/Space 与点击等价。
   搜索输入 120ms 防抖（`filterConversations` / `filterFiles`）；多选只更新单行，不重建整个列表。
+- **三处批量管理**：对话（`state.selectMode/selectedIds`，批量删除）、文件（`fileSelectMode/
+  selectedFilePaths`，批量加入对话）、资产（`assetSelectMode/selectedAssetIds`，批量导出）都有
+  「全选 / 全不选 / 已选数量 / 取消」。全选只作用于当前搜索下的可见项；筛选变化时同步裁剪选择，
+  避免出现“已选 3 / 可见 2”。资产批量导出走桥接 `exportCharts`（`handlers.rs` 只弹一次目录，
+  逐张下载，文件名取 `Path::file_name` 防穿越）。新增批量动作要同时改 HTML 批量栏、列表行选中态
+  和容器事件委托，别只加复选框。
 - **清空聊天要保留欢迎页**：`#welcomeState` 就在 `#chatInner` 里，`clearMessages` 必须走
   `messages.js:clearChatInner()`（保留该节点），否则「新对话」后欢迎页/建议卡片永久消失。
 - **Esc / 输入法 / 焦点**：`utils.js` 全局 `keydown` 用 `closeTopmostOverlay()` 关最上层浮层（查看器/

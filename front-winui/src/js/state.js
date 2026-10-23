@@ -15,6 +15,15 @@ const state = {
   selectedDb: null,
   dbConfigs: [],
   sidebarTab: 'conversations',
+  convFilter: '',         // 对话搜索词（切换批量模式/刷新列表时保留）
+  convVisibleIds: [],     // 当前筛选下可见的对话（全选只作用于可见项）
+  fileFilter: '',         // 文件搜索词（切换批量模式/刷新列表时保留）
+  fileSelectMode: false,
+  selectedFilePaths: [],
+  fileVisiblePaths: [],   // 当前筛选下可加入对话的文件
+  assetSelectMode: false,
+  selectedAssetIds: [],
+  assetVisibleIds: [],
   activeTaskEl: null,
   activeLogs: [],
   lastChartData: null,
