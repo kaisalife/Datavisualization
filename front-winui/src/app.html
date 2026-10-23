@@ -165,7 +165,7 @@
       <button type="button" class="modal-close" onclick="sendToRust('toggleSettings',{})" data-tip="关闭设置（Esc）" aria-label="关闭设置">✕</button>
     </div>
     <div class="settings-body" id="settingsBody"></div>
-    <div class="settings-footer"><span class="settings-footer-hint">模型与数据库配置保存在本机</span><span class="settings-footer-spacer"></span><button class="btn btn-ghost" onclick="sendToRust('toggleSettings',{})">取消</button><button class="btn btn-primary" onclick="saveSettings()">保存设置</button></div>
+    <div class="settings-footer"><span class="settings-footer-hint">模型与数据库配置即时保存；提示词与服务连接点「保存设置」</span><span class="settings-footer-spacer"></span><button class="btn btn-ghost" onclick="sendToRust('toggleSettings',{})">取消</button><button class="btn btn-primary" onclick="saveSettings()">保存设置</button></div>
   </div>
 </div>
 
@@ -177,6 +177,7 @@
         <div class="settings-subtitle">用场景工作流告诉 Agent 该怎么分析、该画什么</div>
       </div>
       <div class="skill-header-actions">
+        <button type="button" class="skill-manage-btn" id="skillManageBtn" onclick="toggleSkillSelectMode()" aria-pressed="false" data-tip="批量管理用户技能" aria-label="批量管理用户技能">批量管理</button>
         <span class="skill-header-count" id="skillCount">0 个技能</span>
         <button type="button" class="modal-close" onclick="closeSkillManager()" data-tip="关闭技能管理（Esc）" aria-label="关闭技能管理">✕</button>
       </div>
@@ -195,6 +196,7 @@
             <button type="button" class="skill-filter" data-source="builtin" aria-pressed="false" onclick="setSkillFilter('builtin',this)">内置</button>
           </div>
         </div>
+        <div class="skill-batch-bar batch-bar" id="skillBatchBar" style="display:none"></div>
         <div class="skill-list" id="skillList"></div>
       </div>
       <div class="skill-editor-pane">

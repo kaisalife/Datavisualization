@@ -38,6 +38,7 @@ impl MainModel {
             "addDbConfig" => self.handle_add_db_config(msg.data),
             "updateDbConfig" => self.handle_update_db_config(msg.data),
             "deleteDbConfig" => self.handle_delete_db_config(msg.data),
+            "syncDbConfigs" => self.handle_sync_db_configs(msg.data),
             "testDbConfig" => self.handle_test_db_config(msg.data, sender),
             "switchMode" => self.handle_switch_mode(msg.data),
             "completeCode" => self.handle_complete_code(msg.data, sender),
@@ -53,6 +54,7 @@ impl MainModel {
             "loadSkill" => self.handle_load_skill(msg.data, sender),
             "saveSkill" => self.handle_save_skill(msg.data, sender),
             "deleteSkill" => self.handle_delete_skill(msg.data, sender),
+            "deleteSkills" => self.handle_delete_skills(msg.data, sender),
             "polishSkill" => self.handle_polish_skill(msg.data, sender),
             _ => {
                 println!("[Bridge] 未知 action: {}", msg.action);
@@ -1465,10 +1467,17 @@ impl MainModel {
                 if name.trim().is_empty() {
                     continue;
                 }
-                let id = old_configs
-                    .iter()
-                    .find(|d| d.name == name)
-                    .map(|d| d.id.clone())
+                let id = item
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|id| !id.trim().is_empty())
+                    .map(String::from)
+                    .or_else(|| {
+                        old_configs
+                            .iter()
+                            .find(|d| d.name == name)
+                            .map(|d| d.id.clone())
+                    })
                     .unwrap_or_else(|| format!("db_{}_{}", ts, idx));
                 new_configs.push(api::types::DbConfig {
                     id,
@@ -1516,6 +1525,7 @@ impl MainModel {
                 });
             }
             self.settings.db_configs = new_configs;
+            self.clear_missing_selected_db();
         }
 
         match self.settings.save() {
@@ -1538,7 +1548,107 @@ impl MainModel {
         Ok(true)
     }
 
+    /// 数据库配置被删除后，清掉输入区里已失效的选中项，避免下一次任务引用不存在的连接。
+    fn clear_missing_selected_db(&mut self) {
+        let name = match self.selected_db.as_ref() {
+            Some(db) => db.name.clone(),
+            None => return,
+        };
+        if !self.settings.db_configs.iter().any(|db| db.name == name) {
+            self.selected_db = None;
+            self.js_set_selected_db("");
+        }
+    }
+
     // ===== 数据库配置 =====
+
+    /// 同步数据库配置列表（新增/编辑/删除/批量删除后立即持久化，不关闭设置面板）
+    fn handle_sync_db_configs(&mut self, data: serde_json::Value) -> std::result::Result<bool, Error> {
+        let Some(arr) = data.get("dbConfigs").and_then(|v| v.as_array()) else {
+            return Ok(true);
+        };
+        let old_configs = self.settings.db_configs.clone();
+        let mut new_configs: Vec<api::types::DbConfig> = Vec::new();
+        let ts = chrono::Local::now().timestamp_millis();
+        for (idx, item) in arr.iter().enumerate() {
+            let name = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if name.trim().is_empty() {
+                continue;
+            }
+            let id = item
+                .get("id")
+                .and_then(|v| v.as_str())
+                .filter(|id| !id.trim().is_empty())
+                .map(String::from)
+                .or_else(|| {
+                    old_configs
+                        .iter()
+                        .find(|d| d.name == name)
+                        .map(|d| d.id.clone())
+                })
+                .unwrap_or_else(|| format!("db_{}_{}", ts, idx));
+            new_configs.push(api::types::DbConfig {
+                id,
+                name,
+                db_type: item
+                    .get("dbType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("MySQL")
+                    .to_string(),
+                host: item
+                    .get("host")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("localhost")
+                    .to_string(),
+                port: item
+                    .get("port")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("3306")
+                    .to_string(),
+                user: item
+                    .get("user")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("root")
+                    .to_string(),
+                password: item
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                database: item
+                    .get("database")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                tables: item
+                    .get("tables")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                query: item
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            });
+        }
+        self.settings.db_configs = new_configs;
+        self.clear_missing_selected_db();
+        match self.settings.save() {
+            Ok(()) => {
+                let configs = self.settings.db_configs.clone();
+                self.js_set_db_configs(&configs);
+            }
+            Err(e) => {
+                self.js_show_toast(&format!("数据库配置保存失败: {}", e), "error");
+            }
+        }
+        Ok(true)
+    }
 
     /// 按名称选择数据库配置（由前端 DB 选择弹窗触发）
     fn handle_select_db(&mut self, data: serde_json::Value) -> std::result::Result<bool, Error> {
@@ -1706,9 +1816,14 @@ impl MainModel {
                 .to_string(),
         };
         self.settings.db_configs.push(config);
-        let configs = self.settings.db_configs.clone();
-        self.js_set_db_configs(&configs);
-        self.js_show_toast("数据库配置已添加", "success");
+        match self.settings.save() {
+            Ok(()) => {
+                let configs = self.settings.db_configs.clone();
+                self.js_set_db_configs(&configs);
+                self.js_show_toast("数据库配置已添加", "success");
+            }
+            Err(e) => self.js_show_toast(&format!("数据库配置保存失败: {}", e), "error"),
+        }
         Ok(true)
     }
 
@@ -1773,9 +1888,15 @@ impl MainModel {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let configs = self.settings.db_configs.clone();
-        self.js_set_db_configs(&configs);
-        self.js_show_toast("数据库配置已更新", "success");
+        self.clear_missing_selected_db();
+        match self.settings.save() {
+            Ok(()) => {
+                let configs = self.settings.db_configs.clone();
+                self.js_set_db_configs(&configs);
+                self.js_show_toast("数据库配置已更新", "success");
+            }
+            Err(e) => self.js_show_toast(&format!("数据库配置保存失败: {}", e), "error"),
+        }
         Ok(true)
     }
 
@@ -1787,9 +1908,15 @@ impl MainModel {
         let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         if index < self.settings.db_configs.len() {
             self.settings.db_configs.remove(index);
-            let configs = self.settings.db_configs.clone();
-            self.js_set_db_configs(&configs);
-            self.js_show_toast("数据库配置已删除", "success");
+            self.clear_missing_selected_db();
+            match self.settings.save() {
+                Ok(()) => {
+                    let configs = self.settings.db_configs.clone();
+                    self.js_set_db_configs(&configs);
+                    self.js_show_toast("数据库配置已删除", "success");
+                }
+                Err(e) => self.js_show_toast(&format!("数据库配置保存失败: {}", e), "error"),
+            }
         }
         Ok(true)
     }
@@ -1936,6 +2063,13 @@ impl MainModel {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        // 用户技能改名：先保存新名称，再删除旧目录；内置技能改名时 JS 不会传 previousName。
+        let previous_name = data
+            .get("previousName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if name.is_empty() || content.trim().is_empty() {
             self.js_show_toast("技能名与内容不能为空", "error");
             return Ok(true);
@@ -1946,7 +2080,29 @@ impl MainModel {
             let handle = tokio_handle();
             handle.block_on(async move {
                 match client.save_skill(&name, &content).await {
-                    Ok(result) => sender.post(MainMessage::SkillSaved(result)),
+                    Ok(mut result) => {
+                        if !previous_name.is_empty() && previous_name != name {
+                            match client.delete_skill(&previous_name).await {
+                                Ok(_) => {
+                                    if let Some(obj) = result.as_object_mut() {
+                                        obj.insert(
+                                            "renamed_from".to_string(),
+                                            serde_json::json!(previous_name),
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(obj) = result.as_object_mut() {
+                                        obj.insert(
+                                            "rename_error".to_string(),
+                                            serde_json::json!(e.to_string()),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        sender.post(MainMessage::SkillSaved(result))
+                    }
                     Err(e) => sender.post(MainMessage::ShowToast {
                         message: format!("保存失败: {}", e),
                         toast_type: "error".to_string(),
@@ -1979,6 +2135,55 @@ impl MainModel {
                         toast_type: "error".to_string(),
                     }),
                 }
+            });
+        });
+        Ok(true)
+    }
+
+    /// 批量删除用户技能（内置技能由后端再次拒绝，前端只允许选用户技能）。
+    fn handle_delete_skills(
+        &mut self,
+        data: serde_json::Value,
+        sender: &ComponentSender<MainModel>,
+    ) -> std::result::Result<bool, Error> {
+        let names: Vec<String> = data
+            .get("names")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::trim))
+                    .filter(|name| !name.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if names.is_empty() {
+            self.js_show_toast("未选择要删除的技能", "info");
+            return Ok(true);
+        }
+        let client = self.client.clone();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let handle = tokio_handle();
+            handle.block_on(async move {
+                let batch_names = names.clone();
+                let mut deleted_count = 0usize;
+                let mut failed: Vec<serde_json::Value> = Vec::new();
+                for name in names {
+                    match client.delete_skill(&name).await {
+                        Ok(_) => deleted_count += 1,
+                        Err(e) => failed.push(serde_json::json!({
+                            "name": name,
+                            "error": e.to_string(),
+                        })),
+                    }
+                }
+                sender.post(MainMessage::SkillDeleted(serde_json::json!({
+                    "batch": true,
+                    "names": batch_names,
+                    "deleted_count": deleted_count,
+                    "failed": failed,
+                })));
             });
         });
         Ok(true)

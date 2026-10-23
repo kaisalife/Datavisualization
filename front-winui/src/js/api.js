@@ -287,6 +287,10 @@ window.app = {
 
   setDbConfigs(jsonStr) {
     try { state.dbConfigs = JSON.parse(jsonStr); } catch(e) { state.dbConfigs = []; }
+    if (typeof editingDbId !== 'undefined') editingDbId = null;
+    const ids = state.dbConfigs.map(db => db && db.id).filter(Boolean);
+    state.selectedDbIds = (state.selectedDbIds || []).filter(id => ids.indexOf(id) >= 0);
+    if (typeof renderDbList === 'function') renderDbList();
   },
 
   setSelectedDb(name) {
@@ -311,6 +315,9 @@ window.app = {
 
   setModelConfigs(jsonStr) {
     try { state.modelConfigs = JSON.parse(jsonStr); } catch(e) { state.modelConfigs = []; }
+    if (typeof editingModelId !== 'undefined') editingModelId = null;
+    const ids = state.modelConfigs.map(m => m && m.id).filter(Boolean);
+    state.selectedModelIds = (state.selectedModelIds || []).filter(id => ids.indexOf(id) >= 0);
     if (typeof renderModelList === 'function') renderModelList();
   },
 

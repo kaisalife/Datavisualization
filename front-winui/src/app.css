@@ -488,7 +488,7 @@ textarea.api-input{resize:vertical;font-family:monospace}
 }
 
 /* 键盘焦点可见（改为 button 的 tab / chip 也能看到焦点） */
-button:focus-visible,.conversation-item:focus-visible,.file-node:focus-visible,.suggestion-card:focus-visible,.chart-card:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:focus-visible,.conversation-item:focus-visible,.file-node:focus-visible,.suggestion-card:focus-visible,.chart-card:focus-visible,.skill-list-item:focus-visible,.model-card[role="button"]:focus-visible,.db-card[role="button"]:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 /* 尊重系统“减少动态效果”设置 */
 @media (prefers-reduced-motion: reduce){
@@ -549,9 +549,16 @@ button:focus-visible,.conversation-item:focus-visible,.file-node:focus-visible,.
 .settings-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:12px}
 .settings-section-head .settings-section-title{margin-bottom:4px;padding-bottom:0;border-bottom:none}
 .settings-section-desc{font-size:11px;color:var(--text-secondary);line-height:1.5}
+.settings-section-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .settings-add-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border:1px solid var(--accent-light);border-radius:var(--radius);background:var(--accent-bg);color:var(--accent);font-size:12px;white-space:nowrap;transition:var(--transition)}
 .settings-add-btn:hover{background:var(--accent-light);border-color:var(--accent)}
 .settings-add-btn span{font-size:15px;line-height:1}
+.settings-manage-btn{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-tertiary);color:var(--text-secondary);font-size:12px;white-space:nowrap;transition:var(--transition)}
+.settings-manage-btn:hover:not(:disabled){border-color:var(--accent-light);color:var(--accent);background:var(--accent-bg)}
+.settings-manage-btn.active{color:var(--accent);border-color:var(--accent-light);background:var(--accent-bg)}
+.settings-manage-btn:disabled{opacity:.45;cursor:not-allowed}
+.settings-batch-bar{margin:0 0 10px}
+.settings-prompt-actions{display:flex;justify-content:flex-end;margin-top:4px}
 .settings-tip{display:flex;gap:7px;align-items:flex-start;padding:9px 11px;margin-top:10px;border:1px dashed var(--border-light);border-radius:var(--radius);font-size:11px;line-height:1.55;color:var(--text-secondary);background:rgba(91,141,239,.03)}
 .settings-tip-icon{color:var(--accent);flex-shrink:0}
 .settings-form-card{padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--bg-tertiary)}
@@ -577,6 +584,9 @@ button:focus-visible,.conversation-item:focus-visible,.file-node:focus-visible,.
 .settings-edit-title{font-size:13px;font-weight:600;color:var(--text-primary)}
 .settings-edit-hint{font-size:10px;color:var(--text-secondary)}
 .model-card,.db-card{display:flex;align-items:flex-start;gap:10px;padding:11px 12px}
+.model-card.selected,.db-card.selected{border-color:var(--accent-light);background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent)}
+.model-card[data-model-id],.db-card[data-db-id]{transition:var(--transition)}
+.settings-row-check{width:15px;height:15px;margin-top:9px}
 .db-config-active{border-color:var(--accent-light);background:linear-gradient(180deg,var(--accent-bg),var(--bg-tertiary));box-shadow:inset 3px 0 0 var(--accent)}
 .model-card-icon,.db-card-icon{width:32px;height:32px;border-radius:9px;background:var(--bg-secondary);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
 .model-card-main,.db-card-main{flex:1;min-width:0}
@@ -614,7 +624,12 @@ button:focus-visible,.conversation-item:focus-visible,.file-node:focus-visible,.
 /* ===== 技能管理（列表搜索 / 来源筛选 / 编辑工作台） ===== */
 .skill-manager-inner{max-width:1080px}
 .skill-header-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.skill-manage-btn{padding:4px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-secondary);font-size:11px;white-space:nowrap;transition:var(--transition)}
+.skill-manage-btn:hover:not(:disabled){border-color:var(--accent-light);color:var(--accent);background:var(--accent-bg)}
+.skill-manage-btn.active{color:var(--accent);border-color:var(--accent-light);background:var(--accent-bg)}
+.skill-manage-btn:disabled{opacity:.45;cursor:not-allowed}
 .skill-header-count{padding:2px 8px;border-radius:99px;background:var(--bg-tertiary);border:1px solid var(--border);font-size:10px;font-weight:600;color:var(--text-secondary);white-space:nowrap}
+.skill-batch-bar{margin:0 8px 6px;flex-shrink:0}
 .skill-manager-body{flex:1;display:flex;min-height:480px;max-height:72vh;overflow:hidden}
 .skill-list-pane{width:300px;border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:linear-gradient(180deg,var(--bg-secondary),var(--bg-primary))}
 .skill-list-actions{padding:12px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--border-light)}
@@ -631,6 +646,11 @@ button:focus-visible,.conversation-item:focus-visible,.file-node:focus-visible,.
 .skill-list-item{position:relative;padding:9px 26px 9px 10px;border:1px solid transparent;border-radius:var(--radius);cursor:pointer;transition:var(--transition);outline:none}
 .skill-list-item:hover{background:var(--bg-hover);border-color:var(--border-light)}
 .skill-list-item.active{background:var(--accent-bg);border-color:var(--accent-light);box-shadow:inset 3px 0 0 var(--accent)}
+.skill-list-item.selected{background:var(--accent-bg);border-color:var(--accent-light);box-shadow:inset 3px 0 0 var(--accent)}
+.skill-list-item.select-disabled{opacity:.55;cursor:not-allowed}
+.skill-list-item.select-disabled:hover{background:transparent;border-color:transparent}
+.skill-select-check{width:14px;height:14px;margin:0 5px 3px 0;accent-color:var(--accent);pointer-events:none;vertical-align:middle}
+.skill-list-item.selectable .skill-item-top{display:inline-flex;vertical-align:middle;margin-bottom:0}
 .skill-item-top{display:flex;gap:5px;margin-bottom:4px;flex-wrap:wrap}
 .skill-tag{font-size:9px;padding:1px 6px;border-radius:99px;background:var(--bg-tertiary);color:var(--text-secondary);line-height:15px;white-space:nowrap}
 .skill-tag.user{background:rgba(64,158,255,.15);color:var(--accent)}

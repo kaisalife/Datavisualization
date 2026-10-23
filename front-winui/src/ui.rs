@@ -141,6 +141,7 @@ impl MainModel {
             "skill": settings.skill_prompt,
             "dbConfigs": settings.db_configs.iter().map(|db| {
                 serde_json::json!({
+                    "id": db.id,
                     "name": db.name,
                     "dbType": db.db_type,
                     "host": db.host,
@@ -260,6 +261,7 @@ impl MainModel {
             .iter()
             .map(|db| {
                 serde_json::json!({
+                    "id": db.id,
                     "name": db.name,
                     "dbType": db.db_type,
                     "host": db.host,
