@@ -51,10 +51,13 @@ agent_generate_chart_prompt = """
 - **禁止省略 `opts.` 前缀**（省略后就是未定义的名字，必然 NameError）
 
 ## 布局（防标题/图例重叠，必须遵守）
-- 标题：opts.TitleOpts(pos_top="2%", pos_left="center")
+- 标题：opts.TitleOpts(pos_top="2%", pos_left="center")；长标题保持一个字符串，
+  框架会限制宽度并换行，不要手工用 `\n` 拆成多行。
 - 图例（plan_details.layout.legend_pos）：
   - "top"/series≤4：opts.LegendOpts(pos_top="2%", pos_right="3%", orient="horizontal")
   - "bottom"/series>4：opts.LegendOpts(pos_bottom="2%", pos_left="center", orient="horizontal")
+  - 系列多时让横向图例自动折行，**不要设置 `type="scroll"`**（ECharts 6 横向滚动图例
+    会把最后一项画到画布外）。
 - **Grid 边距只能通过 Grid 容器设置**：
   `Grid(init_opts=opts.InitOpts(...)).add(chart, grid_opts=opts.GridOpts(pos_top=..., pos_bottom=..., pos_left="8%", pos_right="5%"))`
   `chart.set_global_opts()` **不接受 grid_opts**（传了会 TypeError）
@@ -67,15 +70,20 @@ agent_generate_chart_prompt = """
   显示时位置必须写清楚：柱状图 `position="top"`，横向柱状图 `position="right"`，
   折线图 `position="top"`，散点 `position="right"`，饼图 `position="outside"`；
   堆叠柱状图用 `position="inside"`。
+- **目标线/控制限**：标线标签不要留在默认左端，用
+  `markline_opts=opts.MarkLineOpts(..., label_opts=opts.LabelOpts(position="insideStartTop"))`，
+  水平目标线避免压住 y 轴刻度；框架会按线的方向兜底。
 - **数值可读性**：大数字用千分位，百分比保留 1 位小数；金额等带量纲的指标必须把单位写进
   轴名或副标题（如「销售额（万元）」），不要只写「数值」或「金额」。
-- **轴名**：数值轴写清指标 + 单位；分类轴含义不直观时写轴名。轴名不是图例的替代品。
+- **轴名**：数值轴写清指标 + 单位，直接放进 `opts.AxisOpts(name=...)`；框架会把数值轴名居中到
+  轴侧，避免和长标题的副标题、顶部图例挤在一起。轴名不是图例的替代品。
 - **类目排序**：类别对比按指标从高到低排序；时间序列按时间升序；用户明确指定顺序时以用户为准。
 - **柱宽**：柱状图调用 `add_yaxis(..., bar_max_width=42)`，类目很少时也不要出现占满画布的宽柱子。
   **pyecharts 2.1 没有 `BarOpts` / `LineOpts` 选项类**，柱宽、折线点标记都用 `add_yaxis` 参数。
-- **长标签**：类目名较长或类目数 >12 时用
-  `opts.AxisOpts(axislabel_opts=opts.LabelOpts(rotate=45))`；≤20 类可 `interval=0`，
-  更多时交给 ECharts 自动间隔，避免标签叠在一起。
+- **长标签**：类目名长时优先改成横向柱状图或缩短显示；只有在旋转后确实放得下时才用
+  `opts.AxisOpts(axislabel_opts=opts.LabelOpts(rotate=45))`。20 个以上长名称不要强行
+  `rotate=60` + `interval=0`（旋转后仍会叠成一片），交给 ECharts 自动间隔，框架也会按画布
+  宽度兜底。
 - **折线**：数据点 >30 时 `add_yaxis(..., is_symbol_show=False)`，避免点标记糊成一片；
   单系列可加淡色面积（`areastyle_opts=opts.AreaStyleOpts(opacity=0.12)`）。
 - **饼图**：`Pie().add(..., radius=["32%","58%"], center=["50%","55%"],

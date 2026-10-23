@@ -367,21 +367,37 @@ $env:BACKEND_URL="http://localhost:5000"
 ### 图表视觉质量后处理
 
 `service/pipeline/chart_polish.py` 在 `chart_sandbox` 的 render monkey-patch 中、落盘前
-统一润色 `chart.options`，只补缺失项/修正明显不合理的默认值，不覆盖用户显式配色、标签位置和
-自定义 tooltip。规则：
+统一润色 `chart.options`，只补缺失项/修正明显不合理的默认值，不覆盖用户合理的显式配色与
+自定义 tooltip；对会直接造成重叠/裁切的标签方位、轴名位置做确定性纠正。规则：
 
-- 统一 Tableau 10 调色板（`set_colors` 显式配置优先）；中文无衬线字体；标题居中 + 2% 顶距
-- x 轴名称默认贴右端（`nameLocation="end"`）会被画布裁掉：统一改为居中，并按类目标签旋转角度
-  补 `nameGap`（无旋转 30、30°/45°/60° 依次 64/72/81）；有轴名时底部预留 16%，标签旋转时 20%
-- 默认顶部居中图例与标题必然重叠时移到下方，并按标题/图例宽度估算右上角是否撞车；单图
-  `grid.containLabel=True`，补 top/bottom 边距，避免轴标签被裁切
+- 统一 Tableau 10 调色板（`set_colors` 显式配置优先）；中文无衬线字体；标题居中 + 2% 顶距；
+  超长标题限制 `textStyle.width` + `overflow="break"`，`grid.top` 按实际标题/副标题行数预留
+- **折线/散点成对数据**（pyecharts 默认 `[类目, 数值]`）的默认标签和自定义 `{c}` / `{c}%` /
+  `{b}: {c}` 模板只渲染数值：`{c}` 会被转成读最后一个数值的 `JsCode`，否则会显示
+  `2026-03,1320` 这种宽标签并压住 y 轴。`JsCode` 里的字符串用 `String.fromCharCode` 组装，
+  避免 pyecharts 把双引号转义成非法 JS
+- x/y 数值轴名称统一居中（`nameLocation="middle"`）：默认贴右端/顶端会被画布裁掉，或与长标题
+  的副标题、顶部图例撞在一起；`nameGap` 按刻度标签宽度计算，不压刻度
+- 默认顶部居中图例与标题必然重叠时移到下方；横向图例交给 ECharts 自动折行并预留行高，
+  **不使用 `type="scroll"`**（ECharts 6 在横向 `left=center` 时会把最后一项画到画布外，
+  纵向翻页指示器又会压住第一个图例项）。单图 `grid.containLabel=True`，top/bottom/left/right
+  按标题、图例行数、轴名、双轴、横向柱标签、纵向图例动态计算
 - 数值轴/数据标签/tooltip 用 `toLocaleString('zh-CN')` 加千分位；tooltip 默认柱/折线用
   `axis` 联动（自定义 formatter 时保留 `item`）；柱状图/直方图默认隐藏 0 值数据标签，
   避免稀疏分箱时一排 0 把画布塞满
-- 柱状图标签默认 `top`（横向 `right`、堆叠 `inside`），柱宽上限 42；饼图默认半径 32%–58%、
-  标签 `{b}: {d}%`、`avoidLabelOverlap=True`
+- 柱状图标签方位跟着柱子方向走：竖柱 `right/left` → `top`，横柱 `top/bottom` → `right`，
+  负值反向；堆叠柱 `inside`，柱宽上限 42；饼图默认半径 32%–58%、标签 `{b}: {d}%`、
+  `avoidLabelOverlap=True`，扇区多时设 `minShowLabelAngle`
+- markLine（目标线/80% 线/控制限）标签：水平线默认 `insideStartTop`（不再压在 y 轴刻度上），
+  垂直线用 `insideEndTop`；生成代码写回的旧位置会被覆盖
+- 所有数据标签统一 `labelLayout.hideOverlap=True`，作为仍会碰撞时的最后一道保险；
+  轴刻度也补 `axisLabel.hideOverlap`
 - 类目点过多时自动隐藏标签（折线/柱 >20、饼 >15；多系列总点数 >20），折线 >30 点关闭
-  `showSymbol`；长 x 轴类目按宽度估算旋转 30/45/60°，横向柱状图长类目截断到 140px
+  `showSymbol`；长 x 轴类目先按宽度估算旋转 30/45/60°，**60° 仍放不下时不再硬转**，
+  改回水平并交给 ECharts 自动间隔（20 个长名称旋转后仍会叠成一片）；横向柱状图长类目
+  截断到 140px
+- dataZoom 滑块与底部图例同时存在时，滑块自动抬到图例上方；`grid.bottom` 把 x 轴标签/轴名、
+  滑块、图例按实际堆叠高度叠加，避免轴名压住滑块
 - 纯折线（无可见面积、无柱状系列）的数值轴自动 `scale=True`，让 70–80℃、股价等远离 0 的
   指标显示真实波动；柱状图必须保留 0 基线，面积图的填充也从基线开始，不自动改
 - 多折线里只有部分系列带面积填充时（真实模型生成过这种不一致代码），统一把面积透明度设为 0，

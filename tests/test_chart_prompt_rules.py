@@ -51,6 +51,8 @@ def test_generate_prompt_has_visual_quality_rules():
         "轴名",
         "从高到低",
         "rotate=45",
+        "insideStartTop",
+        "自动间隔",
         "tooltip",
     ):
         assert keyword in agent_generate_chart_prompt, f"缺少视觉质量规则: {keyword}"

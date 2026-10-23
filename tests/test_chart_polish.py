@@ -159,7 +159,7 @@ def test_rotated_x_labels_reserve_space_for_axis_name():
     assert _dict(x_axis["axisLabel"])["rotate"] in (30, 45, 60)
     assert x_axis["nameLocation"] == "middle"
     assert x_axis["nameGap"] >= 60
-    assert chart.options["grid"][0]["bottom"] == "20%"
+    assert _pct(chart.options["grid"][0]["bottom"]) >= 20
 
 
 def test_horizontal_bar_labels_are_on_the_right():
@@ -556,3 +556,283 @@ chart.render()
         "toLocaleString",
     ):
         assert token in html
+
+
+# ---------- 标签/组件重叠防护 ----------
+
+
+def _pct(value) -> float:
+    return float(str(value).rstrip("%"))
+
+
+def test_line_pair_label_formatter_reads_numeric_value():
+    """折线数据是 [类目, 数值]，标签不能把整个数组拼成“类目,数值”。"""
+    chart = (
+        Line()
+        .add_xaxis(["2026-01", "2026-02", "2026-03"])
+        .add_yaxis("销售额", [1240, 1280, 1320])
+    )
+    polish_options(chart.options, width=900)
+
+    label = _label(chart.options["series"][0])
+    code = label["formatter"].js_code
+    assert "Array.isArray" in code
+    assert "p.value.length - 1" in code
+    assert "toLocaleString" in code
+
+
+def test_custom_c_template_is_converted_without_invalid_quotes():
+    """LLM 常写 formatter="{c}%"；成对数据下必须只显示数值，且 JS 语法合法。"""
+    chart = (
+        Line()
+        .add_xaxis(["2026-01", "2026-02"])
+        .add_yaxis(
+            "销售额",
+            [1240, 1280],
+            label_opts=opts.LabelOpts(is_show=True, position="top", formatter="{c}%"),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    code = _label(chart.options["series"][0])["formatter"].js_code
+    assert "String.fromCharCode" in code
+    assert '\\"' not in code  # pyecharts 会把双引号转义成非法 JS
+
+
+def test_bar_label_position_follows_bar_direction():
+    vertical = (
+        Bar()
+        .add_xaxis(["A", "B", "C"])
+        .add_yaxis(
+            "销售额",
+            [1200, 1500, 900],
+            label_opts=opts.LabelOpts(is_show=True, position="right"),
+        )
+    )
+    polish_options(vertical.options, width=900)
+    # 竖柱写 right 会落在柱身中间，应改为 top
+    assert _label(vertical.options["series"][0])["position"] == "top"
+
+    horizontal = (
+        Bar()
+        .add_xaxis(["A", "B", "C"])
+        .add_yaxis(
+            "销售额",
+            [1200, 1500, 900],
+            label_opts=opts.LabelOpts(is_show=True, position="top"),
+        )
+        .reversal_axis()
+    )
+    polish_options(horizontal.options, width=900)
+    assert _label(horizontal.options["series"][0])["position"] == "right"
+
+    negative = (
+        Bar()
+        .add_xaxis(["A", "B"])
+        .add_yaxis(
+            "增长率",
+            [-12, -8],
+            label_opts=opts.LabelOpts(is_show=True, position="top"),
+        )
+    )
+    polish_options(negative.options, width=900)
+    assert _label(negative.options["series"][0])["position"] == "bottom"
+
+
+def test_labels_hide_overlap_and_markline_moves_inside():
+    chart = (
+        Bar()
+        .add_xaxis(["A", "B", "C"])
+        .add_yaxis(
+            "完成率",
+            [95, 100, 105],
+            label_opts=opts.LabelOpts(is_show=True, position="top"),
+            markline_opts=opts.MarkLineOpts(
+                data=[opts.MarkLineItem(y=100, name="目标")]
+            ),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    series = chart.options["series"][0]
+    assert series["labelLayout"]["hideOverlap"] is True
+    mark_label = _dict(_dict(series["markLine"])["label"])
+    assert mark_label["position"] == "insideStartTop"
+
+
+def test_vertical_markline_keeps_label_at_top_end():
+    """垂直线（xAxis 标线）仍放在顶端，不能套用水平线的方位。"""
+    chart = (
+        Line()
+        .add_xaxis(["A", "B", "C"])
+        .add_yaxis(
+            "销售额",
+            [10, 20, 30],
+            markline_opts=opts.MarkLineOpts(
+                data=[opts.MarkLineItem(x="B", name="节点")]
+            ),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    series = chart.options["series"][0]
+    mark_label = _dict(_dict(series["markLine"])["label"])
+    assert mark_label["position"] == "insideEndTop"
+
+
+def test_too_many_long_categories_fall_back_to_auto_interval():
+    """20 个长类目即使旋转 60° 也放不下，硬转会叠成一片，应交给自动间隔。"""
+    names = [f"华东区域第{i}销售网点" for i in range(1, 21)]
+    chart = (
+        Bar()
+        .add_xaxis(names)
+        .add_yaxis("销售额", [120 + i * 7 for i in range(20)])
+    )
+    polish_options(chart.options, width=900)
+
+    axis_label = _dict(_dict(chart.options["xAxis"][0])["axisLabel"])
+    assert axis_label.get("rotate") in (None, 0)
+    assert axis_label.get("interval") == "auto"
+
+
+def test_rotation_steps_up_to_60_when_30_does_not_fit():
+    """30° 放不下但 60° 放得下时，应升级到 60° 并保留全部标签。"""
+    categories = [f"2023年第{i}季度" for i in range(1, 13)]
+    chart = (
+        Bar()
+        .add_xaxis(categories)
+        .add_yaxis("销售额", list(range(12)))
+        .set_global_opts(xaxis_opts=opts.AxisOpts(name="季度"))
+    )
+    polish_options(chart.options, width=900)
+
+    axis_label = _dict(_dict(chart.options["xAxis"][0])["axisLabel"])
+    assert axis_label.get("rotate") == 60
+    assert axis_label.get("interval") == 0
+
+
+def test_many_series_wrap_horizontally_without_scroll_pager():
+    """16 个系列横向折行，不切纵向滚动图例（翻页指示器会压住第一项）。"""
+    chart = Bar()
+    chart.add_xaxis(["一季度", "二季度", "三季度", "四季度"])
+    for index in range(16):
+        chart.add_yaxis(
+            f"区域{index + 1}销售额",
+            [100 + index * 5 + j * 10 for j in range(4)],
+            label_opts=opts.LabelOpts(is_show=False),
+        )
+    chart.set_global_opts(
+        title_opts=opts.TitleOpts(title="各区域季度销售额"),
+        legend_opts=opts.LegendOpts(pos_top="2%", orient="horizontal"),
+    )
+    polish_options(chart.options, width=900)
+
+    legend = _dict(chart.options["legend"][0])
+    assert legend["orient"] == "horizontal"
+    assert legend.get("type") != "scroll"
+    assert _pct(chart.options["grid"][0]["bottom"]) >= 22
+
+
+def test_y_axis_name_moves_to_middle_to_avoid_title():
+    chart = (
+        Bar()
+        .add_xaxis(["北京", "上海"])
+        .add_yaxis("销售额", [1200, 1500])
+        .set_global_opts(
+            title_opts=opts.TitleOpts(title="各城市销售额"),
+            yaxis_opts=opts.AxisOpts(name="销售额（万元）"),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    axis = _dict(chart.options["yAxis"][0])
+    assert axis["nameLocation"] == "middle"
+    assert float(axis["nameGap"]) >= 40
+
+
+def test_dual_axis_reserves_right_margin_for_name():
+    chart = (
+        Bar()
+        .add_xaxis(["1月", "2月", "3月"])
+        .add_yaxis("销售额", [1200, 1500, 1800])
+        .extend_axis(
+            yaxis=opts.AxisOpts(name="订单量（单）", position="right")
+        )
+    )
+    chart.overlap(
+        Line()
+        .add_xaxis(["1月", "2月", "3月"])
+        .add_yaxis("订单量", [320, 360, 400], yaxis_index=1)
+    )
+    polish_options(chart.options, width=900)
+
+    assert _pct(chart.options["grid"][0]["right"]) >= 6
+    right_axis = _dict(chart.options["yAxis"][1])
+    assert right_axis["nameLocation"] == "middle"
+
+
+def test_wrapped_legend_keeps_rows_inside_canvas():
+    chart = Bar()
+    chart.add_xaxis(["一季度", "二季度", "三季度", "四季度"])
+    for index in range(8):
+        chart.add_yaxis(
+            f"产品线{index + 1}销售额",
+            [120 + index * 15, 140 + index * 15, 160 + index * 15, 180 + index * 15],
+            label_opts=opts.LabelOpts(is_show=False),
+        )
+    chart.set_global_opts(
+        title_opts=opts.TitleOpts(title="各产品线季度销售额"),
+        legend_opts=opts.LegendOpts(pos_top="2%"),
+    )
+    polish_options(chart.options, width=900)
+
+    legend = chart.options["legend"][0]
+    assert legend["bottom"] == "2%"
+    assert legend.get("type") != "scroll"  # 横向滚动图例在 ECharts 6 会溢出
+    assert _pct(chart.options["grid"][0]["bottom"]) >= 18
+
+
+def test_datazoom_is_placed_above_bottom_legend():
+    names = [f"第{i}周" for i in range(1, 31)]
+    chart = (
+        Bar()
+        .add_xaxis(names)
+        .add_yaxis("指标", [100 + i for i in range(30)])
+        .set_global_opts(
+            xaxis_opts=opts.AxisOpts(name="周次"),
+            legend_opts=opts.LegendOpts(pos_bottom="2%"),
+            datazoom_opts=opts.DataZoomOpts(type_="slider", pos_bottom="10%"),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    # 30 个长类目 -> 自动间隔；底部要同时容纳 x 轴名、滑块和图例
+    assert _pct(chart.options["grid"][0]["bottom"]) >= 25
+    zoom = _dict(chart.options["dataZoom"])
+    assert _pct(zoom["bottom"]) >= 10
+
+
+def test_long_title_wraps_and_grid_reserves_height():
+    long_title = (
+        "2026年度全国各区域重点客户销售额月度变化趋势与同比分析报告"
+        "（单位：万元，数据统计口径为含税销售额，含线上与线下渠道）"
+    ) * 2
+    chart = (
+        Line()
+        .add_xaxis(["1月", "2月"])
+        .add_yaxis("销售额", [1200, 1300])
+        .set_global_opts(
+            title_opts=opts.TitleOpts(
+                title=long_title,
+                subtitle="数据来源：销售管理系统，统计口径为含税销售额",
+            ),
+            yaxis_opts=opts.AxisOpts(name="销售额（万元）"),
+        )
+    )
+    polish_options(chart.options, width=900)
+
+    title = _dict(chart.options["title"])
+    style = _dict(title["textStyle"])
+    assert style.get("width") == int(900 * 0.9)
+    assert style.get("overflow") == "break"
+    assert _pct(chart.options["grid"][0]["top"]) >= 15
