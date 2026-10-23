@@ -34,6 +34,7 @@ import shutil
 import time
 from pathlib import Path
 
+from service.data_ingestion.limits import DataTooLargeError
 from service.data_ingestion.models import DataProfile, DataSource, RawTable
 from service.data_ingestion.normalize import coerce_numeric_columns
 from service.data_ingestion.profiler import build_profile_from_df
@@ -214,6 +215,16 @@ async def ingest(source: DataSource) -> DataProfile:
             session_id=session_id,
         )
         return profile
+    except DataTooLargeError as e:
+        # 用户数据规模问题：不算服务异常，不打完整堆栈
+        logger.warning(
+            "ingest data too large",
+            after_s=time.perf_counter() - t0,
+            kind=source.kind,
+            error=str(e),
+        )
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise
     except Exception:
         t_err = time.perf_counter()
         logger.error(
@@ -283,6 +294,9 @@ def _route_file(source: DataSource) -> list[RawTable]:
     elif ExcelReader.can_handle(path):
         try:
             return ExcelReader.read(path, table_name=source.name)
+        except DataTooLargeError:
+            # 超限是数据规模问题，不是"纯图表工作簿"：直接拒绝，不尝试内嵌图片
+            raise
         except Exception as e:
             # 纯图表工作簿（只有粘贴的图、没有数据区）走内嵌图片抽表
             if OfficeImageReader.can_handle(path):
@@ -574,6 +588,15 @@ async def ingest_files(
             total_s=time.perf_counter() - t0,
         )
         return profile
+    except DataTooLargeError as e:
+        logger.warning(
+            "ingest_files data too large",
+            after_s=time.perf_counter() - t0,
+            n_files=len(paths),
+            error=str(e),
+        )
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise
     except Exception:
         logger.error(
             "ingest_files ERROR",

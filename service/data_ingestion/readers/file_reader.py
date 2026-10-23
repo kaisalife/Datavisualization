@@ -14,7 +14,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from service.data_ingestion.limits import (
+    effective_row_limit,
+    enforce_ingest_limits,
+    ingest_limits,
+)
 from service.data_ingestion.models import RawTable, safe_table_name
+from service.runtime.utils import display_name_from_path
 
 
 # 文件扩展名 -> 默认分隔符
@@ -113,6 +119,47 @@ def _detect_delimiter(path: str, default: str, encoding: str | None = None) -> s
     return max(stats, key=lambda d: stats[d])
 
 
+def _read_csv_guarded(
+    path: str, *, sep: str, encoding: str, source: str
+) -> pd.DataFrame:
+    """带行数/单元格上限的 CSV 读取。
+
+    先只读表头拿列数，再按 ``nrows=上限+1`` 读；超过上限直接抛
+    ``DataTooLargeError``，**不做静默截断**（截断会改变聚合口径）。
+    """
+    max_rows, max_cells = ingest_limits()
+    read_kwargs = {
+        "sep": sep,
+        "engine": "python",
+        "on_bad_lines": "skip",
+        "encoding": encoding,
+    }
+    if not max_rows and not max_cells:
+        return pd.read_csv(path, **read_kwargs)
+
+    columns = 1
+    try:
+        header = pd.read_csv(path, nrows=0, **read_kwargs)
+        columns = max(1, len(header.columns))
+    except Exception:
+        # 表头都读不出来时交给正常读取抛原始错误；行数上限仍会生效
+        columns = 1
+
+    effective_rows = effective_row_limit(columns)
+    if effective_rows <= 0:  # pragma: no cover - 两个上限都为 0 时上面已返回
+        return pd.read_csv(path, **read_kwargs)
+
+    df = pd.read_csv(path, nrows=effective_rows + 1, **read_kwargs)
+    if len(df) > effective_rows:
+        enforce_ingest_limits(
+            effective_rows + 1,
+            columns,
+            source,
+            rows_are_lower_bound=True,
+        )
+    return df
+
+
 class FileReader:
     """读取 CSV/TSV/JSON/Parquet 文件，返回 list[RawTable]。"""
 
@@ -144,12 +191,11 @@ class FileReader:
         if ext in _EXT_MAP:
             encoding = _detect_encoding(path)
             sep = _detect_delimiter(path, _EXT_MAP[ext], encoding=encoding)
-            df = pd.read_csv(
+            df = _read_csv_guarded(
                 path,
                 sep=sep,
-                engine="python",
-                on_bad_lines="skip",
                 encoding=encoding,
+                source=display_name_from_path(path),
             )
         elif ext in {".json", ".jsonl", ".ndjson"}:
             df = _read_json(path, lines=ext != ".json" or _is_jsonl(path))

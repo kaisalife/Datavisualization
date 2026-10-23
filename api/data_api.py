@@ -24,6 +24,7 @@ from Entity import ErrorResponse
 from api.common import check_api_key, get_upload_dir, monitor_response
 from api.source_config import parse_json_object, validate_source_configs
 
+from service.data_ingestion.limits import DataTooLargeError
 from service.data_ingestion.series.models import SeriesCatalog
 from service.data_ingestion.series_manager import get_datasets_root
 
@@ -160,6 +161,9 @@ def data_profile():
         result["raw_tables"] = _build_raw_exports(session_id)
         result["views"] = _build_views_list(session_id)
         return jsonify({"profile": result, "file_count": len(saved_paths)}), 200
+    except DataTooLargeError as e:
+        # 数据接入内存护栏：明确告诉用户超限原因与处理方式，而不是 500
+        return jsonify(ErrorResponse(detail=str(e)).model_dump()), 400
     except Exception as e:
         return jsonify(ErrorResponse(detail=f"{type(e).__name__}: {e}").model_dump()), 500
 

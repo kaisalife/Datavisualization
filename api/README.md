@@ -278,6 +278,8 @@ X-API-Key: <your_key>
 > `files` / `db_config` / `api_config` 至少提供一种，同时存在时优先 `files`。
 > 非法 JSON、未知数据库类型、缺 `database`（sqlite）/ `url`（API）会直接返回 `400`。
 > `db_config.query` 同样只允许单条只读查询，写操作 / 多语句返回 `400`。
+> **超大数据表**（CSV/TSV/Excel 超过 `MAX_INGEST_ROWS` 或 `MAX_INGEST_CELLS`）返回 `400`，
+> `detail` 带文件名、行列数与调整方式；默认上限 50 万行 / 500 万单元格，0 = 不限制。
 
 #### 响应
 

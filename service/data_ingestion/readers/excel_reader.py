@@ -24,8 +24,14 @@ from xml.etree import ElementTree as ET
 import pandas as pd
 from openpyxl.utils import range_boundaries
 
+from service.data_ingestion.limits import (
+    effective_row_limit,
+    enforce_ingest_limits,
+    ingest_limits,
+)
 from service.data_ingestion.models import RawTable, safe_table_name
 from service.observability import get_logger
+from service.runtime.utils import display_name_from_path
 
 logger = get_logger(__name__)
 
@@ -404,6 +410,44 @@ def _title_skip_rows(rows: list[list], ranges, width: int) -> int:
     return idx + 1 if idx is not None else 0
 
 
+def _sheet_dimensions(path: str, sheet: str) -> tuple[int, int] | None:
+    """读取工作表声明的 (行数, 列数)，不加载数据。
+
+    xlsx/xlsm 从 worksheet XML 的 ``<dimension ref="A1:C1000">`` 读取；
+    .xls 用 xlrd 的 on_demand 模式。拿不到时返回 None（由读取后校验兜底）。
+    """
+    suffix = Path(path).suffix.lower()
+    try:
+        if suffix in {".xlsx", ".xlsm"}:
+            with zipfile.ZipFile(path) as zf:
+                xml_path = _sheet_xml_path(zf, sheet)
+                if not xml_path:
+                    return None
+                with zf.open(xml_path) as handle:
+                    head = handle.read(8192).decode("utf-8", "ignore")
+            match = re.search(r'<dimension[^>]*ref="([^"]+)"', head)
+            if not match:
+                return None
+            min_col, min_row, max_col, max_row = range_boundaries(match.group(1))
+            # 只有单个单元格的 dimension 多半是占位/过期值，交给读取后校验
+            if max_row <= 1 and max_col <= 1:
+                return None
+            return int(max_row), int(max_col)
+
+        if suffix == ".xls":
+            import xlrd
+
+            book = xlrd.open_workbook(path, on_demand=True)
+            try:
+                sheet_obj = book.sheet_by_name(sheet)
+                return int(sheet_obj.nrows), int(sheet_obj.ncols)
+            finally:
+                book.release_resources()
+    except Exception:
+        return None
+    return None
+
+
 class ExcelReader:
     """读取 Excel 文件，返回 list[RawTable]。"""
 
@@ -414,6 +458,50 @@ class ExcelReader:
 
     @staticmethod
     def _read_sheet(path: str, sheet: str) -> pd.DataFrame:
+        """读取单个 sheet，并在真正全量加载前检查行数/单元格上限。"""
+        dimensions = _sheet_dimensions(path, sheet)
+        if dimensions is not None:
+            rows, columns = dimensions
+            max_rows, max_cells = ingest_limits()
+            exceeds = bool(
+                (max_rows and rows > max_rows)
+                or (max_cells and rows * max(1, columns) > max_cells)
+            )
+            if exceeds:
+                # dimension 可能因整列格式化而虚高：先有界地探测真实行数。
+                # 只有实际行数也超限才拒绝；数据量小则继续正常读取。
+                effective = effective_row_limit(columns)
+                confirmed = True
+                if effective:
+                    try:
+                        probe = pd.read_excel(
+                            path,
+                            sheet_name=sheet,
+                            header=None,
+                            nrows=effective + 1,
+                        )
+                        confirmed = len(probe) > effective
+                    except Exception:
+                        confirmed = True  # 探测失败按超限保守处理
+                if confirmed:
+                    enforce_ingest_limits(
+                        (effective + 1) if effective else rows,
+                        columns,
+                        source=f"{display_name_from_path(path)} / {sheet}",
+                        rows_are_lower_bound=bool(effective),
+                    )
+
+        df = ExcelReader._read_sheet_impl(path, sheet)
+        # 兜底：dimension 缺失/过期时，至少不要让超大表静默通过
+        enforce_ingest_limits(
+            len(df),
+            max(1, len(df.columns)),
+            source=f"{display_name_from_path(path)} / {sheet}",
+        )
+        return df
+
+    @staticmethod
+    def _read_sheet_impl(path: str, sheet: str) -> pd.DataFrame:
         """优先处理合并表头/标题行，否则保持 pandas 原行为。"""
         ranges = _merged_ranges(path, sheet)
         if ranges is None:

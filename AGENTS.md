@@ -519,6 +519,22 @@ DDL、多语句（`select 1; drop table x`）在 `validate_source_configs` 阶�
 回归：`tests/test_series_split.py`（透视、自然时间序、中文月份/季度/星期、多指标、多维度、
 高基数排行、重复单元格聚合）。
 
+## 数据接入内存护栏（CSV/TSV/Excel）
+
+上传接口只限制文件大小（默认 50MB），CSV 解析成 DataFrame 会膨胀数倍、Excel 压缩包更可能
+解压出上千万单元格。`service/data_ingestion/limits.py` 在读取阶段显式拒绝超限表：
+
+- `MAX_INGEST_ROWS`（默认 500000）/ `MAX_INGEST_CELLS`（默认 5000000），0 = 不限制；
+- CSV/TSV：先 `nrows=0` 读表头拿列数，再按 `min(行上限, 单元格上限/列数)+1` 读取；
+  超过上限抛 `DataTooLargeError`。**不静默截断/采样**——那会改变总额、均值、排行口径；
+- Excel：xlsx/xlsm 从 worksheet XML 的 `<dimension>` 预检，.xls 用 xlrd on_demand；
+  若 dimension 超限，先用 `nrows=limit+1` 有界探测真实行数（避免整列格式化导致虚高误伤），
+  确认超限才拒绝；读取后再兜底校验；
+- 拒绝时提示带文件名、行列数、上限和调整方式；`/api/data-profile` 返回 400 + detail，
+  生成任务在 failed/task error 中透传；
+- 超限不触发 Office 内嵌图片兜底（那不是"纯图表工作簿"）；`ingest` 记 warning 而非错误堆栈。
+- 回归：`tests/test_ingest_limits.py`（CSV 行/单元格、Excel 预检、API 400、无图片兜底）。
+
 ## CSV 编码
 
 `FileReader` 读 CSV/TSV 前先探测编码（`_detect_encoding`）：UTF-8 BOM / UTF-16 BOM（含无 BOM
